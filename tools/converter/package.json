@@ -1,0 +1,16 @@
+{
+  "name": "book32-converter",
+  "version": "1.0.0",
+  "description": "Convert EPUB to Book32 .b32 format",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "puppeteer": "^21.0.0",
+    "sharp": "^0.32.0",
+    "adm-zip": "^0.5.10",
+    "yargs": "^17.0.0",
+    "fs-extra": "^11.0.0"
+  }
+}
