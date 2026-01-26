@@ -51,11 +51,11 @@ float BatteryMgr::getVoltage() {
 int BatteryMgr::getPercentage() {
     float v = getVoltage();
     // LiPo Curve Approximation
-    // 4.2V = 100%, 3.2V = 0%
+    // 4.2V = 100%, 3.0V = 0%
     if (v >= 4.2) return 100;
-    if (v <= 3.2) return 0;
+    if (v <= 3.0) return 0;
     
-    int p = (int)((v - 3.2) / (4.2 - 3.2) * 100);
+    int p = (int)((v - 3.0) / (4.2 - 3.0) * 100);
     return p;
 }
 
