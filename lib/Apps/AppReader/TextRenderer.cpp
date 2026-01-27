@@ -152,7 +152,7 @@ void TextRenderer::renderPage(Book32Display& display, const String& pageText, in
     if (_fontLoaded) {
         _ofr.setDrawer(display);
         _ofr.setFontColor(GxEPD_BLACK);
-        _ofr.setFontSize(_fontSize * 10);
+        _ofr.setFontSize(_fontSize * 12); // Slightly larger for better readability
         
         int lineStart = 0;
         int textLen = pageText.length();
@@ -164,7 +164,7 @@ void TextRenderer::renderPage(Book32Display& display, const String& pageText, in
             _ofr.setCursor(x, y);
             _ofr.printf("%s", line.c_str());
 
-            y += (_fontSize * 12);
+            y += (_fontSize * 14); // More line spacing
             lineStart = lineEnd + 1;
         }
     } else {
