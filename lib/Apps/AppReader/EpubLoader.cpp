@@ -16,7 +16,6 @@ static int zipFd = -1;
 
 void *myOpen(const char *filename, int32_t *size) {
     Serial.printf("ZIP myOpen: %s\n", filename);
-    Serial.printf("Free heap: %d, PSRAM: %d\n", ESP.getFreeHeap(), ESP.getFreePsram());
 
     // Close any previously open file
     if (zipFd >= 0) {
@@ -91,7 +90,7 @@ EpubLoader::EpubLoader() {
     zip = (UNZIP*)ps_malloc(sizeof(UNZIP));
     if (!zip) {
         Serial.println("EpubLoader: PSRAM alloc failed, using heap");
-        zip = new UNZIP();
+        zip = new (std::nothrow) UNZIP();
     } else {
         // Initialize the object in place
         new (zip) UNZIP();
@@ -109,35 +108,26 @@ EpubLoader::~EpubLoader() {
 
 bool EpubLoader::open(const char* path) {
     Serial.printf("EpubLoader::open(%s)\n", path);
-    Serial.printf("Free heap before open: %d, PSRAM: %d\n", ESP.getFreeHeap(), ESP.getFreePsram());
 
     epubPath = String(path);
 
-    Serial.println("Calling zip->openZIP...");
     int result = zip->openZIP(path, myOpen, myClose, myRead, mySeek);
-    Serial.printf("zip->openZIP returned: %d\n", result);
-
     if (result != ZIP_SUCCESS) {
-        Serial.println("Failed to open ZIP");
+        Serial.printf("zip->openZIP returned: %d\n", result);
         return false;
     }
 
-    Serial.println("Parsing container.xml...");
     if (!parseContainer()) {
-        Serial.println("Failed to parse container");
         close();
         return false;
     }
 
-    Serial.println("Parsing OPF...");
     if (!parseOpf()) {
-        Serial.println("Failed to parse OPF");
         close();
         return false;
     }
 
     Serial.printf("EPUB opened successfully. Chapters: %d\n", spine.size());
-    Serial.printf("Free heap after open: %d, PSRAM: %d\n", ESP.getFreeHeap(), ESP.getFreePsram());
     return true;
 }
 
@@ -150,227 +140,113 @@ void EpubLoader::close() {
     fonts.clear();
 }
 
-String EpubLoader::getTitle() {
-    return bookTitle.length() > 0 ? bookTitle : "Unknown";
-}
-
-int EpubLoader::getChapterCount() {
-    return spine.size();
-}
+String EpubLoader::getTitle() { return bookTitle.length() > 0 ? bookTitle : "Unknown"; }
+int EpubLoader::getChapterCount() { return spine.size(); }
 
 String EpubLoader::getChapterContent(int index) {
-    if(index < 0 || index >= spine.size()) return "";
+    if(index < 0 || index >= (int)spine.size()) return "";
 
-    Serial.printf("getChapterContent: index=%d\n", index);
-
-    // Construct full path
     String href = spine[index].href;
     String fullPath = rootDir + href;
-
-    // Normalize path
     if(fullPath.startsWith("./")) fullPath = fullPath.substring(2);
 
     String content = readFileFromZip(fullPath.c_str());
-    Serial.printf("Raw Content Length: %d\n", content.length());
+    if (content.length() == 0) return "";
 
     // Improved HTML to plain text conversion
     String clean;
-    clean.reserve(content.length() / 2);  // Pre-allocate for efficiency
+    clean.reserve(content.length());
 
     bool inTag = false;
-    bool skipContent = false;  // For skipping script, style, image content
+    bool skipContent = false;
     String currentTag;
 
-    for(int i = 0; i < content.length(); i++) {
+    for(int i = 0; i < (int)content.length(); i++) {
         char c = content.charAt(i);
 
         if(c == '<') {
             inTag = true;
             currentTag = "";
-
-            // Look ahead to get the tag name
             int j = i + 1;
-            while(j < content.length() && content.charAt(j) != '>' && content.charAt(j) != ' ' && j - i < 20) {
+            while(j < (int)content.length() && content.charAt(j) != '>' && content.charAt(j) != ' ' && j - i < 20) {
                 currentTag += (char)tolower(content.charAt(j));
                 j++;
             }
 
-            // Check for tags that add line breaks (block elements)
-            if(currentTag == "p" || currentTag == "/p" ||
-               currentTag == "div" || currentTag == "/div" ||
-               currentTag == "br" || currentTag == "br/") {
-                // Add newline for paragraph/block elements
-                if(clean.length() > 0 && clean.charAt(clean.length()-1) != '\n') {
-                    clean += "\n";
-                }
-                // Add extra newline after closing paragraph for spacing
-                if(currentTag == "/p") {
-                    clean += "\n";
-                }
+            if(currentTag == "p" || currentTag == "/p" || currentTag == "div" || currentTag == "/div" || currentTag == "br" || currentTag == "br/") {
+                if(clean.length() > 0 && clean.charAt(clean.length()-1) != '\n') clean += "\n";
             }
-            // Headings get extra spacing
-            else if(currentTag.startsWith("h") && currentTag.length() == 2 ||
-                    currentTag.startsWith("/h") && currentTag.length() == 3) {
-                if(clean.length() > 0 && clean.charAt(clean.length()-1) != '\n') {
-                    clean += "\n";
-                }
-                if(currentTag.startsWith("/h")) {
-                    clean += "\n";  // Extra line after heading
-                }
-            }
-            // List items
             else if(currentTag == "li") {
-                if(clean.length() > 0 && clean.charAt(clean.length()-1) != '\n') {
-                    clean += "\n";
-                }
-                clean += "• ";  // Bullet point for list items
+                if(clean.length() > 0 && clean.charAt(clean.length()-1) != '\n') clean += "\n";
+                clean += "• ";
             }
-            else if(currentTag == "/li") {
-                if(clean.length() > 0 && clean.charAt(clean.length()-1) != '\n') {
-                    clean += "\n";
-                }
-            }
-            // Skip content inside these tags entirely
-            else if(currentTag == "script" || currentTag == "style" ||
-                    currentTag == "img" || currentTag == "image" || currentTag == "svg" ||
-                    currentTag == "head" || currentTag == "title") {
+            else if(currentTag == "script" || currentTag == "style" || currentTag == "head") {
                 skipContent = true;
             }
-            else if(currentTag == "/script" || currentTag == "/style" || currentTag == "/svg" ||
-                    currentTag == "/head" || currentTag == "/title") {
+            else if(currentTag == "/script" || currentTag == "/style" || currentTag == "/head") {
                 skipContent = false;
             }
 
         } else if (c == '>') {
             inTag = false;
-            // For self-closing image tags, don't skip content after
-            if(currentTag == "img" || currentTag == "image") {
-                skipContent = false;
-            }
         } else if (!inTag && !skipContent) {
-            // Convert whitespace
-            if(c == '\n' || c == '\r' || c == '\t') {
-                c = ' ';
-            }
-            // Collapse multiple spaces
-            if(c == ' ' && clean.length() > 0 && clean.charAt(clean.length()-1) == ' ') {
-                continue;
-            }
-            // Don't add leading spaces at start of lines
-            if(c == ' ' && clean.length() > 0 && clean.charAt(clean.length()-1) == '\n') {
-                continue;
-            }
+            if(c == '\n' || c == '\r' || c == '\t') c = ' ';
+            if(c == ' ' && clean.length() > 0 && clean.charAt(clean.length()-1) == ' ') continue;
             clean += c;
         }
     }
 
-    // --- DEEP UTF-8 CLEANING ---
-    // Handle the specific multi-byte patterns seen in the screenshots
-    // These are likely mis-encoded UTF-8 sequences appearing as garbage
+    // --- ROBUST GARBAGE CHARACTER CLEANING ---
+    // These sequences come from multi-byte UTF-8 interpreted as single bytes
+    
+    // Pattern 1: ¶Ç followed by a 3rd byte (seen as 8, Ö, £, ¥ in screenshots)
+    // Interpret common Mistborn sequences
     clean.replace("¶Ç8", " -- ");
     clean.replace("¶ÇÖ", "'");
     clean.replace("¶Ç£", "\"");
     clean.replace("¶Ç¥", "\"");
-    clean.replace("¶Ç", " "); // Final catch-all for prefix
     
-    // Left double quote (“)
+    // Pattern 2: Raw UTF-8 bytes (hex)
     clean.replace("\xE2\x80\x9C", "\"");
-    // Right double quote (”)
     clean.replace("\xE2\x80\x9D", "\"");
-    // Left single quote (‘)
     clean.replace("\xE2\x80\x98", "'");
-    // Right single quote (’)
     clean.replace("\xE2\x80\x99", "'");
-    // Em-dash (—)
     clean.replace("\xE2\x80\x94", " -- ");
-    // En-dash (–)
     clean.replace("\xE2\x80\x93", " - ");
-    // Ellipsis (…)
     clean.replace("\xE2\x80\xA6", "...");
-    // Non-breaking space
-    clean.replace("\xC2\xA0", " ");
-    // Bullet (•)
-    clean.replace("\xE2\x80\xA2", "*");
     
-    // Handle Windows-1252 / CP1252 artifacts sometimes mixed in
-    clean.replace("\x93", "\""); // Left double quote
-    clean.replace("\x94", "\""); // Right double quote
-    clean.replace("\x91", "'");  // Left single quote
-    clean.replace("\x92", "'");  // Right single quote
-    clean.replace("\x96", "-");  // En-dash
-    clean.replace("\x97", "--"); // Em-dash
+    // Catch-all: clean up any remaining ¶Ç markers
+    clean.replace("¶Ç", " ");
 
-    // Decode HTML entities (fallback for entity-encoded content)
+    // Decode HTML entities
     clean.replace("&nbsp;", " ");
-    clean.replace("&#160;", " ");
     clean.replace("&lt;", "<");
     clean.replace("&gt;", ">");
     clean.replace("&amp;", "&");
     clean.replace("&quot;", "\"");
     clean.replace("&apos;", "'");
-    clean.replace("&#39;", "'");
-    clean.replace("&mdash;", "--");
-    clean.replace("&ndash;", "-");
-    clean.replace("&#8212;", "--");
-    clean.replace("&#8211;", "-");
-    clean.replace("&hellip;", "...");
-    clean.replace("&#8230;", "...");
-    clean.replace("&ldquo;", "\"");
-    clean.replace("&rdquo;", "\"");
-    clean.replace("&#8220;", "\"");
-    clean.replace("&#8221;", "\"");
-    clean.replace("&lsquo;", "'");
-    clean.replace("&rsquo;", "'");
-    clean.replace("&#8216;", "'");
-    clean.replace("&#8217;", "'");
 
-    // Clean up excessive newlines (more than 2 consecutive)
-    while(clean.indexOf("\n\n\n") != -1) {
-        clean.replace("\n\n\n", "\n\n");
-    }
-
-    // Trim leading/trailing whitespace
     clean.trim();
-
-    Serial.printf("Clean Content Length: %d\n", clean.length());
     return clean;
 }
 
 bool EpubLoader::parseContainer() {
-    Serial.println("parseContainer: reading META-INF/container.xml");
     String xml = readFileFromZip("META-INF/container.xml");
-    Serial.printf("parseContainer: xml length=%d\n", xml.length());
-
-    if(xml.length() == 0) {
-        Serial.println("parseContainer: empty xml");
-        return false;
-    }
+    if(xml.length() == 0) return false;
 
     opfPath = extractAttribute(xml, "rootfile", "full-path");
-    Serial.printf("parseContainer: opfPath=%s\n", opfPath.c_str());
-
-    if(opfPath.length() == 0) {
-        Serial.println("parseContainer: no full-path found");
-        return false;
-    }
+    if(opfPath.length() == 0) return false;
 
     int lastSlash = opfPath.lastIndexOf('/');
-    if(lastSlash != -1) {
-        rootDir = opfPath.substring(0, lastSlash + 1);
-    } else {
-        rootDir = "";
-    }
-    Serial.printf("parseContainer: OPF Path: %s, RootDir: %s\n", opfPath.c_str(), rootDir.c_str());
+    if(lastSlash != -1) rootDir = opfPath.substring(0, lastSlash + 1);
+    else rootDir = "";
     return true;
 }
 
 bool EpubLoader::parseOpf() {
-    Serial.println("EpubLoader::parseOpf");
     String xml = readFileFromZip(opfPath.c_str());
-    Serial.printf("OPF XML Size: %d\n", xml.length());
     if(xml.length() == 0) return false;
 
-    // Extract book metadata
     bookTitle = extractMetadata(xml, "dc:title");
     if(bookTitle.length() == 0) bookTitle = extractMetadata(xml, "title");
     bookAuthor = extractMetadata(xml, "dc:creator");
@@ -378,29 +254,11 @@ bool EpubLoader::parseOpf() {
     bookLanguage = extractMetadata(xml, "dc:language");
     bookPubDate = extractMetadata(xml, "dc:date");
 
-    // Look for cover image in metadata
-    String coverId = "";
-    int metaPos = 0;
-    while(true) {
-        int metaStart = xml.indexOf("<meta", metaPos);
-        if(metaStart == -1) break;
-        int metaEnd = xml.indexOf(">", metaStart);
-        if(metaEnd == -1) break;
-
-        String metaTag = xml.substring(metaStart, metaEnd + 1);
-        if(metaTag.indexOf("name=\"cover\"") != -1 || metaTag.indexOf("name='cover'") != -1) {
-            coverId = extractAttribute(metaTag, "meta", "content");
-            break;
-        }
-        metaPos = metaEnd;
-    }
-
     int manifestStart = xml.indexOf("<manifest");
     int manifestEnd = xml.indexOf("</manifest>");
     if(manifestStart == -1 || manifestEnd == -1) return false;
 
     String manifestBlock = xml.substring(manifestStart, manifestEnd);
-
     int pos = 0;
     while(true) {
         int itemStart = manifestBlock.indexOf("<item", pos);
@@ -414,12 +272,9 @@ bool EpubLoader::parseOpf() {
 
         if(id.length() > 0 && href.length() > 0) {
             manifest[id] = href;
-
-            // Check for fonts
             String hrefLower = href;
             hrefLower.toLowerCase();
-            if(hrefLower.endsWith(".ttf") || hrefLower.endsWith(".otf") ||
-               mediaType.indexOf("font") != -1) {
+            if(hrefLower.endsWith(".ttf") || hrefLower.endsWith(".otf") || mediaType.indexOf("font") != -1) {
                 FontInfo font;
                 font.path = rootDir + href;
                 if(hrefLower.endsWith(".ttf")) font.format = "ttf";
@@ -427,11 +282,8 @@ bool EpubLoader::parseOpf() {
                 
                 int lastSlash = href.lastIndexOf('/');
                 int lastDot = href.lastIndexOf('.');
-                if(lastSlash != -1 && lastDot != -1) {
-                    font.family = href.substring(lastSlash + 1, lastDot);
-                } else if(lastDot != -1) {
-                    font.family = href.substring(0, lastDot);
-                }
+                if(lastSlash != -1 && lastDot != -1) font.family = href.substring(lastSlash + 1, lastDot);
+                else if(lastDot != -1) font.family = href.substring(0, lastDot);
                 
                 String filenameLower = font.family;
                 filenameLower.toLowerCase();
@@ -441,14 +293,10 @@ bool EpubLoader::parseOpf() {
                 else font.style = "normal";
                 
                 fonts.push_back(font);
-                Serial.printf("Found font: %s (%s)\n", font.family.c_str(), font.style.c_str());
+                Serial.printf("EPUB Font found: %s (%s)\n", font.family.c_str(), font.style.c_str());
             }
 
-            // Check for cover image
-            if((coverId.length() > 0 && id == coverId) || 
-               itemTag.indexOf("properties=\"cover-image\"") != -1) {
-                coverPath = rootDir + href;
-            }
+            if(itemTag.indexOf("properties=\"cover-image\"") != -1) coverPath = rootDir + href;
         }
         pos = itemEnd;
     }
@@ -458,7 +306,6 @@ bool EpubLoader::parseOpf() {
     if(spineStart == -1 || spineEnd == -1) return false;
 
     String spineBlock = xml.substring(spineStart, spineEnd);
-
     pos = 0;
     while(true) {
         int itemRefStart = spineBlock.indexOf("<itemref", pos);
@@ -476,29 +323,15 @@ bool EpubLoader::parseOpf() {
         }
         pos = itemRefEnd;
     }
-
     return true;
 }
 
-String EpubLoader::getCoverPath() {
-    return coverPath;
-}
+String EpubLoader::getCoverPath() { return coverPath; }
 
 uint8_t* EpubLoader::getCoverData(size_t* outSize) {
-    if(coverPath.length() == 0) {
-        *outSize = 0;
-        return nullptr;
-    }
-
-    if (zip->locateFile(coverPath.c_str()) != 0) {
-        *outSize = 0;
-        return nullptr;
-    }
-
-    if (zip->openCurrentFile() != 0) {
-        *outSize = 0;
-        return nullptr;
-    }
+    if(coverPath.length() == 0) return nullptr;
+    if (zip->locateFile(coverPath.c_str()) != 0) return nullptr;
+    if (zip->openCurrentFile() != 0) return nullptr;
 
     unz_file_info fileInfo;
     char szName[256];
@@ -507,15 +340,10 @@ uint8_t* EpubLoader::getCoverData(size_t* outSize) {
 
     uint8_t* buffer = (uint8_t*)ps_malloc(size);
     if(!buffer) buffer = (uint8_t*)malloc(size);
-    if(!buffer) {
-        zip->closeCurrentFile();
-        *outSize = 0;
-        return nullptr;
-    }
+    if(!buffer) { zip->closeCurrentFile(); return nullptr; }
 
     zip->readCurrentFile(buffer, size);
     zip->closeCurrentFile();
-
     *outSize = size;
     return buffer;
 }
@@ -524,13 +352,10 @@ String EpubLoader::extractAttribute(String xml, String tag, String attr) {
     int attrStart = xml.indexOf(attr + "=\"");
     if(attrStart == -1) attrStart = xml.indexOf(attr + "='");
     if(attrStart == -1) return "";
-    
     int valStart = attrStart + attr.length() + 2; 
     char quote = xml.charAt(attrStart + attr.length() + 1); 
-    
     int valEnd = xml.indexOf(quote, valStart);
     if(valEnd == -1) return "";
-    
     return xml.substring(valStart, valEnd);
 }
 
@@ -546,76 +371,45 @@ String EpubLoader::extractTagContent(String xml, String tag) {
 String EpubLoader::readFileFromZip(const char* path) {
     if (zip->locateFile(path) != ZIP_SUCCESS) return "";
     if (zip->openCurrentFile() != ZIP_SUCCESS) return "";
-
     unz_file_info fileInfo;
     char szName[256];
     zip->getFileInfo(&fileInfo, szName, sizeof(szName), NULL, 0, NULL, 0);
     int size = fileInfo.uncompressed_size;
-
     uint8_t *buffer = (uint8_t*)ps_malloc(size + 1);
     if(!buffer) buffer = (uint8_t*)malloc(size + 1);
-    if(!buffer) {
-        zip->closeCurrentFile();
-        return "";
-    }
-
+    if(!buffer) { zip->closeCurrentFile(); return ""; }
     zip->readCurrentFile(buffer, size);
-    buffer[size] = 0; // Null terminate
-
+    buffer[size] = 0;
     String str = String((char*)buffer);
     free(buffer);
-
     zip->closeCurrentFile();
     return str;
 }
 
-// Metadata getters
 String EpubLoader::getAuthor() { return bookAuthor.length() > 0 ? bookAuthor : "Unknown"; }
 String EpubLoader::getPublisher() { return bookPublisher.length() > 0 ? bookPublisher : "Unknown"; }
 String EpubLoader::getLanguage() { return bookLanguage.length() > 0 ? bookLanguage : "en"; }
 String EpubLoader::getPublicationDate() { return bookPubDate.length() > 0 ? bookPubDate : "Unknown"; }
 String EpubLoader::getISBN() { return bookISBN.length() > 0 ? bookISBN : "Unknown"; }
-
-// Font support
 std::vector<FontInfo> EpubLoader::getFonts() { return fonts; }
 
 uint8_t* EpubLoader::getFontData(String path, size_t* outSize) {
-    if(path.length() == 0) {
-        *outSize = 0;
-        return nullptr;
-    }
-
-    if (zip->locateFile(path.c_str()) != 0) {
-        *outSize = 0;
-        return nullptr;
-    }
-
-    if (zip->openCurrentFile() != 0) {
-        *outSize = 0;
-        return nullptr;
-    }
-
+    if(path.length() == 0) return nullptr;
+    if (zip->locateFile(path.c_str()) != 0) return nullptr;
+    if (zip->openCurrentFile() != 0) return nullptr;
     unz_file_info fileInfo;
     char szName[256];
     zip->getFileInfo(&fileInfo, szName, sizeof(szName), NULL, 0, NULL, 0);
     size_t size = fileInfo.uncompressed_size;
-
     uint8_t* buffer = (uint8_t*)ps_malloc(size);
     if(!buffer) buffer = (uint8_t*)malloc(size);
-    if(!buffer) {
-        zip->closeCurrentFile();
-        *outSize = 0;
-        return nullptr;
-    }
-
+    if(!buffer) { zip->closeCurrentFile(); return nullptr; }
     zip->readCurrentFile(buffer, size);
     zip->closeCurrentFile();
-
     *outSize = size;
     return buffer;
 }
 
-// Helper to extract metadata from OPF XML
 String EpubLoader::extractMetadata(String xml, String tag) {
     int tagStart = xml.indexOf("<" + tag);
     if(tagStart == -1) return "";
@@ -629,7 +423,6 @@ String EpubLoader::extractMetadata(String xml, String tag) {
     return content;
 }
 
-// Get text style from HTML tag
 TextStyle EpubLoader::getStyleFromTag(String tag) {
     tag.toLowerCase();
     if(tag == "b" || tag == "strong") return STYLE_BOLD;
@@ -641,7 +434,6 @@ TextStyle EpubLoader::getStyleFromTag(String tag) {
     return STYLE_NORMAL;
 }
 
-// Get text alignment from CSS style attribute
 TextAlign EpubLoader::getAlignFromStyle(String styleAttr) {
     styleAttr.toLowerCase();
     if(styleAttr.indexOf("text-align:center") != -1 || styleAttr.indexOf("text-align: center") != -1) return ALIGN_CENTER;
@@ -650,7 +442,6 @@ TextAlign EpubLoader::getAlignFromStyle(String styleAttr) {
     return ALIGN_LEFT;
 }
 
-// Parse HTML table
 Table EpubLoader::parseTable(String tableHtml) {
     Table table;
     int trPos = 0;
@@ -684,7 +475,7 @@ Table EpubLoader::parseTable(String tableHtml) {
             String cellContent = rowHtml.substring(cellTagEnd + 1, cellEnd);
             String clean;
             bool inTag = false;
-            for(int i = 0; i < cellContent.length(); i++) {
+            for(int i = 0; i < (int)cellContent.length(); i++) {
                 char c = cellContent.charAt(i);
                 if(c == '<') inTag = true;
                 else if(c == '>') inTag = false;
@@ -704,7 +495,6 @@ Table EpubLoader::parseTable(String tableHtml) {
     return table;
 }
 
-// Parse HTML to rich content with formatting
 std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(String html) {
     std::vector<ContentNode> nodes;
     std::vector<TextStyle> styleStack;
@@ -713,11 +503,12 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(String html) {
     bool isListItem = false;
     String currentText;
     int i = 0;
-    while(i < html.length()) {
+    while(i < (int)html.length()) {
         char c = html.charAt(i);
         if(c == '<') {
             if(currentText.length() > 0) {
-                currentText.trim();
+                // DON'T TRIM HERE - leading spaces in span elements are important!
+                // currentText.trim(); 
                 if(currentText.length() > 0) {
                     ContentNode node;
                     node.type = CONTENT_TEXT;
@@ -774,16 +565,16 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(String html) {
                     tag == "/h2" || tag == "/h3" || tag == "/h4" || tag == "/li") {
                 currentText += "\n";
             }
+            // NO-OP tags that shouldn't cause a break: span, a, em, i, b, strong
             i = tagEnd + 1;
         } else {
             if(c == '\n' || c == '\r' || c == '\t') c = ' ';
-            if(c == ' ' && currentText.length() > 0 && currentText.charAt(currentText.length()-1) == ' ') { i++; continue; }
+            // Handle interpreted characters (¶Ç)
             currentText += c;
             i++;
         }
     }
     if(currentText.length() > 0) {
-        currentText.trim();
         if(currentText.length() > 0) {
             ContentNode node;
             node.type = CONTENT_TEXT;
@@ -794,11 +585,29 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(String html) {
             nodes.push_back(node);
         }
     }
+    
+    // --- FINAL CLEANING ON NODES ---
+    for(auto& node : nodes) {
+        if(node.type == CONTENT_TEXT) {
+            node.textNode.text.replace("¶Ç8", " -- ");
+            node.textNode.text.replace("¶ÇÖ", "'");
+            node.textNode.text.replace("¶Ç£", "\"");
+            node.textNode.text.replace("¶Ç¥", "\"");
+            node.textNode.text.replace("¶Ç", " ");
+            node.textNode.text.replace("\xE2\x80\x9C", "\"");
+            node.textNode.text.replace("\xE2\x80\x9D", "\"");
+            node.textNode.text.replace("\xE2\x80\x98", "'");
+            node.textNode.text.replace("\xE2\x80\x99", "'");
+            node.textNode.text.replace("\xE2\x80\x94", " -- ");
+            node.textNode.text.replace("\xE2\x80\x93", " - ");
+            node.textNode.text.replace("\xE2\x80\xA6", "...");
+        }
+    }
     return nodes;
 }
 
 std::vector<ContentNode> EpubLoader::getChapterContentRich(int index) {
-    if(index < 0 || index >= spine.size()) return std::vector<ContentNode>();
+    if(index < 0 || index >= (int)spine.size()) return std::vector<ContentNode>();
     String href = spine[index].href;
     String fullPath = rootDir + href;
     if(fullPath.startsWith("./")) fullPath = fullPath.substring(2);
