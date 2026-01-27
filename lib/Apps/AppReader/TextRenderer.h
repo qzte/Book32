@@ -7,6 +7,17 @@
 #include "DisplayMgr.h"
 #include "EpubLoader.h"
 
+struct PagePointer {
+    int nodeIndex;
+    int charOffset;
+};
+
+struct RenderResult {
+    int nodesConsumed;
+    int charsConsumedInLastNode;
+    bool pageFull;
+};
+
 class TextRenderer {
 public:
     TextRenderer(int width, int height, int fontSize = 26);
@@ -14,9 +25,13 @@ public:
     bool loadFont(const uint8_t* data, size_t size);
     void setFontSize(int size) { _fontSize = size; calculateDimensions(); }
     
-    // Make public so AppReader can trigger recalculation after font load
     void calculateDimensions();
 
+    // New Dynamic Rendering
+    RenderResult renderRichPageDynamic(Book32Display& display, const std::vector<ContentNode>& content, 
+                                     int startNode, int startOffset, int pageNum, int totalPages, bool draw = true);
+
+    // Keep legacy for now to avoid breaking AppReader during transition
     std::vector<String> paginate(const String& text);
     void renderPage(Book32Display& display, const String& pageText, int pageNum, int totalPages);
     

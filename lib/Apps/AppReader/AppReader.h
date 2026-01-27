@@ -68,9 +68,13 @@ private:
     TextRenderer* _textRenderer;
     String _currentBookPath;
     int _currentChapter;
-    int _currentPage;
+    int _currentPage; // Current page number within the whole book
     bool _needsRedraw;
-    std::vector<String> _pages; // Paginated pages for current chapter
+    
+    // Dynamic Pagination
+    std::vector<ContentNode> _currentRichContent;
+    PagePointer _currentPagePointer;
+    std::vector<PagePointer> _pageHistory; // Stores start of each page for current chapter
     
     void openBook(const String& path);
     void closeBook();

@@ -335,52 +335,112 @@ std::vector<String> TextRenderer::paginateRich(std::vector<ContentNode>& content
     return pages;
 }
 
-void TextRenderer::renderRichPage(Book32Display& display, const String& pageData, int pageNum, int totalPages) {
+RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const std::vector<ContentNode>& content, 
+                                                 int startNode, int startOffset, int pageNum, int totalPages, bool draw) {
     int y = 30;
     int maxY = _height - 35;
-    int lineStart = 0;
-    int nodesRendered = 0;
+    RenderResult result = {0, 0, false};
     
-    Serial.printf("Rendering page %d: start y=%d maxY=%d\n", pageNum+1, y, maxY);
+    if (draw) {
+        Serial.printf("Dynamic Rendering page %d: startNode=%d startOffset=%d\n", pageNum+1, startNode, startOffset);
+    }
     
-    while(lineStart < (int)pageData.length() && y < maxY) {
-        int lineEnd = pageData.indexOf('\n', lineStart);
-        if (lineEnd == -1) lineEnd = pageData.length();
-        String line = pageData.substring(lineStart, lineEnd);
-        
-        if (line.startsWith("T:")) {
-            int c1 = line.indexOf(':', 2);
-            int c2 = line.indexOf(':', c1 + 1);
-            int c3 = line.indexOf(':', c2 + 1);
-            if (c1 != -1 && c2 != -1 && c3 != -1) {
-                RichTextNode node;
-                node.style = (TextStyle)line.substring(2, c1).toInt();
-                node.align = (TextAlign)line.substring(c1 + 1, c2).toInt();
-                node.isListItem = line.substring(c2 + 1, c3) == "1";
-                node.text = line.substring(c3 + 1);
-                int yBefore = y;
-                renderTextNode(display, node, y, maxY);
-                nodesRendered++;
-                Serial.printf("  Node %d: y %d->%d (used %d px)\n", nodesRendered, yBefore, y, y-yBefore);
+    int currentNode = startNode;
+    int currentOffset = startOffset;
+    
+    while (currentNode < (int)content.size() && y < maxY) {
+        auto& node = content[currentNode];
+        if (node.type == CONTENT_TEXT) {
+            // Setup for this specific node
+            int fontSize = _fontSize;
+            bool isBold = false;
+            if (node.textNode.style == STYLE_HEADER1) { fontSize = _fontSize + 6; isBold = true; }
+            else if (node.textNode.style == STYLE_HEADER2) { fontSize = _fontSize + 4; isBold = true; }
+            else if (node.textNode.style == STYLE_HEADER3) { fontSize = _fontSize + 2; isBold = true; }
+            else if (node.textNode.style == STYLE_BOLD) { isBold = true; }
+            else if (node.textNode.style == STYLE_BOLD_ITALIC) { isBold = true; }
+            
+            int x_margin = 25;
+            int usableWidth = _width - (x_margin * 2);
+            int lineSpacing = fontSize + 4;
+            
+            if (_fontLoaded) {
+                if (draw) _ofr.setFontSize(fontSize);
+                
+                String text = node.textNode.text.substring(currentOffset);
+                if (node.textNode.isListItem && currentOffset == 0) text = "• " + text;
+                
+                int pos = 0;
+                while (pos < (int)text.length()) {
+                    // Peek if next line fits
+                    if (y + lineSpacing > maxY) {
+                        result.pageFull = true;
+                        result.charsConsumedInLastNode = currentOffset + pos;
+                        return result;
+                    }
+                    
+                    String line = "";
+                    int line_width = 0;
+                    int line_chars = 0;
+                    
+                    // Word wrap
+                    while (pos + line_chars < (int)text.length()) {
+                        int next_space = text.indexOf(' ', pos + line_chars);
+                        if (next_space == -1) next_space = text.length();
+                        
+                        String word = text.substring(pos + line_chars, next_space);
+                        if (line_chars > 0) word = " " + word;
+                        
+                        int word_width = _fontLoaded ? _ofr.getTextWidth(word.c_str()) : (word.length() * 10);
+                        if (line_width + word_width > usableWidth && line_chars > 0) break;
+                        
+                        line += word;
+                        line_width += word_width;
+                        line_chars = next_space - pos;
+                        if (pos + line_chars < (int)text.length() && text.charAt(pos + line_chars) == ' ') line_chars++;
+                    }
+                    
+                    if (draw) {
+                        int drawX = x_margin;
+                        if (node.textNode.align == ALIGN_CENTER) drawX = (_width - line_width) / 2;
+                        else if (node.textNode.align == ALIGN_RIGHT) drawX = _width - line_width - x_margin;
+                        
+                        _ofr.setCursor(drawX, y);
+                        _ofr.printf("%s", line.c_str());
+                        if (isBold) {
+                            _ofr.setCursor(drawX + 1, y);
+                            _ofr.printf("%s", line.c_str());
+                        }
+                    }
+                    
+                    y += lineSpacing;
+                    pos += line_chars;
+                }
+                // Small gap after paragraph
+                if (y + 6 < maxY) y += 6;
+            } else {
+                // Bitmap fallback (simplified)
+                y += 20; 
+                pos = text.length(); 
             }
         }
-        lineStart = lineEnd + 1;
+        
+        currentNode++;
+        currentOffset = 0; // Reset for next node
+        result.nodesConsumed++;
     }
     
-    Serial.printf("Rendered %d nodes, final y=%d\n", nodesRendered, y);
-    
-    // Footer
-    if (_fontLoaded) {
-        char footer[32];
-        snprintf(footer, sizeof(footer), "Page %d of %d", pageNum + 1, totalPages);
-        _ofr.setFontSize(12);
-        int footerWidth = _ofr.getTextWidth(footer);
-        _ofr.setCursor((_width - footerWidth) / 2, _height - 15);
-        _ofr.printf("%s", footer);
-    } else {
-        display.setTextSize(1);
-        String f = "Page " + String(pageNum + 1) + " of " + String(totalPages);
-        display.setCursor((_width - f.length()*6)/2, _height - 15);
-        display.print(f);
+    if (draw) {
+        // Footer
+        if (_fontLoaded) {
+            char footer[32];
+            snprintf(footer, sizeof(footer), "Page %d of %d", pageNum + 1, totalPages);
+            _ofr.setFontSize(12);
+            int footerWidth = _ofr.getTextWidth(footer);
+            _ofr.setCursor((_width - footerWidth) / 2, _height - 15);
+            _ofr.printf("%s", footer);
+        }
     }
+    
+    return result;
 }

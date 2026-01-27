@@ -243,7 +243,7 @@ void AppReader::calculateTotalPages() {
 int AppReader::getGlobalPageNumber() {
     int page = 0;
     for (int i = 0; i < _currentChapter; i++) page += _chapterPageCounts[i];
-    return page + _currentPage + 1;
+    return page + _pageHistory.size() + 1;
 }
 
 void AppReader::openBook(const String& path) {
@@ -317,14 +317,18 @@ void AppReader::closeBook() {
 void AppReader::loadChapter(int chapterIndex) {
     if (!_epubLoader) return;
     if (chapterIndex < 0 || chapterIndex >= _epubLoader->getChapterCount()) return;
+    
     int originalIndex = chapterIndex;
     while (chapterIndex < _epubLoader->getChapterCount()) {
         _currentChapter = chapterIndex;
-        _currentPage = 0;
-        std::vector<ContentNode> richContent = _epubLoader->getChapterContentRich(chapterIndex);
-        if(richContent.size() > 0) _pages = _textRenderer->paginateRich(richContent);
-        else _pages = _textRenderer->paginate(_epubLoader->getChapterContent(chapterIndex));
-        if (_pages.size() > 0) { _needsRedraw = true; return; }
+        _pageHistory.clear();
+        _currentPagePointer = {0, 0};
+        
+        _currentRichContent = _epubLoader->getChapterContentRich(chapterIndex);
+        if (_currentRichContent.size() > 0) {
+            _needsRedraw = true;
+            return;
+        }
         chapterIndex++;
     }
     _currentChapter = originalIndex;
@@ -332,13 +336,47 @@ void AppReader::loadChapter(int chapterIndex) {
 }
 
 void AppReader::nextPage() {
-    if (_currentPage < (int)_pages.size() - 1) { _currentPage++; _needsRedraw = true; }
-    else nextChapter();
+    DisplayMgr& dispMgr = DisplayMgr::getInstance();
+    Book32Display& display = dispMgr.getDisplay();
+    
+    // Save current spot to history
+    _pageHistory.push_back(_currentPagePointer);
+    
+    // Calculate next page start without drawing
+    RenderResult result = _textRenderer->renderRichPageDynamic(display, _currentRichContent, 
+                                                            _currentPagePointer.nodeIndex, 
+                                                            _currentPagePointer.charOffset, 
+                                                            0, 0, false);
+    
+    if (result.pageFull) {
+        _currentPagePointer.nodeIndex += result.nodesConsumed;
+        _currentPagePointer.charOffset = result.charsConsumedInLastNode;
+        _needsRedraw = true;
+    } else {
+        // End of chapter
+        if (_currentChapter < _epubLoader->getChapterCount() - 1) {
+            loadChapter(_currentChapter + 1);
+        } else {
+            // End of book - don't advance
+            _pageHistory.pop_back();
+        }
+    }
 }
 
 void AppReader::prevPage() {
-    if (_currentPage > 0) { _currentPage--; _needsRedraw = true; }
-    else prevChapter();
+    if (!_pageHistory.empty()) {
+        _currentPagePointer = _pageHistory.back();
+        _pageHistory.pop_back();
+        _needsRedraw = true;
+    } else {
+        // Go to previous chapter
+        if (_currentChapter > 0) {
+            // NOTE: Going to the "last page" of the previous chapter is tricky
+            // because we don't know where it starts without rendering it.
+            // For now, we go to the start of the previous chapter.
+            prevChapter();
+        }
+    }
 }
 
 void AppReader::nextChapter() {
@@ -459,12 +497,10 @@ void AppReader::drawLibrary() {
 }
 
 void AppReader::drawReading() {
-    if (_pages.empty()) return;
-    if (_currentPage >= (int)_pages.size()) return;
     DisplayMgr& dispMgr = DisplayMgr::getInstance();
     Book32Display& display = dispMgr.getDisplay();
     
-    // Check if we need a full refresh based on counter or if we just entered the reader
+    // Check if we need a full refresh
     static bool firstDraw = true;
     if (firstDraw || _pageTurnsSinceRefresh >= _refreshEveryNPages) { 
         display.setFullWindow(); 
@@ -476,15 +512,15 @@ void AppReader::drawReading() {
         _pageTurnsSinceRefresh++; 
     }
     
+    int globalPageNum = getGlobalPageNumber();
+    
     display.firstPage();
     do {
         display.fillScreen(GxEPD_WHITE);
-        display.setTextColor(GxEPD_BLACK);
-        display.setTextSize(FONT_SIZE_DEFAULT);
-        String pageText = _pages[_currentPage];
-        int globalPageNum = getGlobalPageNumber();
-        if(pageText.startsWith("T:") || pageText.startsWith("TABLE:")) _textRenderer->renderRichPage(display, pageText, globalPageNum - 1, _totalBookPages);
-        else _textRenderer->renderPage(display, pageText, globalPageNum - 1, _totalBookPages);
+        _textRenderer->renderRichPageDynamic(display, _currentRichContent, 
+                                           _currentPagePointer.nodeIndex, 
+                                           _currentPagePointer.charOffset, 
+                                           globalPageNum - 1, _totalBookPages, true);
     } while (display.nextPage());
 }
 
