@@ -340,11 +340,9 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
     if (draw) {
         _ofr.setDrawer(display);
         _ofr.setFontColor(GxEPD_BLACK);
-        // Explicitly set a default size in case cache loop starts with a different one
         _ofr.setFontSize(_fontSize);
     }
 
-    // If drawing and we have a cache for this specific page turn (startNode/Offset), use it!
     if (draw && _cachedPage == pageNum && !_lineCache.empty()) {
         for (const auto& line : _lineCache) {
             _ofr.setFontSize(line.fontSize);
@@ -366,7 +364,6 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
         return {0, 0, true};
     }
 
-    // Otherwise, clear and re-calculate
     _lineCache.clear();
     _cachedPage = pageNum;
 
@@ -385,64 +382,84 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
         if (node.type == CONTENT_TEXT) {
             int fontSize = _fontSize;
             bool isBold = false;
-            if (node.textNode.style == STYLE_HEADER1) { fontSize = _fontSize + 6; isBold = true; }
-            else if (node.textNode.style == STYLE_HEADER2) { fontSize = _fontSize + 4; isBold = true; }
+            if (node.textNode.style == STYLE_HEADER1) { fontSize = _fontSize + 10; isBold = true; }
+            else if (node.textNode.style == STYLE_HEADER2) { fontSize = _fontSize + 6; isBold = true; }
             else if (node.textNode.style == STYLE_HEADER3) { fontSize = _fontSize + 2; isBold = true; }
             else if (node.textNode.style == STYLE_BOLD) { isBold = true; }
             else if (node.textNode.style == STYLE_BOLD_ITALIC) { isBold = true; }
             
-            int x_margin = 25;
+            int x_margin = 30; // Increased margin
             int usableWidth = _width - (x_margin * 2);
             int lineSpacing = fontSize + 4;
             
-            // Safety: Ensure offset is valid
-            if (currentOffset > (int)node.textNode.text.length()) currentOffset = node.textNode.text.length();
+            const char* fullText = node.textNode.text.c_str();
+            int textLen = node.textNode.text.length();
             
-            String text = node.textNode.text.substring(currentOffset);
-            if (node.textNode.isListItem && currentOffset == 0) text = "• " + text;
-            int pos = 0;
+            if (currentOffset >= textLen) {
+                currentNode++;
+                currentOffset = 0;
+                result.nodesConsumed++;
+                continue;
+            }
 
-            if (_fontLoaded) {
-                _ofr.setFontSize(fontSize);
+            int pos = currentOffset;
+            _ofr.setFontSize(fontSize);
+
+            while (pos < textLen) {
+                if (y + lineSpacing > maxY) {
+                    result.pageFull = true;
+                    result.charsConsumedInLastNode = pos;
+                    return result;
+                }
                 
-                while (pos < (int)text.length()) {
-                    if (y + lineSpacing > maxY) {
-                        result.pageFull = true;
-                        result.charsConsumedInLastNode = currentOffset + pos;
-                        return result;
+                String lineText = "";
+                if (node.textNode.isListItem && pos == 0) lineText = "• ";
+                
+                int line_width = _ofr.getTextWidth(lineText.c_str());
+                int line_chars = 0;
+                
+                // Word wrap loop
+                while (pos + line_chars < textLen) {
+                    // Find next word (skip leading whitespace relative to current word)
+                    int wordStart = pos + line_chars;
+                    while (wordStart < textLen && isspace(fullText[wordStart])) wordStart++;
+                    
+                    if (wordStart >= textLen) {
+                        line_chars = textLen - pos;
+                        break;
+                    }
+
+                    int wordEnd = wordStart;
+                    while (wordEnd < textLen && !isspace(fullText[wordEnd])) wordEnd++;
+                    
+                    int wordLen = wordEnd - wordStart;
+                    if (wordLen > 250) wordLen = 250;
+                    
+                    memcpy(wordBuf, fullText + wordStart, wordLen);
+                    wordBuf[wordLen] = '\0';
+                    
+                    int wordWidth = _ofr.getTextWidth(wordBuf);
+                    int spaceWidth = (line_chars > 0) ? _ofr.getTextWidth(" ") : 0;
+                    
+                    if (line_width + spaceWidth + wordWidth > usableWidth && line_chars > 0) {
+                        // Word doesn't fit, break and finish this line
+                        break;
                     }
                     
-                    String lineText = "";
-                    int line_width = 0;
-                    int line_chars = 0;
-                    
-                    // Word wrap
-                    while (pos + line_chars < (int)text.length()) {
-                        int next_space = text.indexOf(' ', pos + line_chars);
-                        if (next_space == -1) next_space = text.length();
-                        
-                        int word_len = next_space - (pos + line_chars);
-                        if (word_len > 250) word_len = 250; // Extra safety margin
-                        
-                        if (word_len > 0) {
-                            const char* rawText = text.c_str();
-                            memcpy(wordBuf, rawText + pos + line_chars, word_len);
-                            wordBuf[word_len] = '\0';
-                            
-                            int word_width = _ofr.getTextWidth(wordBuf);
-                            if (line_chars > 0) word_width += _ofr.getTextWidth(" ");
-                            
-                            if (line_width + word_width > usableWidth && line_chars > 0) break;
-                            
-                            if (line_chars > 0) lineText += " ";
-                            lineText += wordBuf;
-                            line_width += word_width;
-                        }
-                        
-                        line_chars = next_space - pos;
-                        if (pos + line_chars < (int)text.length() && text.charAt(pos + line_chars) == ' ') line_chars++;
+                    // Word fits
+                    if (line_chars > 0) {
+                        lineText += " ";
+                        line_width += spaceWidth;
                     }
+                    lineText += wordBuf;
+                    line_width += wordWidth;
+                    line_chars = wordEnd - pos;
                     
+                    // Consume trailing space for next iteration
+                    if (wordEnd < textLen && isspace(fullText[wordEnd])) line_chars++;
+                }
+                
+                if (lineText.length() > 0) {
                     int drawX = x_margin;
                     if (node.textNode.align == ALIGN_CENTER) drawX = (_width - line_width) / 2;
                     else if (node.textNode.align == ALIGN_RIGHT) drawX = _width - line_width - x_margin;
@@ -457,17 +474,11 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
                             _ofr.printf("%s", lineText.c_str());
                         }
                     }
-                    
                     y += lineSpacing;
-                    pos += line_chars;
                 }
-                if (y + 6 < maxY) y += 6;
-            } else {
-                display.setCursor(x_margin, y);
-                display.print(text);
-                y += 20; 
-                pos = text.length(); 
+                pos += line_chars;
             }
+            if (y + 8 < maxY) y += 8;
         }
         
         currentNode++;
