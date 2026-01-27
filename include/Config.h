@@ -19,6 +19,11 @@
 #define EPD_RST     38
 #define EPD_BUSY    4
 
+// Display Settings
+#define SCREEN_WIDTH 800
+#define SCREEN_HEIGHT 480
+#define FONT_SIZE_DEFAULT 3
+
 // GitHub OTA Config
 #define GITHUB_REPO "rolohaun/Book32"
 #define GITHUB_USER "rolohaun"

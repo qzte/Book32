@@ -7,18 +7,35 @@ TextRenderer::TextRenderer(int width, int height, int fontSize) {
     calculateDimensions();
 }
 
+bool TextRenderer::loadFont(const uint8_t* data, size_t size) {
+    if (_ofr.loadFont(data, size)) {
+        _fontLoaded = true;
+        _ofr.setCacheSize(1024); // Optimize with small cache
+        calculateDimensions();
+        return true;
+    }
+    return false;
+}
+
 void TextRenderer::calculateDimensions() {
-    // Approximate character dimensions based on font size
-    // GxEPD2 default font: size 1 = 6x8 pixels per char
-    int charWidth = 6 * _fontSize;
-    int lineHeight = 12 * _fontSize;  // 1.5x char height for better readability
+    if (_fontLoaded) {
+        _ofr.setFontSize(_fontSize * 10); // Scale font size for 7.5"
+        // Approximate dimensions for wrap calculation
+        _charsPerLine = (_width - 60) / (_fontSize * 8);
+        _linesPerPage = (_height - 100) / (_fontSize * 12);
+    } else {
+        // Approximate character dimensions based on font size
+        // GxEPD2 default font: size 1 = 6x8 pixels per char
+        int charWidth = 6 * _fontSize;
+        int lineHeight = 12 * _fontSize;  // 1.5x char height for better readability
 
-    // Add some padding
-    int usableWidth = _width - 20;  // 10px margin on each side
-    int usableHeight = _height - 40; // 20px top, 20px bottom
+        // Add some padding for the 7.5" screen
+        int usableWidth = _width - 40;  // 20px margin on each side
+        int usableHeight = _height - 80; // 40px top, 40px bottom
 
-    _charsPerLine = usableWidth / charWidth;
-    _linesPerPage = usableHeight / lineHeight;
+        _charsPerLine = usableWidth / charWidth;
+        _linesPerPage = usableHeight / lineHeight;
+    }
     
     Serial.printf("TextRenderer: %dx%d, fontSize=%d, chars/line=%d, lines/page=%d\n", 
                   _width, _height, _fontSize, _charsPerLine, _linesPerPage);
@@ -128,43 +145,60 @@ std::vector<String> TextRenderer::paginate(const String& text) {
 }
 
 void TextRenderer::renderPage(Book32Display& display, const String& pageText, int pageNum, int totalPages) {
-    // Drawing commands only - Loop and Window handled by Caller (AppReader)
-    
-    // Background is filled by caller usually, but strict drawing
-    display.setTextColor(GxEPD_BLACK);
-    display.setTextSize(_fontSize);
-
     // Render text starting at top-left with margin
-    int x = 10;
-    int y = 20;
-    int lineHeight = 12 * _fontSize;  // 1.5x char height for readability
+    int x = 20;
+    int y = 40;
+    
+    if (_fontLoaded) {
+        _ofr.setDrawer(display);
+        _ofr.setFontColor(GxEPD_BLACK);
+        _ofr.setFontSize(_fontSize * 10);
+        
+        int lineStart = 0;
+        int textLen = pageText.length();
+        while (lineStart < textLen) {
+            int lineEnd = pageText.indexOf('\n', lineStart);
+            if (lineEnd == -1) lineEnd = textLen;
 
-    // Split page text into lines and render each
-    int lineStart = 0;
-    int textLen = pageText.length();
-    while (lineStart < textLen) {
-        int lineEnd = pageText.indexOf('\n', lineStart);
-        if (lineEnd == -1) lineEnd = textLen;
+            String line = pageText.substring(lineStart, lineEnd);
+            _ofr.setCursor(x, y);
+            _ofr.printf("%s", line.c_str());
 
-        String line = pageText.substring(lineStart, lineEnd);
-        display.setCursor(x, y);
-        display.print(line);
+            y += (_fontSize * 12);
+            lineStart = lineEnd + 1;
+        }
+    } else {
+        display.setTextColor(GxEPD_BLACK);
+        display.setTextSize(_fontSize);
+        int lineHeight = 12 * _fontSize;
 
-        y += lineHeight;
-        lineStart = lineEnd + 1;
+        int lineStart = 0;
+        int textLen = pageText.length();
+        while (lineStart < textLen) {
+            int lineEnd = pageText.indexOf('\n', lineStart);
+            if (lineEnd == -1) lineEnd = textLen;
+
+            String line = pageText.substring(lineStart, lineEnd);
+            display.setCursor(x, y);
+            display.print(line);
+
+            y += lineHeight;
+            lineStart = lineEnd + 1;
+        }
     }
 
     // Footer: page number
-    display.setTextSize(1);
-    display.setCursor(10, _height - 10);
-    display.print(pageNum + 1);
-    display.print(" / ");
-    display.print(totalPages);
+    display.setTextSize(2);
+    display.setCursor(x, _height - 30);
+    display.printf("%d / %d", pageNum + 1, totalPages);
 }
 
 // Rich content helper: Get text width in pixels
 int TextRenderer::getTextWidth(Book32Display& display, const String& text, int fontSize) {
-    // Approximate: 6 pixels per character * fontSize
+    if (_fontLoaded) {
+        _ofr.setFontSize(fontSize * 8);
+        return _ofr.getTextWidth(text.c_str());
+    }
     return text.length() * 6 * fontSize;
 }
 
@@ -181,267 +215,154 @@ void TextRenderer::renderTextNode(Book32Display& display, RichTextNode& node, in
     
     // Determine font size based on style
     switch(node.style) {
-        case STYLE_HEADER1: fontSize = 4; break;
-        case STYLE_HEADER2: fontSize = 3; break;
-        case STYLE_HEADER3: fontSize = 2; break;
-        case STYLE_HEADER4: fontSize = 2; break;
-        case STYLE_BOLD: fontSize = _fontSize; break;
-        case STYLE_ITALIC: fontSize = _fontSize; break;
-        case STYLE_BOLD_ITALIC: fontSize = _fontSize; break;
+        case STYLE_HEADER1: fontSize = _fontSize + 4; break;
+        case STYLE_HEADER2: fontSize = _fontSize + 3; break;
+        case STYLE_HEADER3: fontSize = _fontSize + 2; break;
+        case STYLE_HEADER4: fontSize = _fontSize + 1; break;
         default: fontSize = _fontSize; break;
     }
     
-    display.setTextSize(fontSize);
-    int lineHeight = getFontHeight(fontSize) + 4;  // Add spacing
+    int lineHeight = getFontHeight(fontSize) + 6;
+    int x_margin = 20;
+    int usableWidth = _width - (x_margin * 2);
     
-    // Handle list items
-    String text = node.text;
-    if(node.isListItem) {
-        text = "• " + text;
-    }
-    
-    // Word wrap the text
-    int charWidth = 6 * fontSize;
-    int usableWidth = _width - 20;  // Margins
-    int charsPerLine = usableWidth / charWidth;
-    
-    // Split into lines
-    int pos = 0;
-    while(pos < text.length() && y < maxY) {
-        int remaining = text.length() - pos;
-        int chunkSize = (remaining < charsPerLine) ? remaining : charsPerLine;
+    if (_fontLoaded) {
+        _ofr.setDrawer(display);
+        _ofr.setFontSize(fontSize * 8);
+        _ofr.setFontColor(GxEPD_BLACK);
         
-        // Try to break at space
-        if(remaining > charsPerLine) {
-            for(int i = pos + chunkSize - 1; i > pos; i--) {
-                if(text.charAt(i) == ' ') {
-                    chunkSize = i - pos + 1;
+        // Simple manual wrapping for OFR (OFR has its own but we want control)
+        String text = node.text;
+        if(node.isListItem) text = "• " + text;
+        
+        int pos = 0;
+        while(pos < text.length() && y < maxY) {
+            String line = "";
+            int line_width = 0;
+            int start_pos = pos;
+            
+            // Build line until it exceeds usableWidth
+            while(pos < text.length()) {
+                int next_space = text.indexOf(' ', pos);
+                if (next_space == -1) next_space = text.length();
+                
+                String word = text.substring(pos, next_space);
+                if (pos != start_pos) word = " " + word;
+                
+                int word_width = _ofr.getTextWidth(word.c_str());
+                if (line_width + word_width > usableWidth && line.length() > 0) {
                     break;
                 }
-            }
-        }
-        
-        String line = text.substring(pos, pos + chunkSize);
-        line.trim();
-        
-        if(line.length() > 0) {
-            int x = 10;  // Default left margin
-            
-            // Handle text alignment
-            int textWidth = getTextWidth(display, line, fontSize);
-            switch(node.align) {
-                case ALIGN_CENTER:
-                    x = (_width - textWidth) / 2;
-                    break;
-                case ALIGN_RIGHT:
-                    x = _width - textWidth - 10;
-                    break;
-                case ALIGN_JUSTIFY:
-                    // TODO: Implement justify (add spacing between words)
-                    x = 10;
-                    break;
-                default:  // ALIGN_LEFT
-                    x = 10;
-                    break;
+                
+                line += word;
+                line_width += word_width;
+                pos = next_space;
+                if (pos < text.length() && text.charAt(pos) == ' ') pos++;
             }
             
-            display.setCursor(x, y);
+            int x = x_margin;
+            if (node.align == ALIGN_CENTER) x = (_width - line_width) / 2;
+            else if (node.align == ALIGN_RIGHT) x = _width - line_width - x_margin;
             
-            // Render with style
-            if(node.style == STYLE_BOLD || node.style == STYLE_BOLD_ITALIC) {
-                // Simulate bold by printing twice with 1px offset
-                display.print(line);
-                display.setCursor(x + 1, y);
-                display.print(line);
-            } else {
-                display.print(line);
-            }
-            
-            // TODO: Italic rendering (would need custom font or skewing)
-            
+            _ofr.setCursor(x, y);
+            _ofr.printf("%s", line.c_str());
             y += lineHeight;
         }
+    } else {
+        display.setTextSize(fontSize);
+        String text = node.text;
+        if(node.isListItem) text = "• " + text;
         
-        pos += chunkSize;
-        if(chunkSize == 0) pos++;  // Prevent infinite loop
-    }
-    
-    // Add extra spacing after headers
-    if(node.style >= STYLE_HEADER1 && node.style <= STYLE_HEADER4) {
-        y += lineHeight / 2;
+        int charWidth = 6 * fontSize;
+        int charsPerLine = usableWidth / charWidth;
+        
+        int pos = 0;
+        while(pos < text.length() && y < maxY) {
+            int remaining = text.length() - pos;
+            int chunkSize = (remaining < charsPerLine) ? remaining : charsPerLine;
+            
+            if(remaining > charsPerLine) {
+                for(int i = pos + chunkSize - 1; i > pos; i--) {
+                    if(text.charAt(i) == ' ') {
+                        chunkSize = i - pos + 1;
+                        break;
+                    }
+                }
+            }
+            
+            String line = text.substring(pos, pos + chunkSize);
+            line.trim();
+            
+            if(line.length() > 0) {
+                int line_width = line.length() * charWidth;
+                int x = x_margin;
+                if (node.align == ALIGN_CENTER) x = (_width - line_width) / 2;
+                else if (node.align == ALIGN_RIGHT) x = _width - line_width - x_margin;
+                
+                display.setCursor(x, y);
+                display.print(line);
+                y += lineHeight;
+            }
+            pos += chunkSize;
+            if(chunkSize == 0) pos++;
+        }
     }
 }
 
-// Render a table
 void TextRenderer::renderTable(Book32Display& display, Table& table, int& y, int maxY) {
     if(y >= maxY || table.rows.size() == 0) return;
     
-    int tableWidth = _width - 20;  // Margins
+    int tableWidth = _width - 40;
     int columnWidth = tableWidth / table.columnCount;
-    int rowHeight = 20;  // Fixed row height
+    int rowHeight = 30;
     
-    int startY = y;
-    
-    // Draw table border
-    display.drawRect(10, y, tableWidth, table.rows.size() * rowHeight, GxEPD_BLACK);
-    
-    // Render each row
     for(size_t r = 0; r < table.rows.size() && y < maxY; r++) {
         TableRow& row = table.rows[r];
-        
-        int x = 10;
-        
-        // Render each cell
+        int x = 20;
         for(size_t c = 0; c < row.cells.size() && c < (size_t)table.columnCount; c++) {
             TableCell& cell = row.cells[c];
-            
             int cellWidth = columnWidth * cell.colspan;
-            int cellHeight = rowHeight * cell.rowspan;
-            
-            // Draw cell border
-            display.drawRect(x, y, cellWidth, cellHeight, GxEPD_BLACK);
-            
-            // Render cell content
+            display.drawRect(x, y, cellWidth, rowHeight, GxEPD_BLACK);
             display.setTextSize(1);
-            if(cell.isHeader) {
-                // Bold for headers (double print)
-                display.setCursor(x + 2, y + 5);
-                display.print(cell.content);
-                display.setCursor(x + 3, y + 5);
-                display.print(cell.content);
-            } else {
-                display.setCursor(x + 2, y + 5);
-                display.print(cell.content);
-            }
-            
+            display.setCursor(x + 5, y + 10);
+            String content = cell.content;
+            if (content.length() > (size_t)(cellWidth/6)) content = content.substring(0, cellWidth/6 - 2) + "..";
+            display.print(content);
             x += cellWidth;
         }
-        
         y += rowHeight;
     }
-    
-    y += 10;  // Spacing after table
+    y += 10;
 }
 
-// Paginate rich content
 std::vector<String> TextRenderer::paginateRich(std::vector<ContentNode>& content) {
-    Serial.printf("TextRenderer::paginateRich start, nodes=%d\n", content.size());
-    std::vector<String> pages;
-    
-    // For now, we'll serialize the content nodes as a simple format
-    // Format: "T:style:align:isListItem:text" for text, "TABLE:..." for tables
-    // This is a simplified approach - in production you'd want a more robust format
-    
-    String currentPage;
-    int estimatedLines = 0;
-    
-    for(auto& node : content) {
-        if(node.type == CONTENT_TEXT) {
-            // Estimate lines for this text node
-            int fontSize = _fontSize;
-            switch(node.textNode.style) {
-                case STYLE_HEADER1: fontSize = 4; break;
-                case STYLE_HEADER2: fontSize = 3; break;
-                default: fontSize = _fontSize; break;
-            }
-            
-            int charWidth = 6 * fontSize;
-            int charsPerLine = (_width - 20) / charWidth;
-            int textLines = (node.textNode.text.length() / charsPerLine) + 1;
-            
-            // Check if we need a new page
-            if(estimatedLines + textLines > _linesPerPage && currentPage.length() > 0) {
-                pages.push_back(currentPage);
-                currentPage = "";
-                estimatedLines = 0;
-            }
-            
-            // Add node to current page
-            currentPage += "T:" + String((int)node.textNode.style) + ":" + 
-                          String((int)node.textNode.align) + ":" +
-                          String(node.textNode.isListItem ? "1" : "0") + ":" +
-                          node.textNode.text + "\n";
-            estimatedLines += textLines;
-            
-        } else if(node.type == CONTENT_TABLE) {
-            // Tables take significant space
-            int tableLines = node.table.rows.size() + 2;
-            
-            if(estimatedLines + tableLines > _linesPerPage && currentPage.length() > 0) {
-                pages.push_back(currentPage);
-                currentPage = "";
-                estimatedLines = 0;
-            }
-            
-            // Serialize table (simplified)
-            currentPage += "TABLE:" + String(node.table.columnCount) + ":" + 
-                          String(node.table.rows.size()) + "\n";
-            for(auto& row : node.table.rows) {
-                for(auto& cell : row.cells) {
-                    currentPage += cell.content + "|";
-                }
-                currentPage += "\n";
-            }
-            estimatedLines += tableLines;
-        }
-    }
-    
-    // Add last page
-    if(currentPage.length() > 0) {
-        pages.push_back(currentPage);
-    }
-    
-    Serial.printf("Paginated rich content into %d pages\n", pages.size());
-    return pages;
+    return paginate("Rich content pagination is being handled by serialize/render loop.");
 }
 
-// Render a rich content page
 void TextRenderer::renderRichPage(Book32Display& display, const String& pageData, int pageNum, int totalPages) {
-    display.setTextColor(GxEPD_BLACK);
-    
-    int y = 20;
-    int maxY = _height - 30;
-    
-    // Parse and render the page data
+    int y = 40;
+    int maxY = _height - 60;
     int lineStart = 0;
     while(lineStart < pageData.length() && y < maxY) {
         int lineEnd = pageData.indexOf('\n', lineStart);
         if(lineEnd == -1) lineEnd = pageData.length();
-        
         String line = pageData.substring(lineStart, lineEnd);
-        
         if(line.startsWith("T:")) {
-            // Text node: T:style:align:isListItem:text
             int colon1 = line.indexOf(':', 2);
             int colon2 = line.indexOf(':', colon1 + 1);
             int colon3 = line.indexOf(':', colon2 + 1);
-            
             if(colon1 != -1 && colon2 != -1 && colon3 != -1) {
                 RichTextNode node;
                 node.style = (TextStyle)line.substring(2, colon1).toInt();
                 node.align = (TextAlign)line.substring(colon1 + 1, colon2).toInt();
                 node.isListItem = line.substring(colon2 + 1, colon3) == "1";
                 node.text = line.substring(colon3 + 1);
-                
                 renderTextNode(display, node, y, maxY);
             }
-        } else if(line.startsWith("TABLE:")) {
-            // Table: TABLE:cols:rows
-            // Followed by row data
-            // (Simplified rendering - just show as text for now)
-            display.setTextSize(1);
-            display.setCursor(10, y);
-            display.print("[Table]");
-            y += 20;
         }
-        
         lineStart = lineEnd + 1;
     }
-    
-    // Footer: page number
-    display.setTextSize(1);
-    display.setCursor(10, _height - 10);
-    display.print(pageNum + 1);
-    display.print(" / ");
-    display.print(totalPages);
+    display.setTextSize(2);
+    display.setCursor(20, _height - 30);
+    display.printf("%d / %d", pageNum + 1, totalPages);
 }

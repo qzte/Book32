@@ -3,12 +3,17 @@
 
 #include <Arduino.h>
 #include <vector>
+#include <OpenFontRender.h>
 #include "DisplayMgr.h"
 #include "EpubLoader.h"  // For ContentNode, RichTextNode, Table, etc.
 
 class TextRenderer {
 public:
     TextRenderer(int width, int height, int fontSize = 2);
+    
+    // Font management
+    bool loadFont(const uint8_t* data, size_t size);
+    void setFontSize(int size) { _fontSize = size; calculateDimensions(); }
     
     // Legacy plain text support (backward compatible)
     std::vector<String> paginate(const String& text);
@@ -24,6 +29,9 @@ private:
     int _fontSize;
     int _charsPerLine;
     int _linesPerPage;
+    
+    OpenFontRender _ofr;
+    bool _fontLoaded = false;
 
     // Calculate how many characters fit per line
     void calculateDimensions();

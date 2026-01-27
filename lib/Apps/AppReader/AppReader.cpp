@@ -366,10 +366,38 @@ void AppReader::openBook(const String& path) {
     
     _currentBookPath = path;
     
-    // Load metadata
-    Serial.printf("Book: %s\n", _epubLoader->getTitle().c_str());
-    Serial.printf("Author: %s\n", _epubLoader->getAuthor().c_str());
-    Serial.printf("Publisher: %s\n", _epubLoader->getPublisher().c_str());
+    // Create renderer if needed
+    if (!_textRenderer) {
+        DisplayMgr& dispMgr = DisplayMgr::getInstance();
+        Book32Display& display = dispMgr.getDisplay();
+        _textRenderer = new TextRenderer(display.width(), display.height(), FONT_SIZE_DEFAULT);
+    }
+
+    // Try to load a font from the EPUB
+    std::vector<FontInfo> fonts = _epubLoader->getFonts();
+    if (!fonts.empty()) {
+        Serial.println("Found fonts in EPUB, trying to load...");
+        // Prefer a "normal" style font
+        int fontIdx = 0;
+        for (size_t i = 0; i < (int)fonts.size(); i++) {
+            if (fonts[i].style == "normal") {
+                fontIdx = i;
+                break;
+            }
+        }
+        
+        size_t fontSize = 0;
+        uint8_t* fontData = _epubLoader->getFontData(fonts[fontIdx].path, &fontSize);
+        if (fontData && fontSize > 0) {
+            if (_textRenderer->loadFont(fontData, fontSize)) {
+                Serial.printf("Loaded font: %s\n", fonts[fontIdx].family.c_str());
+                // Note: fontData is in PSRAM and stays alive for the duration of the book
+            } else {
+                Serial.println("Failed to load font into renderer");
+                free(fontData);
+            }
+        }
+    }
     
     // Load first chapter
     loadChapter(0);

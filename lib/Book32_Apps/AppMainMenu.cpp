@@ -94,9 +94,9 @@ void AppMainMenu::draw() {
         }
 
         // === App Icons Grid ===
-        int iconSize = 64;
-        int iconSpacing = 110;
-        int startY = 120;
+        int iconSize = 96;
+        int iconSpacing = 160;
+        int startY = 150;
         int startX = (screenW - (3 * iconSpacing + iconSize)) / 2; // Center 4 icons
 
         for (size_t i = 0; i < apps.size(); i++) {
@@ -107,29 +107,31 @@ void AppMainMenu::draw() {
             int row = (i - 1) / 4;
             
             int x = startX + col * iconSpacing;
-            int y = startY + row * iconSpacing * 1.2; // Extra vertical spacing
+            int y = startY + row * iconSpacing * 1.3; // Extra vertical spacing
 
             // Draw selection rectangle
             if ((int)i == selectedIndex) {
-                display.drawRect(x - 4, y - 4, iconSize + 8, iconSize + 8, GxEPD_BLACK);
-                display.drawRect(x - 3, y - 3, iconSize + 6, iconSize + 6, GxEPD_BLACK);
+                display.drawRect(x - 8, y - 8, iconSize + 16, iconSize + 16, GxEPD_BLACK);
+                display.drawRect(x - 7, y - 7, iconSize + 14, iconSize + 14, GxEPD_BLACK);
             }
 
-            // Draw icon if available
+            // Draw icon if available (scale it up if 48x48)
             const uint8_t* icon = app->getIconImage();
             if (icon) {
-                display.drawBitmap(x, y, icon, iconSize, iconSize, GxEPD_BLACK);
+                // Adafruit GFX drawBitmap doesn't scale. 
+                // For now just draw it centered in the larger box or use helper.
+                display.drawBitmap(x + (iconSize-48)/2, y + (iconSize-48)/2, icon, 48, 48, GxEPD_BLACK);
             } else {
                 // Draw placeholder box
                 display.drawRect(x, y, iconSize, iconSize, GxEPD_BLACK);
             }
 
             // Draw app name below icon
-            display.setTextSize(1);
+            display.setTextSize(2);
             const char* name = app->getName();
             display.getTextBounds(name, 0, 0, &tbx, &tby, &tbw, &tbh);
             int nameX = x + (iconSize - tbw) / 2;
-            display.setCursor(nameX, y + iconSize + 12);
+            display.setCursor(nameX, y + iconSize + 15);
             display.print(name);
         }
 
