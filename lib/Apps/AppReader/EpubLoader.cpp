@@ -300,6 +300,59 @@ TextAlign EpubLoader::getAlignFromStyle(String styleAttr) {
     return ALIGN_LEFT;
 }
 
+Table EpubLoader::parseTable(String tableHtml) {
+    Table table;
+    int trPos = 0;
+    while(true) {
+        int trStart = tableHtml.indexOf("<tr", trPos);
+        if(trStart == -1) break;
+        int trEnd = tableHtml.indexOf("</tr>", trStart);
+        if(trEnd == -1) break;
+        String rowHtml = tableHtml.substring(trStart, trEnd + 5);
+        TableRow row;
+        int cellPos = 0;
+        while(true) {
+            int tdStart = rowHtml.indexOf("<td", cellPos);
+            int thStart = rowHtml.indexOf("<th", cellPos);
+            int cellStart = -1;
+            bool isHeader = false;
+            if(tdStart != -1 && (thStart == -1 || tdStart < thStart)) { cellStart = tdStart; isHeader = false; }
+            else if(thStart != -1) { cellStart = thStart; isHeader = true; }
+            if(cellStart == -1) break;
+            String cellTag = isHeader ? "th" : "td";
+            int cellTagEnd = rowHtml.indexOf(">", cellStart);
+            int cellEnd = rowHtml.indexOf("</" + cellTag + ">", cellTagEnd);
+            if(cellTagEnd == -1 || cellEnd == -1) break;
+            TableCell cell;
+            cell.isHeader = isHeader;
+            String cellOpenTag = rowHtml.substring(cellStart, cellTagEnd + 1);
+            String colspanStr = extractAttribute(cellOpenTag, cellTag, "colspan");
+            String rowspanStr = extractAttribute(cellOpenTag, cellTag, "rowspan");
+            if(colspanStr.length() > 0) cell.colspan = colspanStr.toInt();
+            if(rowspanStr.length() > 0) cell.rowspan = rowspanStr.toInt();
+            String cellContent = rowHtml.substring(cellTagEnd + 1, cellEnd);
+            String clean;
+            bool inTag = false;
+            for(int i = 0; i < (int)cellContent.length(); i++) {
+                char c = cellContent.charAt(i);
+                if(c == '<') inTag = true;
+                else if(c == '>') inTag = false;
+                else if(!inTag) clean += c;
+            }
+            clean.trim();
+            cell.content = clean;
+            row.cells.push_back(cell);
+            cellPos = cellEnd + cellTag.length() + 3;
+        }
+        if(row.cells.size() > 0) {
+            table.rows.push_back(row);
+            if((int)row.cells.size() > table.columnCount) table.columnCount = row.cells.size();
+        }
+        trPos = trEnd + 5;
+    }
+    return table;
+}
+
 int extractIndentFromStyle(String styleAttr) {
     styleAttr.toLowerCase();
     int indentPos = styleAttr.indexOf("text-indent:");
