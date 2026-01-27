@@ -9,12 +9,44 @@ TextRenderer::TextRenderer(int width, int height, int fontSize) {
 }
 
 bool TextRenderer::loadFont(const uint8_t* data, size_t size) {
-    if (_ofr.loadFont(data, size)) {
+    Serial.printf("TextRenderer: Loading font, size=%d bytes\n", size);
+    
+    // Verify the font data looks like a TTF file
+    if (size < 12) {
+        Serial.println("TextRenderer: Font data too small");
+        return false;
+    }
+    
+    uint32_t magic = (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3];
+    Serial.printf("TextRenderer: Font magic: 0x%08X ", magic);
+    
+    if (magic == 0x00010000) {
+        Serial.println("(TrueType)");
+    } else if (magic == 0x4F54544F) {
+        Serial.println("(OpenType/CFF)");
+    } else if (magic == 0x74727565) {
+        Serial.println("(TrueType 'true')");
+    } else {
+        Serial.println("(UNKNOWN - may not be a font!)");
+    }
+    
+    // OpenFontRender::loadFont returns FT_Error (0 = success, non-zero = error)
+    // CRITICAL: FT_Error 0 means SUCCESS, so we must check == 0, not use as bool!
+    FT_Error err = _ofr.loadFont(data, size);
+    Serial.printf("TextRenderer: FreeType returned error code: %d\n", err);
+    
+    if (err == 0) {  // 0 = FT_Err_Ok = SUCCESS
         _fontLoaded = true;
         _ofr.setCacheSize(20, 20, 65536);
         calculateDimensions();
+        Serial.println("TextRenderer: ✓ Font loaded successfully!");
         return true;
     }
+    
+    // Common FreeType errors:
+    // 1 = cannot open resource, 2 = unknown file format, 6 = invalid argument
+    // 85 = invalid face handle, 134 = unimplemented feature
+    Serial.printf("TextRenderer: ✗ Font load FAILED (FT_Error %d)\n", err);
     return false;
 }
 
