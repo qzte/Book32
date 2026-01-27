@@ -1,4 +1,5 @@
 #include "EpubLoader.h"
+#include "Book32FS.h"
 #include <LittleFS.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -23,9 +24,10 @@ void *myOpen(const char *filename, int32_t *size) {
         zipFd = -1;
     }
 
-    // LittleFS mounts at /littlefs, so prepend if not already
     String fullPath = filename;
-    if (!fullPath.startsWith("/littlefs")) {
+    // Check if path has mount prefix, if not, assume littlefs for backward compatibility
+    // but the app should now be passing /ebooks/... or /littlefs/...
+    if (!fullPath.startsWith("/littlefs") && !fullPath.startsWith("/ebooks")) {
         fullPath = "/littlefs" + fullPath;
     }
 
@@ -1046,4 +1048,3 @@ std::vector<ContentNode> EpubLoader::getChapterContentRich(int index) {
     Serial.printf("Parsed %d content nodes\n", nodes.size());
     return nodes;
 }
-

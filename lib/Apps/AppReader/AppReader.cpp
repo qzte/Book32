@@ -2,6 +2,7 @@
 #include "DisplayMgr.h"
 #include "InputMgr.h"
 #include "icon_reader.h"
+#include "Book32FS.h"
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 #include <JPEGDEC.h>
@@ -93,7 +94,7 @@ AppReader::AppReader() {
 }
 
 void AppReader::loadSettings() {
-    File file = LittleFS.open("/reader_config.json", "r");
+    File file = SystemFS.open("/reader_config.json", "r");
     if (file) {
         DynamicJsonDocument doc(512);
         DeserializationError error = deserializeJson(doc, file);
@@ -135,9 +136,9 @@ const uint8_t* AppReader::getIconImage() {
 void AppReader::scanBooks() {
     _books.clear();
 
-    File root = LittleFS.open("/");
+    File root = EbookFS.open("/");
     if(!root || !root.isDirectory()){
-        Serial.println("No root dir");
+        Serial.println("No root dir on EbookFS");
         return;
     }
 
@@ -170,8 +171,8 @@ void AppReader::scanBooks() {
             // Check for pre-extracted thumbnail
             String thumbPath = "/covers/" + fileName;
             thumbPath.replace(".epub", ".thumb");
-            if(LittleFS.exists(thumbPath)) {
-                File thumbFile = LittleFS.open(thumbPath, "r");
+            if(EbookFS.exists(thumbPath)) {
+                File thumbFile = EbookFS.open(thumbPath, "r");
                 if(thumbFile) {
                     size_t thumbSize = thumbFile.size();
                     if(thumbSize == 600) {  // Expected size: 60x80 / 8 = 600 bytes
@@ -205,8 +206,10 @@ bool AppReader::loadBookCover(BookEntry& book) {
 
     // Temporarily open the EPUB to get cover
     EpubLoader tempLoader;
-    if (!tempLoader.open(book.path.c_str())) {
-        Serial.printf("Failed to open %s for cover\n", book.path.c_str());
+    // Prepend partition prefix for EbookFS
+    String fullPath = "/ebooks" + book.path;
+    if (!tempLoader.open(fullPath.c_str())) {
+        Serial.printf("Failed to open %s for cover\n", fullPath.c_str());
         return false;
     }
 
@@ -345,14 +348,16 @@ void AppReader::handleInput(InputAction action) {
 }
 
 void AppReader::openBook(const String& path) {
-    Serial.printf("Opening book: %s\n", path.c_str());
+    // Prepend partition prefix for EbookFS
+    String fullPath = "/ebooks" + path;
+    Serial.printf("Opening book: %s\n", fullPath.c_str());
     
     // Close any currently open book
     closeBook();
     
     // Create EPUB loader
     _epubLoader = new EpubLoader();
-    if (!_epubLoader->open(path.c_str())) {
+    if (!_epubLoader->open(fullPath.c_str())) {
         Serial.println("Failed to open EPUB");
         delete _epubLoader;
         _epubLoader = nullptr;

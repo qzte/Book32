@@ -3,6 +3,7 @@
 #include <AsyncJson.h>
 #include <LittleFS.h>
 #include <JPEGDEC.h>
+#include "../Book32_Core/Book32FS.h"
 #include "../Book32_Update/GitHubMgr.h"
 #include "../Book32_Core/BatteryMgr.h"
 #include "../Book32_Core/TimeMgr.h"
@@ -68,9 +69,9 @@ static int thumbDrawCallback(JPEGDRAW *pDraw) {
 static void extractAndSaveCover(const String& epubPath) {
     Serial.printf("Extracting cover from: %s\n", epubPath.c_str());
 
-    // Create covers directory if needed
-    if (!LittleFS.exists("/covers")) {
-        LittleFS.mkdir("/covers");
+    // Create covers directory if needed on EbookFS
+    if (!EbookFS.exists("/covers")) {
+        EbookFS.mkdir("/covers");
     }
 
     // Open EPUB and get cover data
@@ -126,8 +127,8 @@ static void extractAndSaveCover(const String& epubPath) {
     String thumbPath = "/covers" + epubPath;
     thumbPath.replace(".epub", ".thumb");
 
-    // Save thumbnail
-    File thumbFile = LittleFS.open(thumbPath, FILE_WRITE);
+    // Save thumbnail to EbookFS
+    File thumbFile = EbookFS.open(thumbPath, FILE_WRITE);
     if (thumbFile) {
         thumbFile.write(g_thumbBitmap, THUMB_SIZE);
         thumbFile.close();
@@ -180,9 +181,16 @@ WebMgr& WebMgr::getInstance() {
 }
 
 void WebMgr::init() {
-    if(!LittleFS.begin(false)) { // Format if fail? maybe not
-        Serial.println("LittleFS Mount Failed");
-        if(LittleFS.begin(true)) Serial.println("LittleFS Formatted");
+    // 1. Mount System Partition (spiffs)
+    if(!SystemFS.begin(false, "/littlefs", 10, "spiffs")) {
+        Serial.println("SystemFS Mount Failed, formatting...");
+        SystemFS.begin(true, "/littlefs", 10, "spiffs");
+    }
+
+    // 2. Mount Ebook Partition (ebooks)
+    if(!EbookFS.begin(false, "/ebooks", 10, "ebooks")) {
+        Serial.println("EbookFS Mount Failed, formatting...");
+        EbookFS.begin(true, "/ebooks", 10, "ebooks");
     }
 
     setupEndpoints();
@@ -194,8 +202,8 @@ void WebMgr::init() {
 void saveBookMetadata(const String& truncatedName, const String& originalName) {
     DynamicJsonDocument doc(4096);
     
-    // Load existing metadata if it exists
-    File metaFile = LittleFS.open("/books_meta.json", FILE_READ);
+    // Load existing metadata if it exists from SystemFS
+    File metaFile = SystemFS.open("/books_meta.json", FILE_READ);
     if (metaFile) {
         DeserializationError error = deserializeJson(doc, metaFile);
         metaFile.close();
@@ -208,8 +216,8 @@ void saveBookMetadata(const String& truncatedName, const String& originalName) {
     // Add/update this book's metadata
     doc[truncatedName] = originalName;
     
-    // Save back to file
-    metaFile = LittleFS.open("/books_meta.json", FILE_WRITE);
+    // Save back to file on SystemFS
+    metaFile = SystemFS.open("/books_meta.json", FILE_WRITE);
     if (metaFile) {
         serializeJson(doc, metaFile);
         metaFile.close();
@@ -221,7 +229,7 @@ void saveBookMetadata(const String& truncatedName, const String& originalName) {
 
 // Helper: Get original filename from metadata
 String getOriginalFilename(const String& truncatedName) {
-    File metaFile = LittleFS.open("/books_meta.json", FILE_READ);
+    File metaFile = SystemFS.open("/books_meta.json", FILE_READ);
     if (!metaFile) {
         return truncatedName; // No metadata file, return as-is
     }
@@ -243,7 +251,7 @@ String getOriginalFilename(const String& truncatedName) {
 
 // Helper: Remove book from metadata
 void removeBookMetadata(const String& truncatedName) {
-    File metaFile = LittleFS.open("/books_meta.json", FILE_READ);
+    File metaFile = SystemFS.open("/books_meta.json", FILE_READ);
     if (!metaFile) return; // No metadata file
     
     DynamicJsonDocument doc(4096);
@@ -255,8 +263,8 @@ void removeBookMetadata(const String& truncatedName) {
     // Remove the entry
     doc.remove(truncatedName);
     
-    // Save back
-    metaFile = LittleFS.open("/books_meta.json", FILE_WRITE);
+    // Save back to SystemFS
+    metaFile = SystemFS.open("/books_meta.json", FILE_WRITE);
     if (metaFile) {
         serializeJson(doc, metaFile);
         metaFile.close();
@@ -289,10 +297,12 @@ void WebMgr::setupEndpoints() {
         doc["version"] = SYSTEM_VERSION;
         doc["time"] = TimeMgr::getInstance().getFormattedTime();
 
-        // Filesystem info
-        doc["freeSpace"] = LittleFS.totalBytes() - LittleFS.usedBytes();
-        doc["totalSpace"] = LittleFS.totalBytes();
-        doc["usedSpace"] = LittleFS.usedBytes();
+        // Filesystem info (Combined)
+        doc["freeSpace"] = EbookFS.totalBytes() - EbookFS.usedBytes();
+        doc["totalSpace"] = EbookFS.totalBytes();
+        doc["usedSpace"] = EbookFS.usedBytes();
+        
+        doc["systemFree"] = SystemFS.totalBytes() - SystemFS.usedBytes();
 
         serializeJson(doc, *response);
         request->send(response);
@@ -326,7 +336,7 @@ void WebMgr::setupEndpoints() {
         }
     });
 
-    // API: Update Filesystem
+    // API: Update Filesystem (System partition only)
     server->on("/api/update/filesystem", HTTP_POST, [](AsyncWebServerRequest *request) {
         request->send(200, "text/plain", "Filesystem Update Started");
         Serial.println("Filesystem Update Requested via Web");
@@ -378,7 +388,7 @@ void WebMgr::setupEndpoints() {
         AsyncResponseStream *response = request->beginResponseStream("application/json");
         DynamicJsonDocument doc(512);
 
-        File file = LittleFS.open("/reader_config.json", "r");
+        File file = SystemFS.open("/reader_config.json", "r");
         if (file) {
             DeserializationError error = deserializeJson(doc, file);
             file.close();
@@ -399,7 +409,7 @@ void WebMgr::setupEndpoints() {
             doc = json.as<JsonObject>();
         }
         
-        File file = LittleFS.open("/reader_config.json", "w");
+        File file = SystemFS.open("/reader_config.json", "w");
         if (file) {
             serializeJson(doc, file);
             file.close();
@@ -410,20 +420,20 @@ void WebMgr::setupEndpoints() {
     });
     server->addHandler(readerSettingsHandler);
 
-    // API: List Books
+    // API: List Books from EbookFS
     server->on("/api/books", HTTP_GET, [](AsyncWebServerRequest *request) {
         AsyncResponseStream *response = request->beginResponseStream("application/json");
         DynamicJsonDocument doc(2048);
         JsonArray books = doc.createNestedArray("books");
 
-        File root = LittleFS.open("/");
+        File root = EbookFS.open("/");
         if (root && root.isDirectory()) {
             File file = root.openNextFile();
             while (file) {
                 String name = file.name();
                 if (name.endsWith(".epub")) {
                     JsonObject book = books.createNestedObject();
-                    // Get original filename from metadata
+                    // Get original filename from metadata (SystemFS)
                     String displayName = getOriginalFilename(name);
                     book["name"] = displayName;  // Display name (original)
                     book["filename"] = name;      // Actual filesystem name (truncated)
@@ -437,7 +447,7 @@ void WebMgr::setupEndpoints() {
         request->send(response);
     });
 
-    // API: Upload Book
+    // API: Upload Book to EbookFS
     server->on("/api/books/upload", HTTP_POST,
         [](AsyncWebServerRequest *request) {
             request->send(200, "text/plain", "Upload Complete");
@@ -467,7 +477,7 @@ void WebMgr::setupEndpoints() {
 
                 // Check for filename collision and add suffix if needed
                 String testPath = "/" + safeName;
-                if (LittleFS.exists(testPath)) {
+                if (EbookFS.exists(testPath)) {
                     // Extract base name (without .epub)
                     String baseName = safeName.substring(0, safeName.length() - 5);
                     // Shorten base to make room for suffix "_NN.epub" (max 3 chars + .epub = 8)
@@ -480,7 +490,7 @@ void WebMgr::setupEndpoints() {
                     while (suffix < 100) {
                         safeName = baseName + "_" + String(suffix) + ".epub";
                         testPath = "/" + safeName;
-                        if (!LittleFS.exists(testPath)) {
+                        if (!EbookFS.exists(testPath)) {
                             break;
                         }
                         suffix++;
@@ -490,9 +500,9 @@ void WebMgr::setupEndpoints() {
 
                 savedPath = "/" + safeName;
                 Serial.printf("Upload Start: %s (original: %s)\n", savedPath.c_str(), filename.c_str());
-                uploadFile = LittleFS.open(savedPath, FILE_WRITE);
+                uploadFile = EbookFS.open(savedPath, FILE_WRITE);
                 if (!uploadFile) {
-                    Serial.println("Failed to open file for writing");
+                    Serial.println("Failed to open file for writing on EbookFS");
                     return;
                 }
             }
@@ -506,7 +516,7 @@ void WebMgr::setupEndpoints() {
                     Serial.printf("Upload Complete: %s (%u bytes)\n", savedPath.c_str(), index + len);
                     uploadFile.close();
 
-                    // Save metadata mapping truncated -> original filename
+                    // Save metadata mapping truncated -> original filename (on SystemFS)
                     String truncatedName = savedPath.substring(1); // Remove leading "/"
                     String origName = originalFilename;
                     // Remove path from original filename too
@@ -524,7 +534,7 @@ void WebMgr::setupEndpoints() {
         }
     );
 
-    // API: Delete Book (using query param since regex requires build flag)
+    // API: Delete Book from EbookFS
     server->on("/api/books/delete", HTTP_DELETE, [](AsyncWebServerRequest *request) {
         if (!request->hasParam("name")) {
             request->send(400, "text/plain", "Missing name param");
@@ -534,16 +544,16 @@ void WebMgr::setupEndpoints() {
         String filename = request->getParam("name")->value();
         String path = "/" + filename;
 
-        if (LittleFS.exists(path)) {
-            if (LittleFS.remove(path)) {
+        if (EbookFS.exists(path)) {
+            if (EbookFS.remove(path)) {
                 Serial.printf("Deleted: %s\n", path.c_str());
-                // Also remove from metadata
+                // Also remove from metadata (SystemFS)
                 removeBookMetadata(filename);
-                // Also remove thumbnail if it exists
+                // Also remove thumbnail if it exists (EbookFS)
                 String thumbPath = "/covers/" + filename;
                 thumbPath.replace(".epub", ".thumb");
-                if (LittleFS.exists(thumbPath)) {
-                    LittleFS.remove(thumbPath);
+                if (EbookFS.exists(thumbPath)) {
+                    EbookFS.remove(thumbPath);
                     Serial.printf("Deleted thumbnail: %s\n", thumbPath.c_str());
                 }
                 request->send(200, "text/plain", "Deleted");
@@ -555,8 +565,8 @@ void WebMgr::setupEndpoints() {
         }
     });
 
-    // Static Files from LittleFS (must be last so API routes are matched first)
-    server->serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
+    // Static Files from SystemFS (must be last so API routes are matched first)
+    server->serveStatic("/", SystemFS, "/").setDefaultFile("index.html");
 }
 
 void WebMgr::update() {
