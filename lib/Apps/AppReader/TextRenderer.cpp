@@ -5,334 +5,36 @@ TextRenderer::TextRenderer(int width, int height, int fontSize) {
     _height = height;
     _fontSize = fontSize;
     _fontLoaded = false;
+    _cachedPage = -1;
+    _lastFontSize = -1;
+    memset(_charWidths, 0, sizeof(_charWidths));
     calculateDimensions();
 }
 
 bool TextRenderer::loadFont(const uint8_t* data, size_t size) {
-    Serial.printf("TextRenderer: Loading font, size=%d bytes\n", size);
-
-    // Verify the font data looks like a TTF file
-    if (size < 12) {
-        Serial.println("TextRenderer: Font data too small");
-        return false;
-    }
-
-    uint32_t magic = (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3];
-    Serial.printf("TextRenderer: Font magic: 0x%08X ", magic);
-
-    if (magic == 0x00010000) {
-        Serial.println("(TrueType)");
-    } else if (magic == 0x4F54544F) {
-        Serial.println("(OpenType/CFF)");
-    } else if (magic == 0x74727565) {
-        Serial.println("(TrueType 'true')");
-    } else {
-        Serial.println("(UNKNOWN - may not be a font!)");
-    }
-
-    // OpenFontRender::loadFont returns FT_Error (0 = success, non-zero = error)
-    // CRITICAL: FT_Error 0 means SUCCESS, so we must check == 0, not use as bool!
     FT_Error err = _ofr.loadFont(data, size);
-    Serial.printf("TextRenderer: FreeType returned error code: %d\n", err);
-
-    if (err == 0) {  // 0 = FT_Err_Ok = SUCCESS
+    if (err == 0) {
         _fontLoaded = true;
         _ofr.setCacheSize(20, 20, 65536);
         calculateDimensions();
-        Serial.println("TextRenderer: ✓ Font loaded successfully!");
         return true;
     }
-
-    // Common FreeType errors:
-    // 1 = cannot open resource, 2 = unknown file format, 6 = invalid argument
-    // 85 = invalid face handle, 134 = unimplemented feature
-    Serial.printf("TextRenderer: ✗ Font load FAILED (FT_Error %d)\n", err);
     return false;
 }
 
 void TextRenderer::calculateDimensions() {
     if (_fontLoaded) {
         _ofr.setFontSize(_fontSize);
-        int usableWidth = _width - 50;  // Smaller margins
+        int usableWidth = _width - 50;
         int avgCharWidth = _ofr.getTextWidth("n");
         _charsPerLine = usableWidth / (avgCharWidth > 0 ? avgCharWidth : (_fontSize/2));
-        _lineHeight = _fontSize + 4;  // Tighter line spacing (1.2x)
-        _linesPerPage = (_height - 70) / _lineHeight;  // More usable space
+        _lineHeight = _fontSize + 4;
+        _linesPerPage = (_height - 70) / _lineHeight;
     } else {
-        int charWidth = 10;
-        _charsPerLine = (_width - 50) / charWidth;
+        _charsPerLine = (_width - 50) / 10;
         _lineHeight = 20;
         _linesPerPage = (_height - 70) / _lineHeight;
     }
-    Serial.printf("TextRenderer: %dx%d font=%dpx lines=%d lpp=%d\n", _width, _height, _fontSize, _lineHeight, _linesPerPage);
-}
-
-std::vector<String> TextRenderer::wrapText(const String& text) {
-    std::vector<String> lines;
-    int pos = 0;
-    int textLen = text.length();
-    int usableWidth = _width - 60;
-
-    while (pos < textLen) {
-        int newlinePos = text.indexOf('\n', pos);
-        int endPos = (newlinePos != -1) ? newlinePos : textLen;
-        String paragraph = text.substring(pos, endPos);
-
-        if (paragraph.length() == 0) {
-            lines.push_back("");
-        } else {
-            int start = 0;
-            while (start < paragraph.length()) {
-                int len = 1;
-                if (_fontLoaded) {
-                    while (start + len <= paragraph.length()) {
-                        String test = paragraph.substring(start, start + len);
-                        if (_ofr.getTextWidth(test.c_str()) > usableWidth) { len--; break; }
-                        len++;
-                    }
-                    if (start + len < paragraph.length()) {
-                        int lastSpace = paragraph.lastIndexOf(' ', start + len);
-                        if (lastSpace > start) len = lastSpace - start + 1;
-                    }
-                } else {
-                    len = _charsPerLine;
-                    if (start + len < paragraph.length()) {
-                        int lastSpace = paragraph.lastIndexOf(' ', start + len);
-                        if (lastSpace > start) len = lastSpace - start + 1;
-                    }
-                }
-                String line = paragraph.substring(start, start + len);
-                line.trim();
-                lines.push_back(line);
-                start += len;
-            }
-        }
-        if (newlinePos != -1) pos = newlinePos + 1;
-        else break;
-        yield();
-    }
-    return lines;
-}
-
-std::vector<String> TextRenderer::paginate(const String& text) {
-    std::vector<String> pages;
-    std::vector<String> lines = wrapText(text);
-    String currentPage = "";
-    int linesInPage = 0;
-    for (const auto& line : lines) {
-        if (linesInPage >= _linesPerPage) { pages.push_back(currentPage); currentPage = ""; linesInPage = 0; }
-        currentPage += line + "\n";
-        linesInPage++;
-    }
-    if (currentPage.length() > 0) pages.push_back(currentPage);
-    return pages;
-}
-
-void TextRenderer::renderPage(Book32Display& display, const String& pageText, int pageNum, int totalPages) {
-    int x = 25;
-    int y = 35;  // Start higher
-    int maxY = _height - 50;
-
-    if (_fontLoaded) {
-        _ofr.setDrawer(display);
-        _ofr.setFontColor(GxEPD_BLACK);
-        _ofr.setFontSize(_fontSize);
-        int lineStart = 0;
-        while (lineStart < (int)pageText.length() && y < maxY) {
-            int lineEnd = pageText.indexOf('\n', lineStart);
-            if (lineEnd == -1) lineEnd = pageText.length();
-            _ofr.setCursor(x, y);
-            _ofr.printf("%s", pageText.substring(lineStart, lineEnd).c_str());
-            y += _lineHeight;
-            lineStart = lineEnd + 1;
-        }
-    } else {
-        display.setTextColor(GxEPD_BLACK);
-        display.setTextSize(2);
-        int lineStart = 0;
-        while (lineStart < (int)pageText.length() && y < maxY) {
-            int lineEnd = pageText.indexOf('\n', lineStart);
-            if (lineEnd == -1) lineEnd = pageText.length();
-            display.setCursor(x, y);
-            display.print(pageText.substring(lineStart, lineEnd));
-            y += _lineHeight;
-            lineStart = lineEnd + 1;
-        }
-    }
-
-    // Footer - page number centered at bottom
-    if (_fontLoaded) {
-        char footer[32];
-        snprintf(footer, sizeof(footer), "Page %d of %d", pageNum + 1, totalPages);
-        int footerWidth = _ofr.getTextWidth(footer);
-        _ofr.setFontSize(14);  // Smaller footer
-        _ofr.setCursor((_width - footerWidth) / 2, _height - 20);
-        _ofr.printf("%s", footer);
-    } else {
-        display.setTextSize(1);
-        String footer = "Page " + String(pageNum + 1) + " of " + String(totalPages);
-        display.setCursor((_width - footer.length()*6)/2, _height - 20);
-        display.print(footer);
-    }
-}
-
-void TextRenderer::renderTextNode(Book32Display& display, RichTextNode& node, int& y, int maxY) {
-    if (y >= maxY) return;
-
-    // Determine font size based on style
-    int fontSize = _fontSize;
-    bool isBold = false;
-    bool isItalic = false;
-
-    if (node.style == STYLE_HEADER1) { fontSize = _fontSize + 6; isBold = true; }
-    else if (node.style == STYLE_HEADER2) { fontSize = _fontSize + 4; isBold = true; }
-    else if (node.style == STYLE_HEADER3) { fontSize = _fontSize + 2; isBold = true; }
-    else if (node.style == STYLE_BOLD) { isBold = true; }
-    else if (node.style == STYLE_ITALIC) { isItalic = true; }
-    else if (node.style == STYLE_BOLD_ITALIC) { isBold = true; isItalic = true; }
-
-    int x_margin = 25;
-    int usableWidth = _width - (x_margin * 2);
-    int lineSpacing = fontSize + 4;
-
-    if (_fontLoaded) {
-        _ofr.setDrawer(display);
-        _ofr.setFontSize(fontSize);
-        _ofr.setFontColor(GxEPD_BLACK);
-
-        int currentX = x_margin;
-        // Paragraph indent for normal text (first line of long paragraphs)
-        bool doIndent = (node.style == STYLE_NORMAL && !node.isListItem && node.text.length() > 50);
-        if (doIndent) currentX += 20;
-
-        String text = node.text;
-        if (node.isListItem) text = "• " + text;
-
-        int pos = 0;
-        bool firstLine = true;
-        while(pos < (int)text.length() && y < maxY) {
-            String line = "";
-            int line_width = 0;
-
-            // Word wrap
-            while(pos < (int)text.length()) {
-                int next_space = text.indexOf(' ', pos);
-                if (next_space == -1) next_space = text.length();
-                String word = text.substring(pos, next_space);
-                if (line.length() > 0) word = " " + word;
-                int word_width = _ofr.getTextWidth(word.c_str());
-
-                int availWidth = usableWidth - (currentX - x_margin);
-                if (line_width + word_width > availWidth && line.length() > 0) break;
-
-                line += word;
-                line_width += word_width;
-                pos = next_space;
-                if (pos < (int)text.length() && text.charAt(pos) == ' ') pos++;
-            }
-
-            // Calculate draw position
-            int drawX = currentX;
-            if (node.align == ALIGN_CENTER) drawX = (_width - line_width) / 2;
-            else if (node.align == ALIGN_RIGHT) drawX = _width - line_width - x_margin;
-
-            // Draw the line (with faux bold if needed)
-            _ofr.setCursor(drawX, y);
-            _ofr.printf("%s", line.c_str());
-
-            // Faux bold: draw again with 1px offset
-            if (isBold) {
-                _ofr.setCursor(drawX + 1, y);
-                _ofr.printf("%s", line.c_str());
-            }
-
-            y += lineSpacing;
-            currentX = x_margin;  // Reset indent after first line
-            firstLine = false;
-        }
-
-        // Small gap after long paragraphs only
-        if (node.text.length() > 50) {
-            y += 4;
-        }
-    } else {
-        // Bitmap fallback
-        display.setTextSize(2);
-        String text = node.text;
-        if (node.isListItem) text = "• " + text;
-        int charWidth = 10;
-        int charsPerLine = usableWidth / charWidth;
-        int pos = 0;
-        while(pos < (int)text.length() && y < maxY) {
-            int len = charsPerLine;
-            if (pos + len < (int)text.length()) {
-                int lastSpace = text.lastIndexOf(' ', pos + len);
-                if (lastSpace > pos) len = lastSpace - pos + 1;
-            }
-            String line = text.substring(pos, pos + len);
-            display.setCursor(x_margin, y);
-            display.print(line);
-            y += 20;
-            pos += len;
-        }
-    }
-}
-
-void TextRenderer::renderTable(Book32Display& display, Table& table, int& y, int maxY) {
-    display.drawRect(30, y, _width - 60, 40, GxEPD_BLACK);
-    y += 50;
-}
-
-std::vector<String> TextRenderer::paginateRich(std::vector<ContentNode>& content) {
-    std::vector<String> pages;
-    String currentPage = "";
-    int currentY = 30;
-    int maxY = _height - 40;  // More usable space
-
-    Serial.printf("Paginating: screen=%dx%d maxY=%d\n", _width, _height, maxY);
-
-    for (auto& node : content) {
-        if (node.type == CONTENT_TEXT) {
-            String serialized = "T:" + String((int)node.textNode.style) + ":" + String((int)node.textNode.align) + ":" + String(node.textNode.isListItem ? "1" : "0") + ":" + node.textNode.text + "\n";
-
-            // Calculate height this node will take
-            int fontSize = _fontSize;
-            if (node.textNode.style == STYLE_HEADER1) fontSize += 6;
-            else if (node.textNode.style == STYLE_HEADER2) fontSize += 4;
-            else if (node.textNode.style == STYLE_HEADER3) fontSize += 2;
-
-            int lineSpacing = fontSize + 4;
-            int usableWidth = _width - 50;
-
-            // More accurate width estimation for proportional fonts
-            int avgCharWidth = _fontLoaded ? 8 : 10;  // ~8px average for 18px font
-            int charsPerLine = usableWidth / avgCharWidth;
-            if (charsPerLine < 20) charsPerLine = 20;
-
-            int textLen = node.textNode.text.length();
-            int textLines = (textLen + charsPerLine - 1) / charsPerLine;  // Ceiling division
-            if (textLines < 1) textLines = 1;
-
-            // Only add paragraph spacing for actual paragraphs, not short lines
-            int nodeHeight = textLines * lineSpacing;
-            if (textLen > 50) nodeHeight += 6;  // Small gap after paragraphs
-
-            // Check if we need a new page
-            if (currentY + nodeHeight > maxY && currentPage.length() > 0) {
-                pages.push_back(currentPage);
-                currentPage = "";
-                currentY = 30;
-            }
-
-            currentPage += serialized;
-            currentY += nodeHeight;
-        }
-        yield();
-    }
-
-    if (currentPage.length() > 0) pages.push_back(currentPage);
-    Serial.printf("Paginated into %d pages\n", pages.size());
-    return pages;
 }
 
 RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const std::vector<ContentNode>& content, 
@@ -342,7 +44,6 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
         _ofr.setFontColor(GxEPD_BLACK);
     }
 
-    // Cache check must be very fast
     if (draw && _cachedPage == pageNum && !_lineCache.empty()) {
         for (const auto& line : _lineCache) {
             _ofr.setFontSize(line.fontSize);
@@ -353,14 +54,12 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
                 _ofr.printf("%s", line.text.c_str());
             }
         }
-        
         char footer[32];
-        snprintf(footer, sizeof(footer), "Page %d of %d", pageNum + 1, totalPages);
+        snprintf(footer, sizeof(footer), "Page %d", pageNum + 1);
         _ofr.setFontSize(12);
         int footerWidth = _ofr.getTextWidth(footer);
         _ofr.setCursor((_width - footerWidth) / 2, _height - 15);
         _ofr.printf("%s", footer);
-        
         return {0, 0, true};
     }
 
@@ -368,17 +67,14 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
     _cachedPage = pageNum;
 
     int y = 30;
-    int maxY = _height - 35;
+    int maxY = _height - 40;
     RenderResult result = {0, 0, false};
-    
     int currentNode = startNode;
     int currentOffset = startOffset;
     
-    char wordBuf[256];
-    char lineBuf[512];
+    char lineBuf[256];
 
     while (currentNode < (int)content.size() && y < maxY) {
-        yield();
         auto& node = content[currentNode];
         if (node.type == CONTENT_TEXT) {
             int fontSize = _fontSize;
@@ -388,22 +84,22 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
             else if (node.textNode.style == STYLE_HEADER3) { fontSize = _fontSize + 4; isBold = true; }
             else if (node.textNode.style == STYLE_BOLD) { isBold = true; }
             
+            _ofr.setFontSize(fontSize);
+            int lineSpacing = fontSize + 8;
             int x_margin = 35;
             int usableWidth = _width - (x_margin * 2);
-            int lineSpacing = fontSize + 6;
-            
-            const char* fullText = node.textNode.text.c_str();
-            int textLen = node.textNode.text.length();
-            
-            if (currentOffset >= textLen) {
-                currentNode++;
-                currentOffset = 0;
-                result.nodesConsumed++;
-                continue;
+
+            if (_fontLoaded && fontSize != _lastFontSize) {
+                for (int c = 32; c < 127; c++) {
+                    char buf[2] = {(char)c, 0};
+                    _charWidths[c] = _ofr.getTextWidth(buf);
+                }
+                _lastFontSize = fontSize;
             }
 
+            const char* text = node.textNode.text.c_str();
+            int textLen = node.textNode.text.length();
             int pos = currentOffset;
-            _ofr.setFontSize(fontSize);
 
             while (pos < textLen && y < maxY) {
                 if (y + lineSpacing > maxY) {
@@ -411,78 +107,62 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
                     result.charsConsumedInLastNode = pos;
                     return result;
                 }
-                
+
+                int line_chars = 0;
+                int line_width = 0;
                 lineBuf[0] = '\0';
-                int lineLen = 0;
+                
                 if (node.textNode.isListItem && pos == currentOffset) {
                     strcpy(lineBuf, "• ");
-                    lineLen = 2;
+                    line_width = _fontLoaded ? _charWidths['n'] * 2 : 20; 
                 }
-                
-                int line_width = _ofr.getTextWidth(lineBuf);
-                int line_chars = 0;
-                
-                // Optimized Word Wrap
+
                 while (pos + line_chars < textLen) {
-                    // 1. Skip whitespace to find word start
                     int wordStart = pos + line_chars;
-                    while (wordStart < textLen && (fullText[wordStart] == ' ' || fullText[wordStart] == '\n' || fullText[wordStart] == '\r')) {
-                        wordStart++;
-                    }
+                    while (wordStart < textLen && isspace((unsigned char)text[wordStart])) wordStart++;
                     
                     if (wordStart >= textLen) {
                         line_chars = textLen - pos;
                         break;
                     }
 
-                    // 2. Find word end
                     int wordEnd = wordStart;
-                    while (wordEnd < textLen && !(fullText[wordEnd] == ' ' || fullText[wordEnd] == '\n' || fullText[wordEnd] == '\r')) {
-                        wordEnd++;
+                    while (wordEnd < textLen && !isspace((unsigned char)text[wordEnd])) wordEnd++;
+                    
+                    int wordWidth = 0;
+                    for (int k = wordStart; k < wordEnd; k++) {
+                        unsigned char uc = (unsigned char)text[k];
+                        if (_fontLoaded && uc < 128 && _charWidths[uc] > 0) wordWidth += _charWidths[uc];
+                        else wordWidth += (fontSize / 2);
                     }
-                    
-                    int wordLen = wordEnd - wordStart;
-                    if (wordLen > 250) wordLen = 250;
-                    
-                    memcpy(wordBuf, fullText + wordStart, wordLen);
-                    wordBuf[wordLen] = '\0';
-                    
-                    // 3. Measure
-                    int wordWidth = _ofr.getTextWidth(wordBuf);
-                    int spaceWidth = (lineLen > 0) ? _ofr.getTextWidth(" ") : 0;
-                    
-                    // 4. Check fit
-                    if (lineLen > 0 && line_width + spaceWidth + wordWidth > usableWidth) {
-                        break; // Line is full
-                    }
-                    
-                    // 5. Commit word to line
-                    if (lineLen > 0) {
-                        strcat(lineBuf, " ");
-                        line_width += spaceWidth;
-                        lineLen++;
-                    }
-                    strcat(lineBuf, wordBuf);
-                    line_width += wordWidth;
-                    lineLen += wordLen;
-                    
-                    line_chars = wordEnd - pos;
-                    
-                    // Safety break for extremely long words that exceed screen width
-                    if (line_width > usableWidth && lineLen > wordLen) break;
-                    if (line_width > usableWidth) { // Single word too long? Force it and break.
-                        line_chars = wordEnd - pos;
+
+                    int spaceWidth = (line_width > 0) ? (_fontLoaded ? _charWidths[' '] : (fontSize/4)) : 0;
+
+                    if (line_width + spaceWidth + wordWidth > usableWidth && line_width > 0) {
                         break;
                     }
+
+                    if (line_width > 0) {
+                        strcat(lineBuf, " ");
+                        line_width += spaceWidth;
+                    }
+                    
+                    int currentLen = strlen(lineBuf);
+                    int toCopy = wordEnd - wordStart;
+                    if (currentLen + toCopy < 255) {
+                        strncat(lineBuf, text + wordStart, toCopy);
+                        line_width += wordWidth;
+                    }
+                    
+                    line_chars = wordEnd - pos;
                 }
-                
-                if (lineLen > 0) {
+
+                if (strlen(lineBuf) > 0) {
                     int drawX = x_margin;
                     if (node.textNode.align == ALIGN_CENTER) drawX = (_width - line_width) / 2;
                     else if (node.textNode.align == ALIGN_RIGHT) drawX = _width - line_width - x_margin;
                     
                     _lineCache.push_back({drawX, y, fontSize, isBold, String(lineBuf)});
-
                     if (draw) {
                         _ofr.setCursor(drawX, y);
                         _ofr.printf("%s", lineBuf);
@@ -492,31 +172,34 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
                         }
                     }
                     y += lineSpacing;
-                } else {
-                    // Empty line or whitespace only - consume it
-                    pos++;
-                    continue;
                 }
                 
                 pos += line_chars;
+                if (pos < textLen && isspace((unsigned char)text[pos])) pos++; 
                 yield();
             }
             if (y + 10 < maxY) y += 10;
         }
-        
         currentNode++;
         currentOffset = 0;
         result.nodesConsumed++;
     }
-    
+
     if (draw) {
         char footer[32];
-        snprintf(footer, sizeof(footer), "Page %d of %d", pageNum + 1, totalPages);
+        snprintf(footer, sizeof(footer), "Page %d", pageNum + 1);
         _ofr.setFontSize(12);
         int footerWidth = _ofr.getTextWidth(footer);
         _ofr.setCursor((_width - footerWidth) / 2, _height - 15);
         _ofr.printf("%s", footer);
     }
-    
     return result;
 }
+
+std::vector<String> TextRenderer::wrapText(const String& text) { return std::vector<String>(); }
+std::vector<String> TextRenderer::paginate(const String& text) { return std::vector<String>(); }
+void TextRenderer::renderPage(Book32Display& display, const String& pageText, int pageNum, int totalPages) {}
+std::vector<String> TextRenderer::paginateRich(std::vector<ContentNode>& content) { return std::vector<String>(); }
+void TextRenderer::renderRichPage(Book32Display& display, const String& pageData, int pageNum, int totalPages) {}
+void TextRenderer::renderTextNode(Book32Display& display, RichTextNode& node, int& y, int maxY) {}
+void TextRenderer::renderTable(Book32Display& display, Table& table, int& y, int maxY) {}

@@ -58,6 +58,10 @@ private:
     bool _fontLoaded = false;
     std::vector<RenderedLine> _lineCache;
     int _cachedPage = -1;
+    
+    // Fast character width cache
+    int _charWidths[256];
+    int _lastFontSize = -1;
 
     std::vector<String> wrapText(const String& text);
     void renderTextNode(Book32Display& display, RichTextNode& node, int& y, int maxY);
