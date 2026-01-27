@@ -22,7 +22,7 @@ void DisplayMgr::init() {
     // false: serial feedback disabled
     display.init(115200, true, 10, false); 
     
-    display.setRotation(1); // Portrait mode for 480x800
+    display.setRotation(3); // Portrait mode (flipped 180° for 480x800)
     display.setTextColor(GxEPD_BLACK);
     display.setFont(NULL); // Default font
 }

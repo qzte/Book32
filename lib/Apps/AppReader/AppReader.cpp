@@ -7,14 +7,12 @@
 #include <ArduinoJson.h>
 #include <JPEGDEC.h>
 
-// Global for JPEG decoder callback
 static uint8_t* g_coverBitmap = nullptr;
 static int g_coverWidth = 0;
 static int g_coverHeight = 0;
 static int g_targetWidth = 0;
 static int g_targetHeight = 0;
 
-// JPEG decoder callback - draws to bitmap buffer with Atkinson dithering
 int jpegDrawCallback(JPEGDRAW *pDraw) {
     if (!g_coverBitmap) return 0;
     static int16_t* errorBuffer = nullptr;
@@ -67,6 +65,7 @@ AppReader::AppReader() {
     _currentPage = 0;
     _needsRedraw = true;
     _pageTurnsSinceRefresh = 0;
+    _totalBookPages = 0;
     loadSettings();
 }
 
@@ -198,8 +197,6 @@ void AppReader::drawCover(Book32Display& display, BookEntry& book, int x, int y,
     }
 }
 
-void AppReader::update() {}
-
 void AppReader::handleInput(InputAction action) {
     if (action == INPUT_NONE) return;
     if (_state == VIEW_LIBRARY) {
@@ -221,9 +218,27 @@ void AppReader::handleInput(InputAction action) {
     }
 }
 
+void AppReader::calculateTotalPages() {
+    _totalBookPages = 0;
+    _chapterPageCounts.clear();
+    for (int i = 0; i < _epubLoader->getChapterCount(); i++) {
+        std::vector<ContentNode> richContent = _epubLoader->getChapterContentRich(i);
+        std::vector<String> pages;
+        if(richContent.size() > 0) pages = _textRenderer->paginateRich(richContent);
+        else pages = _textRenderer->paginate(_epubLoader->getChapterContent(i));
+        _chapterPageCounts.push_back(pages.size());
+        _totalBookPages += pages.size();
+    }
+}
+
+int AppReader::getGlobalPageNumber() {
+    int page = 0;
+    for (int i = 0; i < _currentChapter; i++) page += _chapterPageCounts[i];
+    return page + _currentPage + 1;
+}
+
 void AppReader::openBook(const String& path) {
     String fullPath = "/ebooks" + path;
-    Serial.printf("Opening book: %s\n", fullPath.c_str());
     closeBook();
     _epubLoader = new EpubLoader();
     if (!_epubLoader->open(fullPath.c_str())) { delete _epubLoader; _epubLoader = nullptr; return; }
@@ -233,11 +248,7 @@ void AppReader::openBook(const String& path) {
         Book32Display& display = dispMgr.getDisplay();
         _textRenderer = new TextRenderer(display.width(), display.height(), FONT_SIZE_DEFAULT);
     }
-
-    // FONT LOADING LOGIC
     bool fontLoaded = false;
-    
-    // 1. Try to load from the EPUB itself
     std::vector<FontInfo> fonts = _epubLoader->getFonts();
     if (!fonts.empty()) {
         int fontIdx = 0;
@@ -245,30 +256,20 @@ void AppReader::openBook(const String& path) {
         size_t fontSize = 0;
         uint8_t* fontData = _epubLoader->getFontData(fonts[fontIdx].path, &fontSize);
         if (fontData && fontSize > 0) {
-            if (_textRenderer->loadFont(fontData, fontSize)) {
-                Serial.printf("Loaded EPUB font: %s\n", fonts[fontIdx].family.c_str());
-                fontLoaded = true;
-            } else { free(fontData); }
+            if (_textRenderer->loadFont(fontData, fontSize)) fontLoaded = true;
+            else free(fontData);
         }
     }
-
-    // 2. If no font in EPUB, try to load global fallback font from EbookFS
     if (!fontLoaded && EbookFS.exists("/font.ttf")) {
         File f = EbookFS.open("/font.ttf", "r");
         if (f) {
             size_t s = f.size();
             uint8_t* d = (uint8_t*)ps_malloc(s);
-            if (d) {
-                f.read(d, s);
-                if (_textRenderer->loadFont(d, s)) {
-                    Serial.println("Loaded global fallback font from /ebooks/font.ttf");
-                    fontLoaded = true;
-                } else { free(d); }
-            }
+            if (d) { f.read(d, s); if (_textRenderer->loadFont(d, s)) fontLoaded = true; else free(d); }
             f.close();
         }
     }
-    
+    calculateTotalPages();
     loadChapter(0);
     _state = VIEW_READING;
     _needsRedraw = true;
@@ -277,17 +278,12 @@ void AppReader::openBook(const String& path) {
 void AppReader::closeBook() {
     if (_epubLoader) { _epubLoader->close(); delete _epubLoader; _epubLoader = nullptr; }
     if (_textRenderer) { delete _textRenderer; _textRenderer = nullptr; }
-    _pages.clear();
+    _pages.clear(); _chapterPageCounts.clear(); _totalBookPages = 0;
 }
 
 void AppReader::loadChapter(int chapterIndex) {
     if (!_epubLoader) return;
     if (chapterIndex < 0 || chapterIndex >= _epubLoader->getChapterCount()) return;
-    if (!_textRenderer) {
-        DisplayMgr& dispMgr = DisplayMgr::getInstance();
-        Book32Display& display = dispMgr.getDisplay();
-        _textRenderer = new TextRenderer(display.width(), display.height(), FONT_SIZE_DEFAULT);
-    }
     int originalIndex = chapterIndex;
     while (chapterIndex < _epubLoader->getChapterCount()) {
         _currentChapter = chapterIndex;
@@ -421,8 +417,10 @@ void AppReader::drawReading() {
         display.setTextColor(GxEPD_BLACK);
         display.setTextSize(FONT_SIZE_DEFAULT);
         String pageText = _pages[_currentPage];
-        int totalPages = _pages.size();
-        if(pageText.startsWith("T:") || pageText.startsWith("TABLE:")) _textRenderer->renderRichPage(display, pageText, _currentPage, totalPages);
-        else _textRenderer->renderPage(display, pageText, _currentPage, totalPages);
+        int globalPageNum = getGlobalPageNumber();
+        if(pageText.startsWith("T:") || pageText.startsWith("TABLE:")) _textRenderer->renderRichPage(display, pageText, globalPageNum - 1, _totalBookPages);
+        else _textRenderer->renderPage(display, pageText, globalPageNum - 1, _totalBookPages);
     } while (display.nextPage());
 }
+
+void AppReader::update() {}

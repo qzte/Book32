@@ -86,7 +86,8 @@ String EpubLoader::getChapterContent(int index) {
             clean += c;
         }
     }
-    clean.replace("¶Ç8", " -- "); clean.replace("¶ÇÖ", "'"); clean.replace("¶Ç£", "\""); clean.replace("¶Ç¥", "\""); clean.replace("¶Ç", " ");
+    // Clean-up garbage
+    clean.replace("¶Ç8", " -- "); clean.replace("¶ÇÖ", "'"); clean.replace("¶Çö", "'"); clean.replace("¶Ç£", "\""); clean.replace("¶Ç¥", "\""); clean.replace("¶Ç", " ");
     clean.replace("\xE2\x80\x9C", "\""); clean.replace("\xE2\x80\x9D", "\""); clean.replace("\xE2\x80\x98", "'"); clean.replace("\xE2\x80\x99", "'");
     clean.replace("\xE2\x80\x94", " -- "); clean.replace("\xE2\x80\x93", " - "); clean.replace("\xE2\x80\xA6", "...");
     clean.replace("&nbsp;", " "); clean.replace("&lt;", "<"); clean.replace("&gt;", ">"); clean.replace("&amp;", "&"); clean.replace("&quot;", "\""); clean.replace("&apos;", "'");
@@ -408,6 +409,7 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(String html) {
         if(node.type == CONTENT_TEXT) {
             node.textNode.text.replace("¶Ç8", " -- ");
             node.textNode.text.replace("¶ÇÖ", "'");
+            node.textNode.text.replace("¶Çö", "'");
             node.textNode.text.replace("¶Ç£", "\"");
             node.textNode.text.replace("¶Ç¥", "\"");
             node.textNode.text.replace("¶Ç", " ");

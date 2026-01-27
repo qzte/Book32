@@ -52,6 +52,12 @@ private:
     bool loadBookCover(BookEntry& book);  // Load and decode cover for a book
     void drawCover(Book32Display& display, BookEntry& book, int x, int y, int w, int h, bool inverted);
     
+    // Global Pagination
+    int _totalBookPages;
+    std::vector<int> _chapterPageCounts;
+    void calculateTotalPages();
+    int getGlobalPageNumber();
+    
     // Settings
     int _refreshEveryNPages;
     int _pageTurnsSinceRefresh;
