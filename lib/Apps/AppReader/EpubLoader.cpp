@@ -6,7 +6,6 @@
 #include <unistd.h>
 #include <errno.h>
 
-// Define Return Codes if missing
 #ifndef ZIP_SUCCESS
 #define ZIP_SUCCESS 0
 #endif
@@ -405,6 +404,7 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(String html) {
             nodes.push_back(node);
         }
     }
+    // Deep cleaning pass on nodes
     for(auto& node : nodes) {
         if(node.type == CONTENT_TEXT) {
             node.textNode.text.replace("¶Ç8", " -- ");
