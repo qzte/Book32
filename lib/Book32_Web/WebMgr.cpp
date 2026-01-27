@@ -180,18 +180,52 @@ WebMgr& WebMgr::getInstance() {
     return instance;
 }
 
-void WebMgr::init() {
-    // 1. Mount System Partition (spiffs)
-    if(!SystemFS.begin(false, "/littlefs", 10, "spiffs")) {
-        Serial.println("SystemFS Mount Failed, formatting...");
-        SystemFS.begin(true, "/littlefs", 10, "spiffs");
+void listFiles(fs::FS &fs, const char * dirname, uint8_t levels) {
+    Serial.printf("Listing directory: %s\n", dirname);
+    File root = fs.open(dirname);
+    if(!root){
+        Serial.println("- failed to open directory");
+        return;
+    }
+    if(!root.isDirectory()){
+        Serial.println("- not a directory");
+        return;
     }
 
-    // 2. Mount Ebook Partition (ebooks)
+    File file = root.openNextFile();
+    while(file){
+        if(file.isDirectory()){
+            Serial.printf("  DIR : %s\n", file.name());
+            if(levels){
+                listFiles(fs, file.path(), levels -1);
+            }
+        } else {
+            Serial.printf("  FILE: %s  SIZE: %d\n", file.name(), file.size());
+        }
+        file = root.openNextFile();
+    }
+}
+
+void WebMgr::init() {
+    // 1. Mount System Partition (label: littlefs, mount: /littlefs)
+    if(!SystemFS.begin(false, "/littlefs", 10, "littlefs")) {
+        Serial.println("SystemFS Mount Failed, checking for 'spiffs' label...");
+        if(!SystemFS.begin(false, "/littlefs", 10, "spiffs")) {
+            Serial.println("SystemFS definitely failed, not formatting to preserve data");
+        }
+    }
+
+    // 2. Mount Ebook Partition (label: ebooks, mount: /ebooks)
     if(!EbookFS.begin(false, "/ebooks", 10, "ebooks")) {
-        Serial.println("EbookFS Mount Failed, formatting...");
+        Serial.println("EbookFS Mount Failed, formatting (expected on first run)...");
         EbookFS.begin(true, "/ebooks", 10, "ebooks");
     }
+
+    Serial.println("Filesystem Status:");
+    Serial.printf("SystemFS: %u / %u bytes used\n", SystemFS.usedBytes(), SystemFS.totalBytes());
+    listFiles(SystemFS, "/", 1);
+    Serial.printf("EbookFS : %u / %u bytes used\n", EbookFS.usedBytes(), EbookFS.totalBytes());
+    listFiles(EbookFS, "/", 1);
 
     setupEndpoints();
     server->begin();
