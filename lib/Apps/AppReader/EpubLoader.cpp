@@ -65,32 +65,67 @@ String EpubLoader::getChapterContent(int index) {
     if(fullPath.startsWith("./")) fullPath = fullPath.substring(2);
     String content = readFileFromZip(fullPath.c_str());
     if (content.length() == 0) return "";
+    
+    // --- ADVANCED HTML PARSING ---
     String clean;
     clean.reserve(content.length());
     bool inTag = false, skipContent = false;
     String currentTag;
+    
     for(int i = 0; i < (int)content.length(); i++) {
         char c = content.charAt(i);
         if(c == '<') {
             inTag = true; currentTag = ""; int j = i + 1;
             while(j < (int)content.length() && content.charAt(j) != '>' && content.charAt(j) != ' ' && j - i < 20) { currentTag += (char)tolower(content.charAt(j)); j++; }
-            if(currentTag == "p" || currentTag == "/p" || currentTag == "div" || currentTag == "/div" || currentTag == "br" || currentTag == "br/") { if(clean.length() > 0 && clean.charAt(clean.length()-1) != '\n') clean += "\n"; }
-            else if(currentTag == "li") { if(clean.length() > 0 && clean.charAt(clean.length()-1) != '\n') clean += "\n"; clean += "• "; }
+            
+            // BLOCK ELEMENTS: cause a newline
+            if(currentTag == "p" || currentTag == "/p" || currentTag == "div" || currentTag == "/div" || currentTag == "br" || currentTag == "br/" || currentTag.startsWith("h")) {
+                if(clean.length() > 0 && clean.charAt(clean.length()-1) != '\n') clean += "\n";
+            }
+            else if(currentTag == "li") {
+                if(clean.length() > 0 && clean.charAt(clean.length()-1) != '\n') clean += "\n";
+                clean += "• ";
+            }
             else if(currentTag == "script" || currentTag == "style" || currentTag == "head") skipContent = true;
             else if(currentTag == "/script" || currentTag == "/style" || currentTag == "/head") skipContent = false;
-        } else if (c == '>') inTag = false;
-        else if (!inTag && !skipContent) {
+        } else if (c == '>') {
+            inTag = false;
+        } else if (!inTag && !skipContent) {
             if(c == '\n' || c == '\r' || c == '\t') c = ' ';
-            if(c == ' ' && clean.length() > 0 && clean.charAt(clean.length()-1) == ' ') continue;
             clean += c;
         }
     }
-    // Clean-up garbage
-    clean.replace("¶Ç8", " -- "); clean.replace("¶ÇÖ", "'"); clean.replace("¶Çö", "'"); clean.replace("¶Ç£", "\""); clean.replace("¶Ç¥", "\""); clean.replace("¶Ç", " ");
-    clean.replace("\xE2\x80\x9C", "\""); clean.replace("\xE2\x80\x9D", "\""); clean.replace("\xE2\x80\x98", "'"); clean.replace("\xE2\x80\x99", "'");
-    clean.replace("\xE2\x80\x94", " -- "); clean.replace("\xE2\x80\x93", " - "); clean.replace("\xE2\x80\xA6", "...");
-    clean.replace("&nbsp;", " "); clean.replace("&lt;", "<"); clean.replace("&gt;", ">"); clean.replace("&amp;", "&"); clean.replace("&quot;", "\""); clean.replace("&apos;", "'");
-    clean.trim(); return clean;
+
+    // --- AGGRESSIVE CLEANING ---
+    // Handle Windows-1252 / UTF-8 mix-up artifacts seen in Sanderson EPUBs
+    clean.replace("¶Ç8", " -- ");
+    clean.replace("¶ÇÖ", "'");
+    clean.replace("¶Çö", "'");
+    clean.replace("¶Ç£", "\"");
+    clean.replace("¶Ç¥", "\"");
+    clean.replace("¶Çª", "-");
+    clean.replace("¶ÇÜ", "...");
+    clean.replace("¶Ç", ""); // Wipe any remaining prefix
+    
+    // Standard UTF-8
+    clean.replace("\xE2\x80\x9C", "\""); clean.replace("\xE2\x80\x9D", "\"");
+    clean.replace("\xE2\x80\x98", "'"); clean.replace("\xE2\x80\x99", "'");
+    clean.replace("\xE2\x80\x94", " -- "); clean.replace("\xE2\x80\x93", " - ");
+    clean.replace("\xE2\x80\xA6", "...");
+    
+    // Strip accidental newlines before punctuation (fixes the orphan comma/dot)
+    clean.replace("\n,", ",");
+    clean.replace("\n.", ".");
+    clean.replace("\n?", "?");
+    clean.replace("\n!", "!");
+    clean.replace("\n\"", "\"");
+    clean.replace("\n'", "'");
+    
+    // Collapse multiple spaces
+    while(clean.indexOf("  ") != -1) clean.replace("  ", " ");
+    
+    clean.trim();
+    return clean;
 }
 
 bool EpubLoader::parseContainer() {
@@ -404,7 +439,7 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(String html) {
             nodes.push_back(node);
         }
     }
-    // Deep cleaning pass on nodes
+    // Final scrubbing pass on all text nodes
     for(auto& node : nodes) {
         if(node.type == CONTENT_TEXT) {
             node.textNode.text.replace("¶Ç8", " -- ");
@@ -420,6 +455,15 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(String html) {
             node.textNode.text.replace("\xE2\x80\x94", " -- ");
             node.textNode.text.replace("\xE2\x80\x93", " - ");
             node.textNode.text.replace("\xE2\x80\xA6", "...");
+            
+            // Clean up orphan newlines before punctuation
+            node.textNode.text.replace("\n,", ",");
+            node.textNode.text.replace("\n.", ".");
+            node.textNode.text.replace("\n!", "!");
+            node.textNode.text.replace("\n?", "?");
+            
+            // Re-trim trailing whitespace
+            node.textNode.text.trim();
         }
     }
     return nodes;

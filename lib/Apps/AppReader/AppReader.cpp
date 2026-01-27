@@ -246,18 +246,29 @@ void AppReader::openBook(const String& path) {
     if (!_textRenderer) {
         DisplayMgr& dispMgr = DisplayMgr::getInstance();
         Book32Display& display = dispMgr.getDisplay();
-        _textRenderer = new TextRenderer(display.width(), display.height(), FONT_SIZE_DEFAULT);
+        _textRenderer = new TextRenderer(display.width(), display.height(), 26);
     }
     bool fontLoaded = false;
-    std::vector<FontInfo> fonts = _epubLoader->getFonts();
-    if (!fonts.empty()) {
-        int fontIdx = 0;
-        for (size_t i = 0; i < fonts.size(); i++) { if (fonts[i].style == "normal") { fontIdx = i; break; } }
-        size_t fontSize = 0;
-        uint8_t* fontData = _epubLoader->getFontData(fonts[fontIdx].path, &fontSize);
-        if (fontData && fontSize > 0) {
-            if (_textRenderer->loadFont(fontData, fontSize)) fontLoaded = true;
-            else free(fontData);
+    if (EbookFS.exists("/DejaVuSerif.ttf")) {
+        File f = EbookFS.open("/DejaVuSerif.ttf", "r");
+        if (f) {
+            size_t s = f.size();
+            uint8_t* d = (uint8_t*)ps_malloc(s);
+            if (d) { f.read(d, s); if (_textRenderer->loadFont(d, s)) fontLoaded = true; else free(d); }
+            f.close();
+        }
+    }
+    if (!fontLoaded) {
+        std::vector<FontInfo> fonts = _epubLoader->getFonts();
+        if (!fonts.empty()) {
+            int fontIdx = 0;
+            for (size_t i = 0; i < fonts.size(); i++) { if (fonts[i].style == "normal") { fontIdx = i; break; } }
+            size_t fontSize = 0;
+            uint8_t* fontData = _epubLoader->getFontData(fonts[fontIdx].path, &fontSize);
+            if (fontData && fontSize > 0) {
+                if (_textRenderer->loadFont(fontData, fontSize)) fontLoaded = true;
+                else free(fontData);
+            }
         }
     }
     if (!fontLoaded && EbookFS.exists("/font.ttf")) {

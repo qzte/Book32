@@ -27,11 +27,12 @@ void TextRenderer::calculateDimensions() {
         int lineHeight = _fontSize + 8;
         _linesPerPage = (_height - 100) / lineHeight;
     } else {
-        int charWidth = 6 * 2; // BACK TO 2 for 7.5" to avoid gigantic text
-        _charsPerLine = (_width - 60) / charWidth;
+        // Fallback dimensions for system font
+        int charWidth = 6 * 2;
+        _charsPerLine = (_width - 40) / charWidth;
         _linesPerPage = (_height - 100) / 20;
     }
-    Serial.printf("TextRenderer Config: %dx%d, font=%d, cpl=%d, lpp=%d\n", _width, _height, _fontSize, _charsPerLine, _linesPerPage);
+    Serial.printf("TextRenderer Init: %dx%d, font=%d, cpl=%d, lpp=%d\n", _width, _height, _fontSize, _charsPerLine, _linesPerPage);
 }
 
 std::vector<String> TextRenderer::wrapText(const String& text) {
@@ -189,7 +190,7 @@ std::vector<String> TextRenderer::paginateRich(std::vector<ContentNode>& content
     for (auto& node : content) {
         if (node.type == CONTENT_TEXT) {
             String serialized = "T:" + String((int)node.textNode.style) + ":" + String((int)node.textNode.align) + ":" + String(node.textNode.isListItem ? "1" : "0") + ":" + node.textNode.text + "\n";
-            int fontSize = _fontLoaded ? _fontSize : 12;
+            int fontSize = _fontLoaded ? _fontSize : 16;
             if (node.textNode.style >= STYLE_HEADER1) fontSize += 8;
             int textLines = (node.textNode.text.length() / _charsPerLine) + 1;
             int estHeight = textLines * (fontSize + 10);
