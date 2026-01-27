@@ -211,7 +211,12 @@ void WebMgr::mountFilesystems() {
     // Label: spiffs, Mount: / (No prefix for server compatibility)
     // Try to begin with format-on-fail to ensure it works
     if(!SystemFS.begin(true, "/", 10, "spiffs")) {
-        Serial.println("SystemFS Mount Failed! Partition labeled 'spiffs' not found or corrupt.");
+        Serial.println("SystemFS Mount Failed (spiffs)! Trying 'littlefs' label...");
+        if(!SystemFS.begin(true, "/", 10, "littlefs")) {
+             Serial.println("SystemFS definitely failed.");
+        } else {
+             Serial.println("SystemFS mounted successfully as 'littlefs'.");
+        }
     } else {
         Serial.println("SystemFS mounted successfully at /.");
     }
