@@ -206,7 +206,7 @@ static void listFiles(fs::FS &fs, const char * dirname, uint8_t levels) {
     }
 }
 
-void WebMgr::init() {
+void WebMgr::mountFilesystems() {
     // 1. Mount System Partition (Primary LittleFS instance)
     // Label: spiffs, Mount: / (No prefix for server compatibility)
     if(!SystemFS.begin(false, "/", 10, "spiffs")) {
@@ -232,7 +232,9 @@ void WebMgr::init() {
     Serial.printf("EbookFS : %u / %u bytes used\n", EbookFS.usedBytes(), EbookFS.totalBytes());
     listFiles(EbookFS, "/", 1);
     Serial.println("----------------------\n");
+}
 
+void WebMgr::init() {
     setupEndpoints();
     server->begin();
     Serial.println("Web Server Started");
