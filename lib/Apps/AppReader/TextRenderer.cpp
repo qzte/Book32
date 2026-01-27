@@ -10,7 +10,7 @@ TextRenderer::TextRenderer(int width, int height, int fontSize) {
 bool TextRenderer::loadFont(const uint8_t* data, size_t size) {
     if (_ofr.loadFont(data, size)) {
         _fontLoaded = true;
-        _ofr.setCacheSize(1024); // Optimize with small cache
+        _ofr.setCacheSize(10, 10, 32768); // Optimize with small cache (faces, sizes, bytes)
         calculateDimensions();
         return true;
     }
