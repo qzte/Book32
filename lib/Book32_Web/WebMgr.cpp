@@ -209,13 +209,18 @@ static void listFiles(fs::FS &fs, const char * dirname, uint8_t levels) {
 void WebMgr::mountFilesystems() {
     // 1. Mount System Partition (Primary LittleFS instance)
     // Label: spiffs, Mount: / (No prefix for server compatibility)
-    // Try to begin with format-on-fail to ensure it works
-    if(!SystemFS.begin(true, "/", 10, "spiffs")) {
-        Serial.println("SystemFS Mount Failed (spiffs)! Trying 'littlefs' label...");
-        if(!SystemFS.begin(true, "/", 10, "littlefs")) {
-             Serial.println("SystemFS definitely failed.");
+    // Try to begin without labels first to see if it grabs the default partition
+    if(!SystemFS.begin(true, "/", 10, NULL)) {
+        Serial.println("SystemFS Mount Failed (default)! Trying 'spiffs' label...");
+        if(!SystemFS.begin(true, "/", 10, "spiffs")) {
+             Serial.println("SystemFS Mount Failed (spiffs)! Trying 'littlefs'...");
+             if(!SystemFS.begin(true, "/", 10, "littlefs")) {
+                 Serial.println("SystemFS definitely failed.");
+             } else {
+                 Serial.println("SystemFS mounted successfully as 'littlefs'.");
+             }
         } else {
-             Serial.println("SystemFS mounted successfully as 'littlefs'.");
+             Serial.println("SystemFS mounted successfully as 'spiffs'.");
         }
     } else {
         Serial.println("SystemFS mounted successfully at /.");
