@@ -303,7 +303,9 @@ void AppReader::openBook(const String& path) {
 
     _textRenderer->calculateDimensions();
 
-    calculateTotalPages();
+    // calculateTotalPages(); // DISABLING: This takes forever on large books
+    _totalBookPages = 0; // Show simplified pagination for now
+    
     loadChapter(0);
     _state = VIEW_READING;
     _needsRedraw = true;
@@ -327,12 +329,14 @@ void AppReader::loadChapter(int chapterIndex) {
         
         _currentRichContent = _epubLoader->getChapterContentRich(chapterIndex);
         if (_currentRichContent.size() > 0) {
+            if (_textRenderer) _textRenderer->clearCache();
             _needsRedraw = true;
             return;
         }
         chapterIndex++;
     }
     _currentChapter = originalIndex;
+    if (_textRenderer) _textRenderer->clearCache();
     _needsRedraw = true;
 }
 
@@ -344,10 +348,11 @@ void AppReader::nextPage() {
     _pageHistory.push_back(_currentPagePointer);
     
     // Calculate next page start without drawing
+    // This will ALSO fill the TextRenderer cache for the next draw call
     RenderResult result = _textRenderer->renderRichPageDynamic(display, _currentRichContent, 
                                                             _currentPagePointer.nodeIndex, 
                                                             _currentPagePointer.charOffset, 
-                                                            0, 0, false);
+                                                            _pageHistory.size(), _totalBookPages, false);
     
     if (result.pageFull) {
         _currentPagePointer.nodeIndex += result.nodesConsumed;
@@ -368,6 +373,7 @@ void AppReader::prevPage() {
     if (!_pageHistory.empty()) {
         _currentPagePointer = _pageHistory.back();
         _pageHistory.pop_back();
+        if (_textRenderer) _textRenderer->clearCache();
         _needsRedraw = true;
     } else {
         // Go to previous chapter

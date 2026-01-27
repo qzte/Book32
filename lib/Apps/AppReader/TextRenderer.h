@@ -18,6 +18,12 @@ struct RenderResult {
     bool pageFull;
 };
 
+struct RenderedLine {
+    int x, y, fontSize;
+    bool isBold;
+    String text;
+};
+
 class TextRenderer {
 public:
     TextRenderer(int width, int height, int fontSize = 26);
@@ -30,6 +36,8 @@ public:
     // New Dynamic Rendering
     RenderResult renderRichPageDynamic(Book32Display& display, const std::vector<ContentNode>& content, 
                                      int startNode, int startOffset, int pageNum, int totalPages, bool draw = true);
+
+    void clearCache() { _lineCache.clear(); }
 
     // Keep legacy for now to avoid breaking AppReader during transition
     std::vector<String> paginate(const String& text);
@@ -48,6 +56,8 @@ private:
     
     OpenFontRender _ofr;
     bool _fontLoaded = false;
+    std::vector<RenderedLine> _lineCache;
+    int _cachedPage = -1;
 
     std::vector<String> wrapText(const String& text);
     void renderTextNode(Book32Display& display, RichTextNode& node, int& y, int maxY);
