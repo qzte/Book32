@@ -16,9 +16,9 @@ void InputMgr::init() {
     btn.attachDoubleClick(staticDoubleClick, this);
     btn.attachLongPressStart(staticLongPress, this);
     
-    // Configure timing
-    btn.setClickMs(300);        // Click detection time
-    btn.setPressMs(800);        // Long press threshold
+    // Configure timing - SNAPPY SETTINGS
+    btn.setClickMs(180);        // Reduced from 300ms for faster response
+    btn.setPressMs(600);        // Reduced from 800ms for faster select
 }
 
 void InputMgr::update() {

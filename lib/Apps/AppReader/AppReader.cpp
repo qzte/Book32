@@ -512,11 +512,13 @@ void AppReader::drawReading() {
     // Check if we need a full refresh
     static bool firstDraw = true;
     if (firstDraw || _pageTurnsSinceRefresh >= _refreshEveryNPages) { 
+        Serial.println("AppReader: Full Refresh Cycle");
         display.setFullWindow(); 
         _pageTurnsSinceRefresh = 0; 
         firstDraw = false;
     }
     else { 
+        Serial.printf("AppReader: Partial Refresh (%d/%d)\n", _pageTurnsSinceRefresh + 1, _refreshEveryNPages);
         display.setPartialWindow(0, 0, display.width(), display.height()); 
         _pageTurnsSinceRefresh++; 
     }
