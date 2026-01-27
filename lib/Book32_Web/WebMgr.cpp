@@ -180,7 +180,7 @@ WebMgr& WebMgr::getInstance() {
     return instance;
 }
 
-static void listFiles(fs::FS &fs, const char * dirname, uint8_t levels) {
+void listFiles(fs::FS &fs, const char * dirname, uint8_t levels) {
     Serial.printf("Listing directory: %s\n", dirname);
     File root = fs.open(dirname);
     if(!root){
@@ -207,26 +207,21 @@ static void listFiles(fs::FS &fs, const char * dirname, uint8_t levels) {
 }
 
 void WebMgr::init() {
-    // 1. Mount System Partition (Primary LittleFS instance)
-    // We mount at root "/" for simplicity. This partition is labeled "spiffs" in the CSV.
-    if(!SystemFS.begin(false, "/", 10, "littlefs")) {
-        Serial.println("SystemFS Mount Failed (checking for 'spiffs' label)...");
-        if(!SystemFS.begin(false, "/", 10, "spiffs")) {
-            Serial.println("SystemFS definitely failed, not formatting to avoid data loss");
-        }
+    // 1. Mount System Partition (label: spiffs)
+    // We mount it to "/littlefs" because standard LittleFS global might default there.
+    if(!SystemFS.begin(true, "/littlefs", 10, "spiffs")) {
+        Serial.println("SystemFS Mount Failed!");
     }
 
-    // 2. Mount Ebook Partition (Secondary LittleFS instance)
-    // We mount at "/ebooks". This partition is labeled "ebooks" in the CSV.
-    if(!EbookFS.begin(false, "/ebooks", 10, "ebooks")) {
-        Serial.println("EbookFS Mount Failed, formatting (expected on first run)...");
-        EbookFS.begin(true, "/ebooks", 10, "ebooks");
+    // 2. Mount Ebook Partition (label: ebooks)
+    if(!EbookFS.begin(true, "/ebooks", 10, "ebooks")) {
+        Serial.println("EbookFS Mount Failed!");
     }
 
-    Serial.println("Filesystem Discovery:");
-    Serial.printf("System Partition: %u / %u bytes used\n", SystemFS.usedBytes(), SystemFS.totalBytes());
+    Serial.println("Filesystem Map:");
+    Serial.printf("SystemFS (Label: spiffs, Mount: /littlefs): %u / %u bytes used\n", SystemFS.usedBytes(), SystemFS.totalBytes());
     listFiles(SystemFS, "/", 1);
-    Serial.printf("Ebook Partition : %u / %u bytes used\n", EbookFS.usedBytes(), EbookFS.totalBytes());
+    Serial.printf("EbookFS  (Label: ebooks, Mount: /ebooks): %u / %u bytes used\n", EbookFS.usedBytes(), EbookFS.totalBytes());
     listFiles(EbookFS, "/", 1);
 
     setupEndpoints();
@@ -601,7 +596,8 @@ void WebMgr::setupEndpoints() {
         }
     });
 
-    // Static Files from SystemFS (must be last so API routes are matched first)
+    // Static Files from SystemFS
+    // Point directly to the mount point "/littlefs"
     server->serveStatic("/", SystemFS, "/").setDefaultFile("index.html");
 }
 
