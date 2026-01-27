@@ -300,57 +300,22 @@ TextAlign EpubLoader::getAlignFromStyle(String styleAttr) {
     return ALIGN_LEFT;
 }
 
-Table EpubLoader::parseTable(String tableHtml) {
-    Table table;
-    int trPos = 0;
-    while(true) {
-        int trStart = tableHtml.indexOf("<tr", trPos);
-        if(trStart == -1) break;
-        int trEnd = tableHtml.indexOf("</tr>", trStart);
-        if(trEnd == -1) break;
-        String rowHtml = tableHtml.substring(trStart, trEnd + 5);
-        TableRow row;
-        int cellPos = 0;
-        while(true) {
-            int tdStart = rowHtml.indexOf("<td", cellPos);
-            int thStart = rowHtml.indexOf("<th", cellPos);
-            int cellStart = -1;
-            bool isHeader = false;
-            if(tdStart != -1 && (thStart == -1 || tdStart < thStart)) { cellStart = tdStart; isHeader = false; }
-            else if(thStart != -1) { cellStart = thStart; isHeader = true; }
-            if(cellStart == -1) break;
-            String cellTag = isHeader ? "th" : "td";
-            int cellTagEnd = rowHtml.indexOf(">", cellStart);
-            int cellEnd = rowHtml.indexOf("</" + cellTag + ">", cellTagEnd);
-            if(cellTagEnd == -1 || cellEnd == -1) break;
-            TableCell cell;
-            cell.isHeader = isHeader;
-            String cellOpenTag = rowHtml.substring(cellStart, cellTagEnd + 1);
-            String colspanStr = extractAttribute(cellOpenTag, cellTag, "colspan");
-            String rowspanStr = extractAttribute(cellOpenTag, cellTag, "rowspan");
-            if(colspanStr.length() > 0) cell.colspan = colspanStr.toInt();
-            if(rowspanStr.length() > 0) cell.rowspan = rowspanStr.toInt();
-            String cellContent = rowHtml.substring(cellTagEnd + 1, cellEnd);
-            String clean;
-            bool inTag = false;
-            for(int i = 0; i < (int)cellContent.length(); i++) {
-                char c = cellContent.charAt(i);
-                if(c == '<') inTag = true;
-                else if(c == '>') inTag = false;
-                else if(!inTag) clean += c;
-            }
-            clean.trim();
-            cell.content = clean;
-            row.cells.push_back(cell);
-            cellPos = cellEnd + cellTag.length() + 3;
-        }
-        if(row.cells.size() > 0) {
-            table.rows.push_back(row);
-            if((int)row.cells.size() > table.columnCount) table.columnCount = row.cells.size();
-        }
-        trPos = trEnd + 5;
+int extractIndentFromStyle(String styleAttr) {
+    styleAttr.toLowerCase();
+    int indentPos = styleAttr.indexOf("text-indent:");
+    if (indentPos == -1) indentPos = styleAttr.indexOf("text-indent :");
+    if (indentPos != -1) {
+        int valStart = styleAttr.indexOf(':', indentPos) + 1;
+        int valEnd = styleAttr.indexOf(';', valStart);
+        if (valEnd == -1) valEnd = styleAttr.length();
+        String val = styleAttr.substring(valStart, valEnd);
+        val.trim();
+        // Handle em, px, %
+        if (val.endsWith("em")) return val.substring(0, val.length()-2).toInt() * 20; // Rough 1em = 20px
+        if (val.endsWith("px")) return val.substring(0, val.length()-2).toInt();
+        return val.toInt();
     }
-    return table;
+    return 0;
 }
 
 std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(String html) {
@@ -358,6 +323,7 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(String html) {
     std::vector<TextStyle> styleStack;
     styleStack.push_back(STYLE_NORMAL);
     TextAlign currentAlign = ALIGN_LEFT;
+    int currentIndent = 0;
     bool isListItem = false;
     String currentText;
     int i = 0;
@@ -371,9 +337,11 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(String html) {
                 node.textNode.style = styleStack.back();
                 node.textNode.align = currentAlign;
                 node.textNode.isListItem = isListItem;
+                node.textNode.indent = currentIndent;
                 nodes.push_back(node);
                 currentText = "";
                 isListItem = false;
+                currentIndent = 0; // Reset after use
             }
             int tagEnd = html.indexOf('>', i);
             if(tagEnd == -1) break;
@@ -395,7 +363,15 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(String html) {
             }
             else if((tag == "p" || tag == "div") && !isClosing) {
                 String styleAttr = extractAttribute(fullTag, tag, "style");
-                if(styleAttr.length() > 0) currentAlign = getAlignFromStyle(styleAttr);
+                if(styleAttr.length() > 0) {
+                    currentAlign = getAlignFromStyle(styleAttr);
+                    currentIndent = extractIndentFromStyle(styleAttr);
+                }
+                // Default indentation for paragraphs if not specified in style 
+                // but only if it's a real paragraph (not just a container)
+                if (tag == "p" && currentIndent == 0) {
+                    currentIndent = 30; // Standard 30px default indent
+                }
             }
             else if(tag == "li" && !isClosing) {
                 isListItem = true;

@@ -96,10 +96,16 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
                 int line_width = 0;
                 int line_chars = 0;
                 
+                int currentXMargin = x_margin;
                 if (node.textNode.isListItem && pos == currentOffset) {
                     strcpy(lineBuf, "- ");
                     line_width = _gfxCharWidths['-'] + _gfxCharWidths[' '];
+                } else if (pos == 0 && node.textNode.indent > 0) {
+                    // Apply indentation to the first line of the paragraph
+                    currentXMargin += node.textNode.indent;
                 }
+                
+                int currentUsableWidth = _width - x_margin - currentXMargin;
 
                 while (pos + line_chars < textLen) {
                     int wordStart = pos + line_chars;
@@ -119,7 +125,7 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
 
                     int spaceWidth = (line_width > 0) ? _gfxCharWidths[' '] : 0;
 
-                    if (line_width + spaceWidth + wordWidth > usableWidth && line_width > 0) break;
+                    if (line_width + spaceWidth + wordWidth > currentUsableWidth && line_width > 0) break;
 
                     if (line_width > 0) {
                         strcat(lineBuf, " ");
@@ -136,7 +142,7 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
                 }
 
                 if (strlen(lineBuf) > 0) {
-                    int drawX = x_margin;
+                    int drawX = currentXMargin;
                     if (node.textNode.align == ALIGN_CENTER) drawX = (_width - line_width) / 2;
                     else if (node.textNode.align == ALIGN_RIGHT) drawX = _width - line_width - x_margin;
                     

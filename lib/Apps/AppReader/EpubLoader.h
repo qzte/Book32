@@ -31,8 +31,9 @@ struct RichTextNode {
     TextStyle style;
     TextAlign align;
     bool isListItem;
+    int indent; // Indentation in pixels (or relative units)
     
-    RichTextNode() : style(STYLE_NORMAL), align(ALIGN_LEFT), isListItem(false) {}
+    RichTextNode() : style(STYLE_NORMAL), align(ALIGN_LEFT), isListItem(false), indent(0) {}
 };
 
 // Table structures
