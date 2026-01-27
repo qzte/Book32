@@ -6,6 +6,8 @@ TextRenderer::TextRenderer(int width, int height, int fontSize) {
     _fontSize = fontSize;
     _fontLoaded = true;
     _cachedPage = -1;
+    _lastGFXFont = nullptr;
+    memset(_gfxCharWidths, 0, sizeof(_gfxCharWidths));
     calculateDimensions();
 }
 
@@ -31,16 +33,14 @@ const GFXfont* TextRenderer::getGFXFont(TextStyle style, int& lineHeight) {
 RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const std::vector<ContentNode>& content, 
                                                  int startNode, int startOffset, int pageNum, int totalPages, bool draw) {
     
-    // GFX font rendering is fast enough we could skip cache, but let's keep it for consistency
     if (draw && _cachedPage == pageNum && !_lineCache.empty()) {
         display.setTextColor(GxEPD_BLACK);
         for (const auto& line : _lineCache) {
             int unused;
-            display.setFont(getGFXFont((TextStyle)line.fontSize, unused)); // fontSize field hijacked for style index
+            display.setFont(getGFXFont((TextStyle)line.fontSize, unused)); 
             display.setCursor(line.x, line.y);
             display.print(line.text);
         }
-        
         display.setFont(NULL);
         display.setCursor(_width/2 - 20, _height - 15);
         display.printf("Page %d", pageNum + 1);
@@ -50,7 +50,7 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
     _lineCache.clear();
     _cachedPage = pageNum;
 
-    int y = 40; // GFX fonts draw from baseline up, so start lower
+    int y = 40; 
     int maxY = _height - 40;
     RenderResult result = {0, 0, false};
     int currentNode = startNode;
@@ -65,6 +65,19 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
             const GFXfont* font = getGFXFont(node.textNode.style, lineSpacing);
             display.setFont(font);
             
+            // Re-cache character widths if font changed
+            if (font != _lastGFXFont) {
+                for (uint8_t c = 32; c < 127; c++) {
+                    if (c >= font->first && c <= font->last) {
+                        GFXglyph *glyph = &(font->glyph[c - font->first]);
+                        _gfxCharWidths[c] = glyph->xAdvance;
+                    } else {
+                        _gfxCharWidths[c] = 0;
+                    }
+                }
+                _lastGFXFont = font;
+            }
+
             int x_margin = 40;
             int usableWidth = _width - (x_margin * 2);
 
@@ -85,9 +98,9 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
                 
                 if (node.textNode.isListItem && pos == currentOffset) {
                     strcpy(lineBuf, "- ");
+                    line_width = _gfxCharWidths['-'] + _gfxCharWidths[' '];
                 }
 
-                // Word wrap
                 while (pos + line_chars < textLen) {
                     int wordStart = pos + line_chars;
                     while (wordStart < textLen && isspace((unsigned char)text[wordStart])) wordStart++;
@@ -96,24 +109,29 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
                     int wordEnd = wordStart;
                     while (wordEnd < textLen && !isspace((unsigned char)text[wordEnd])) wordEnd++;
                     
-                    int wordLen = wordEnd - wordStart;
-                    char word[128];
-                    if (wordLen > 127) wordLen = 127;
-                    memcpy(word, text + wordStart, wordLen);
-                    word[wordLen] = '\0';
+                    // Ultra-fast width measurement
+                    int wordWidth = 0;
+                    for (int k = wordStart; k < wordEnd; k++) {
+                        unsigned char c = (unsigned char)text[k];
+                        if (c < 128) wordWidth += _gfxCharWidths[c];
+                        else wordWidth += 8; // Fallback for unicode
+                    }
 
-                    // Measure
-                    int16_t x1, y1; uint16_t w, h;
-                    String testLine = String(lineBuf);
-                    if (testLine.length() > 0) testLine += " ";
-                    testLine += word;
-                    display.getTextBounds(testLine.c_str(), 0, 0, &x1, &y1, &w, &h);
+                    int spaceWidth = (line_width > 0) ? _gfxCharWidths[' '] : 0;
 
-                    if (w > (uint16_t)usableWidth && strlen(lineBuf) > 0) break;
+                    if (line_width + spaceWidth + wordWidth > usableWidth && line_width > 0) break;
 
-                    if (strlen(lineBuf) > 0) strcat(lineBuf, " ");
-                    strcat(lineBuf, word);
-                    line_width = w;
+                    if (line_width > 0) {
+                        strcat(lineBuf, " ");
+                        line_width += spaceWidth;
+                    }
+                    
+                    int currentLen = strlen(lineBuf);
+                    int toCopy = wordEnd - wordStart;
+                    if (currentLen + toCopy < 255) {
+                        strncat(lineBuf, text + wordStart, toCopy);
+                        line_width += wordWidth;
+                    }
                     line_chars = wordEnd - pos;
                 }
 

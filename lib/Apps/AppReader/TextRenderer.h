@@ -64,7 +64,10 @@ private:
     std::vector<RenderedLine> _lineCache;
     int _cachedPage = -1;
     
-    // Helper to get font pointer based on style/size
+    // Fast character width cache
+    uint8_t _gfxCharWidths[128];
+    const GFXfont* _lastGFXFont = nullptr;
+
     const GFXfont* getGFXFont(TextStyle style, int& lineHeight);
 
     std::vector<String> wrapText(const String& text);
