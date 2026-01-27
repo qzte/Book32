@@ -243,7 +243,9 @@ void AppReader::calculateTotalPages() {
 
 int AppReader::getGlobalPageNumber() {
     int page = 0;
-    for (int i = 0; i < _currentChapter; i++) page += _chapterPageCounts[i];
+    if (_chapterPageCounts.size() > (size_t)_currentChapter) {
+        for (int i = 0; i < _currentChapter; i++) page += _chapterPageCounts[i];
+    }
     return page + _pageHistory.size() + 1;
 }
 

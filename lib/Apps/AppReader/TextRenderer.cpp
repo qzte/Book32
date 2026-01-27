@@ -337,6 +337,13 @@ std::vector<String> TextRenderer::paginateRich(std::vector<ContentNode>& content
 
 RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const std::vector<ContentNode>& content, 
                                                  int startNode, int startOffset, int pageNum, int totalPages, bool draw) {
+    if (draw) {
+        _ofr.setDrawer(display);
+        _ofr.setFontColor(GxEPD_BLACK);
+        // Explicitly set a default size in case cache loop starts with a different one
+        _ofr.setFontSize(_fontSize);
+    }
+
     // If drawing and we have a cache for this specific page turn (startNode/Offset), use it!
     if (draw && _cachedPage == pageNum && !_lineCache.empty()) {
         for (const auto& line : _lineCache) {
@@ -348,7 +355,7 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
                 _ofr.printf("%s", line.text.c_str());
             }
         }
-        // Draw Footer from cache if possible or just handle it
+        
         char footer[32];
         snprintf(footer, sizeof(footer), "Page %d of %d", pageNum + 1, totalPages);
         _ofr.setFontSize(12);
@@ -367,21 +374,15 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
     int maxY = _height - 35;
     RenderResult result = {0, 0, false};
     
-    if (draw) {
-        _ofr.setDrawer(display);
-        _ofr.setFontColor(GxEPD_BLACK);
-    }
-    
     int currentNode = startNode;
     int currentOffset = startOffset;
     
-    char wordBuf[256]; // Reusable buffer for word measurement
+    char wordBuf[256]; 
 
     while (currentNode < (int)content.size() && y < maxY) {
         yield();
         auto& node = content[currentNode];
         if (node.type == CONTENT_TEXT) {
-            // Setup for this specific node
             int fontSize = _fontSize;
             bool isBold = false;
             if (node.textNode.style == STYLE_HEADER1) { fontSize = _fontSize + 6; isBold = true; }
@@ -393,6 +394,9 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
             int x_margin = 25;
             int usableWidth = _width - (x_margin * 2);
             int lineSpacing = fontSize + 4;
+            
+            // Safety: Ensure offset is valid
+            if (currentOffset > (int)node.textNode.text.length()) currentOffset = node.textNode.text.length();
             
             String text = node.textNode.text.substring(currentOffset);
             if (node.textNode.isListItem && currentOffset == 0) text = "• " + text;
@@ -418,21 +422,23 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
                         if (next_space == -1) next_space = text.length();
                         
                         int word_len = next_space - (pos + line_chars);
-                        if (word_len > 254) word_len = 254;
+                        if (word_len > 250) word_len = 250; // Extra safety margin
                         
-                        // Optimized word measurement: use a local buffer instead of String substring
-                        const char* rawText = text.c_str();
-                        memcpy(wordBuf, rawText + pos + line_chars, word_len);
-                        wordBuf[word_len] = '\0';
+                        if (word_len > 0) {
+                            const char* rawText = text.c_str();
+                            memcpy(wordBuf, rawText + pos + line_chars, word_len);
+                            wordBuf[word_len] = '\0';
+                            
+                            int word_width = _ofr.getTextWidth(wordBuf);
+                            if (line_chars > 0) word_width += _ofr.getTextWidth(" ");
+                            
+                            if (line_width + word_width > usableWidth && line_chars > 0) break;
+                            
+                            if (line_chars > 0) lineText += " ";
+                            lineText += wordBuf;
+                            line_width += word_width;
+                        }
                         
-                        int word_width = _ofr.getTextWidth(wordBuf);
-                        if (line_chars > 0) word_width += _ofr.getTextWidth(" ");
-                        
-                        if (line_width + word_width > usableWidth && line_chars > 0) break;
-                        
-                        if (line_chars > 0) lineText += " ";
-                        lineText += wordBuf;
-                        line_width += word_width;
                         line_chars = next_space - pos;
                         if (pos + line_chars < (int)text.length() && text.charAt(pos + line_chars) == ' ') line_chars++;
                     }
@@ -441,7 +447,6 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
                     if (node.textNode.align == ALIGN_CENTER) drawX = (_width - line_width) / 2;
                     else if (node.textNode.align == ALIGN_RIGHT) drawX = _width - line_width - x_margin;
                     
-                    // Add to cache
                     _lineCache.push_back({drawX, y, fontSize, isBold, lineText});
 
                     if (draw) {
@@ -458,7 +463,6 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
                 }
                 if (y + 6 < maxY) y += 6;
             } else {
-                // Bitmap fallback
                 display.setCursor(x_margin, y);
                 display.print(text);
                 y += 20; 
