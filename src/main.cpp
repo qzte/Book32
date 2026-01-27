@@ -32,7 +32,10 @@ void setup() {
     // 1. Display Init
     displayMgr.init();
 
-    // 2. WiFi Init (using WiFiManager)
+    // 2. Mount Filesystems EARLY (before WiFi, prevents race conditions)
+    webMgr.mountFilesystems();
+
+    // 3. WiFi Init (using WiFiManager)
     WiFiManager wm;
     bool res = wm.autoConnect("Book32-Setup");
 
@@ -42,16 +45,18 @@ void setup() {
     else {
         Serial.println("connected...yeey :)");
         Serial.println(WiFi.localIP());
-        
-        // 2.5 Time Init (Sync NTP)
-        timeMgr.init();
     }
 
     // Wait for WiFiManager's server to fully release port 80
     delay(1500);
 
-    // 3. Web Init
+    // 4. Web Server Init (after WiFi connected)
     webMgr.init();
+
+    // 5. Time Init (Sync NTP - after WiFi)
+    if(res) {
+        timeMgr.init();
+    }
 
     // 3.5 Battery Init
     BatteryMgr::getInstance().init();

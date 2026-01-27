@@ -206,24 +206,33 @@ static void listFiles(fs::FS &fs, const char * dirname, uint8_t levels) {
     }
 }
 
-void WebMgr::init() {
+void WebMgr::mountFilesystems() {
+    Serial.println("\n=== Mounting Filesystems ===");
+    
     // 1. Mount System Partition (Primary LittleFS instance)
-    // Label: spiffs, Mount: / (No prefix for server compatibility)
-    if(!SystemFS.begin(false, "/", 10, "spiffs")) {
-        Serial.println("SystemFS Mount Failed! Partition labeled 'spiffs' not found or corrupt.");
+    // Label: spiffs, Mount: /littlefs (default VFS path for LittleFS)
+    bool systemMounted = SystemFS.begin(false, "/littlefs", 10, "spiffs");
+    if(!systemMounted) {
+        Serial.println("SystemFS mount failed, attempting format...");
+        systemMounted = SystemFS.begin(true, "/littlefs", 10, "spiffs");
+    }
+    if(systemMounted) {
+        Serial.println("SystemFS: OK (mounted at /littlefs)");
     } else {
-        Serial.println("SystemFS mounted successfully at /.");
+        Serial.println("SystemFS: FAILED! Web UI will not work.");
     }
 
     // 2. Mount Ebook Partition (Secondary LittleFS instance)
     // Label: ebooks, Mount: /ebooks
-    if(!EbookFS.begin(false, "/ebooks", 10, "ebooks")) {
-        Serial.println("EbookFS Mount Failed, formatting (expected on first run)...");
-        if(!EbookFS.begin(true, "/ebooks", 10, "ebooks")) {
-            Serial.println("EbookFS definitely failed.");
-        }
+    bool ebookMounted = EbookFS.begin(false, "/ebooks", 10, "ebooks");
+    if(!ebookMounted) {
+        Serial.println("EbookFS mount failed, attempting format (expected on first run)...");
+        ebookMounted = EbookFS.begin(true, "/ebooks", 10, "ebooks");
+    }
+    if(ebookMounted) {
+        Serial.println("EbookFS: OK (mounted at /ebooks)");
     } else {
-        Serial.println("EbookFS mounted successfully at /ebooks.");
+        Serial.println("EbookFS: FAILED! Ebook storage unavailable.");
     }
 
     Serial.println("\n--- Filesystem Map ---");
@@ -232,7 +241,10 @@ void WebMgr::init() {
     Serial.printf("EbookFS : %u / %u bytes used\n", EbookFS.usedBytes(), EbookFS.totalBytes());
     listFiles(EbookFS, "/", 1);
     Serial.println("----------------------\n");
+}
 
+void WebMgr::init() {
+    // Filesystems should already be mounted via mountFilesystems()
     setupEndpoints();
     server->begin();
     Serial.println("Web Server Started");

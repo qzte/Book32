@@ -10,7 +10,8 @@ class WebMgr {
 public:
     static WebMgr& getInstance();
     
-    void init();
+    void mountFilesystems();  // Call early, before WiFi
+    void init();              // Call after WiFi connected
     void update(); // Handle any main loop needs
     
 private:
