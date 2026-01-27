@@ -1,28 +1,38 @@
-# Book32 OS
+# Book32 OS (TRMNL Edition)
 
-A custom E-Ink Application OS for the LilyGo T-Energy-S3.
+A custom E-Ink Application OS designed for the **Seeed Studio TRMNL** (7.5" OG DIY Kit).
+
+## Hardware Specs
+- **MCU:** Seeed Studio XIAO ESP32-S3 (8MB Flash)
+- **Display:** 7.5-inch E-Ink Module (800x480 resolution)
+- **Driver:** GxEPD2 (`GxEPD2_750_T7`)
+- **Interaction:** Single-button navigation (Click: Next, Double-Click: Prev, Long-Press: Select)
 
 ## Hardware Wiring
 
-![Wiring Diagram](docs/Tenergypin.png)
+Connect the **7.5" E-Ink Module** to the **Seeed XIAO ESP32-S3** as follows:
 
-
-Connect the **Waveshare 4.2inch E-Ink Module** to the **LilyGo T-Energy-S3** as follows:
-
-| E-Ink Pin | Function | ESP32-S3 Pin (Config.h) | Color (Standard Wire) |
-| :--- | :--- | :--- | :--- |
-| **VCC** | 3.3V Power | **3V3** | Red |
-| **GND** | Ground | **GND** | Black |
-| **DIN** | MOSI | **GPIO 11** | Blue |
-| **CLK** | SCK | **GPIO 12** | Yellow |
-| **CS** | Chip Select | **GPIO 10** | Orange |
-| **DC** | Data/Command | **GPIO 18** | Green |
-| **RST** | Reset | **GPIO 17** | White |
-| **BUSY** | Busy Signal | **GPIO 13** | Purple |
+| E-Ink Pin | Function | XIAO S3 Pin (Config.h) |
+| :--- | :--- | :--- |
+| **VCC** | 3.3V Power | **3V3** |
+| **GND** | Ground | **GND** |
+| **DIN** | MOSI | **GPIO 9** |
+| **CLK** | SCK | **GPIO 7** |
+| **CS** | Chip Select | **GPIO 44** |
+| **DC** | Data/Command | **GPIO 10** |
+| **RST** | Reset | **GPIO 38** |
+| **BUSY** | Busy Signal | **GPIO 4** |
 
 **Button:**
-- Pin: **GPIO 0** (Built-in BOOT button) or External Button to **GPIO 0** + GND.
+- Pin: **GPIO 5** (Silkscreened "KEY3" on TRMNL board)
+- Ground: Connect to GND
 
+**Battery Voltage:**
+- ADC Pin: **GPIO 1**
+- Measurement Switch: **GPIO 6** (Active HIGH)
+
+## Legacy Support
+The original LilyGo T-Energy-S3 version of this project is archived in the **`lilygo-t-energy`** branch.
 
 ## Setup Instructions
 
@@ -33,9 +43,17 @@ Connect the **Waveshare 4.2inch E-Ink Module** to the **LilyGo T-Energy-S3** as 
     - Select your WiFi network and enter the password.
 
 2.  **Web Interface**:
-    - Once connected, find the IP address of the device (Monitor Serial 115200 or check Router).
-    - Open `http://<DEVICE_IP>/` in your browser.
+    - Once connected, find the IP address displayed on the device's main menu.
+    - Open `http://<DEVICE_IP>/` in your browser to manage books and apps.
 
 3.  **Updates**:
-    - Build numbers are checked against `https://github.com/rolohaun/Book32`.
-    - Ensure you have a valid **Read-Only Token** in `Secrets.h` to fetch updates.
+    - The device checks for OTA updates from `https://github.com/rolohaun/Book32`.
+    - Create an `include/Secrets.h` file on your build machine with a GitHub Personal Access Token:
+      ```cpp
+      #define GITHUB_TOKEN "your_token_here"
+      ```
+
+## Features
+- **EPUB Reader:** High-fidelity reading with Atkinson dithering for cover art.
+- **Klipper Monitor:** Subnet scanning and real-time status for Moonraker-based 3D printers.
+- **Web Management:** Easy book uploads and system configuration via local network.
