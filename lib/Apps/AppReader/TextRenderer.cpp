@@ -336,9 +336,12 @@ std::vector<String> TextRenderer::paginateRich(std::vector<ContentNode>& content
 }
 
 void TextRenderer::renderRichPage(Book32Display& display, const String& pageData, int pageNum, int totalPages) {
-    int y = 30;  // Start near top
-    int maxY = _height - 35;  // Leave room for footer
+    int y = 30;
+    int maxY = _height - 35;
     int lineStart = 0;
+    int nodesRendered = 0;
+    
+    Serial.printf("Rendering page %d: start y=%d maxY=%d\n", pageNum+1, y, maxY);
     
     while(lineStart < (int)pageData.length() && y < maxY) {
         int lineEnd = pageData.indexOf('\n', lineStart);
@@ -355,13 +358,18 @@ void TextRenderer::renderRichPage(Book32Display& display, const String& pageData
                 node.align = (TextAlign)line.substring(c1 + 1, c2).toInt();
                 node.isListItem = line.substring(c2 + 1, c3) == "1";
                 node.text = line.substring(c3 + 1);
+                int yBefore = y;
                 renderTextNode(display, node, y, maxY);
+                nodesRendered++;
+                Serial.printf("  Node %d: y %d->%d (used %d px)\n", nodesRendered, yBefore, y, y-yBefore);
             }
         }
         lineStart = lineEnd + 1;
     }
     
-    // Footer with page number (small, at bottom)
+    Serial.printf("Rendered %d nodes, final y=%d\n", nodesRendered, y);
+    
+    // Footer
     if (_fontLoaded) {
         char footer[32];
         snprintf(footer, sizeof(footer), "Page %d of %d", pageNum + 1, totalPages);

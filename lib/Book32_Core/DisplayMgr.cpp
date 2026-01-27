@@ -17,11 +17,11 @@ void DisplayMgr::init() {
     
     display.init(115200, true, 10, false); 
     
-    display.setRotation(0); // Landscape mode (800x480)
+    display.setRotation(3); // Portrait mode (480x800)
     display.setTextColor(GxEPD_BLACK);
     display.setFont(NULL);
     
-    Serial.printf("Display initialized: %dx%d\n", display.width(), display.height());
+    Serial.printf("Display initialized: %dx%d (rotation %d)\n", display.width(), display.height(), 3);
 }
 
 void DisplayMgr::clear() {
