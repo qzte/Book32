@@ -22,7 +22,7 @@
 // Display Settings (Portrait 7.5")
 #define SCREEN_WIDTH 480
 #define SCREEN_HEIGHT 800
-#define FONT_SIZE_DEFAULT 2
+#define FONT_SIZE_DEFAULT 28 // Point size for OpenFontRender
 
 // GitHub OTA Config
 #define GITHUB_REPO "rolohaun/Book32"

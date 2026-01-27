@@ -11,232 +11,93 @@
 #define ZIP_SUCCESS 0
 #endif
 
-// Use low-level POSIX file I/O to avoid ESP32-S3 Arduino File class issues
 static int zipFd = -1;
 
 void *myOpen(const char *filename, int32_t *size) {
-    Serial.printf("ZIP myOpen: %s\n", filename);
-
-    // Close any previously open file
-    if (zipFd >= 0) {
-        close(zipFd);
-        zipFd = -1;
-    }
-
+    if (zipFd >= 0) { close(zipFd); zipFd = -1; }
     String fullPath = filename;
-    // Check if path has mount prefix, if not, assume littlefs for backward compatibility
-    // but the app should now be passing /ebooks/... or /littlefs/...
-    if (!fullPath.startsWith("/littlefs") && !fullPath.startsWith("/ebooks")) {
-        fullPath = "/littlefs" + fullPath;
-    }
-
-    Serial.printf("ZIP opening: %s\n", fullPath.c_str());
-
+    if (!fullPath.startsWith("/littlefs") && !fullPath.startsWith("/ebooks")) fullPath = "/littlefs" + fullPath;
     zipFd = open(fullPath.c_str(), O_RDONLY);
-    if (zipFd < 0) {
-        Serial.printf("ZIP myOpen: failed to open, errno=%d\n", errno);
-        return NULL;
-    }
-
-    // Get file size using fstat
+    if (zipFd < 0) return NULL;
     struct stat st;
-    if (fstat(zipFd, &st) != 0) {
-        Serial.printf("ZIP myOpen: fstat failed, errno=%d\n", errno);
-        close(zipFd);
-        zipFd = -1;
-        return NULL;
-    }
-
+    if (fstat(zipFd, &st) != 0) { close(zipFd); zipFd = -1; return NULL; }
     *size = st.st_size;
-    Serial.printf("ZIP myOpen: success, fd=%d, size=%d\n", zipFd, *size);
-
-    // Return the file descriptor as the handle (offset by 1 to avoid returning 0)
     return (void*)(intptr_t)(zipFd + 1);
 }
 
-void myClose(void *p) {
-    Serial.println("ZIP myClose");
-    if (zipFd >= 0) {
-        close(zipFd);
-        zipFd = -1;
-    }
-}
-
+void myClose(void *p) { if (zipFd >= 0) { close(zipFd); zipFd = -1; } }
 int32_t myRead(void *p, uint8_t *buffer, int32_t length) {
     if (zipFd < 0 || !buffer || length <= 0) return -1;
-
-    ssize_t bytesRead = read(zipFd, buffer, length);
-    if (bytesRead < 0) {
-        Serial.printf("ZIP myRead: error, errno=%d\n", errno);
-        return -1;
-    }
-    return (int32_t)bytesRead;
+    return (int32_t)read(zipFd, buffer, length);
 }
-
 int32_t mySeek(void *p, int32_t position, int iType) {
     if (zipFd < 0) return -1;
-
-    off_t newPos = lseek(zipFd, position, iType);
-    if (newPos < 0) {
-        Serial.printf("ZIP mySeek: error, errno=%d\n", errno);
-        return -1;
-    }
-    return (int32_t)newPos;
+    return (int32_t)lseek(zipFd, position, iType);
 }
 
 EpubLoader::EpubLoader() {
-    // Allocate UNZIP in PSRAM - the structure contains a 41KB buffer
-    // that can cause issues if allocated on regular heap
     zip = (UNZIP*)ps_malloc(sizeof(UNZIP));
-    if (!zip) {
-        Serial.println("EpubLoader: PSRAM alloc failed, using heap");
-        zip = new (std::nothrow) UNZIP();
-    } else {
-        // Initialize the object in place
-        new (zip) UNZIP();
-        Serial.println("EpubLoader: UNZIP allocated in PSRAM");
-    }
+    if (!zip) zip = new (std::nothrow) UNZIP();
+    else new (zip) UNZIP();
 }
 
-EpubLoader::~EpubLoader() {
-    if (zip) {
-        zip->~UNZIP();
-        free(zip);
-        zip = nullptr;
-    }
-}
+EpubLoader::~EpubLoader() { if (zip) { zip->~UNZIP(); free(zip); zip = nullptr; } }
 
 bool EpubLoader::open(const char* path) {
-    Serial.printf("EpubLoader::open(%s)\n", path);
-
     epubPath = String(path);
-
-    int result = zip->openZIP(path, myOpen, myClose, myRead, mySeek);
-    if (result != ZIP_SUCCESS) {
-        Serial.printf("zip->openZIP returned: %d\n", result);
-        return false;
-    }
-
-    if (!parseContainer()) {
-        close();
-        return false;
-    }
-
-    if (!parseOpf()) {
-        close();
-        return false;
-    }
-
-    Serial.printf("EPUB opened successfully. Chapters: %d\n", spine.size());
+    if (zip->openZIP(path, myOpen, myClose, myRead, mySeek) != ZIP_SUCCESS) return false;
+    if (!parseContainer()) { close(); return false; }
+    if (!parseOpf()) { close(); return false; }
     return true;
 }
 
 void EpubLoader::close() {
-    if (zip) {
-        zip->closeZIP();
-    }
-    spine.clear();
-    manifest.clear();
-    fonts.clear();
+    if (zip) zip->closeZIP();
+    spine.clear(); manifest.clear(); fonts.clear();
 }
 
-String EpubLoader::getTitle() { return bookTitle.length() > 0 ? bookTitle : "Unknown"; }
+String EpubLoader::getTitle() { return bookTitle; }
 int EpubLoader::getChapterCount() { return spine.size(); }
 
 String EpubLoader::getChapterContent(int index) {
     if(index < 0 || index >= (int)spine.size()) return "";
-
     String href = spine[index].href;
     String fullPath = rootDir + href;
     if(fullPath.startsWith("./")) fullPath = fullPath.substring(2);
-
     String content = readFileFromZip(fullPath.c_str());
     if (content.length() == 0) return "";
-
-    // Improved HTML to plain text conversion
     String clean;
     clean.reserve(content.length());
-
-    bool inTag = false;
-    bool skipContent = false;
+    bool inTag = false, skipContent = false;
     String currentTag;
-
     for(int i = 0; i < (int)content.length(); i++) {
         char c = content.charAt(i);
-
         if(c == '<') {
-            inTag = true;
-            currentTag = "";
-            int j = i + 1;
-            while(j < (int)content.length() && content.charAt(j) != '>' && content.charAt(j) != ' ' && j - i < 20) {
-                currentTag += (char)tolower(content.charAt(j));
-                j++;
-            }
-
-            if(currentTag == "p" || currentTag == "/p" || currentTag == "div" || currentTag == "/div" || currentTag == "br" || currentTag == "br/") {
-                if(clean.length() > 0 && clean.charAt(clean.length()-1) != '\n') clean += "\n";
-            }
-            else if(currentTag == "li") {
-                if(clean.length() > 0 && clean.charAt(clean.length()-1) != '\n') clean += "\n";
-                clean += "• ";
-            }
-            else if(currentTag == "script" || currentTag == "style" || currentTag == "head") {
-                skipContent = true;
-            }
-            else if(currentTag == "/script" || currentTag == "/style" || currentTag == "/head") {
-                skipContent = false;
-            }
-
-        } else if (c == '>') {
-            inTag = false;
-        } else if (!inTag && !skipContent) {
+            inTag = true; currentTag = ""; int j = i + 1;
+            while(j < (int)content.length() && content.charAt(j) != '>' && content.charAt(j) != ' ' && j - i < 20) { currentTag += (char)tolower(content.charAt(j)); j++; }
+            if(currentTag == "p" || currentTag == "/p" || currentTag == "div" || currentTag == "/div" || currentTag == "br" || currentTag == "br/") { if(clean.length() > 0 && clean.charAt(clean.length()-1) != '\n') clean += "\n"; }
+            else if(currentTag == "li") { if(clean.length() > 0 && clean.charAt(clean.length()-1) != '\n') clean += "\n"; clean += "• "; }
+            else if(currentTag == "script" || currentTag == "style" || currentTag == "head") skipContent = true;
+            else if(currentTag == "/script" || currentTag == "/style" || currentTag == "/head") skipContent = false;
+        } else if (c == '>') inTag = false;
+        else if (!inTag && !skipContent) {
             if(c == '\n' || c == '\r' || c == '\t') c = ' ';
             if(c == ' ' && clean.length() > 0 && clean.charAt(clean.length()-1) == ' ') continue;
             clean += c;
         }
     }
-
-    // --- ROBUST GARBAGE CHARACTER CLEANING ---
-    // These sequences come from multi-byte UTF-8 interpreted as single bytes
-    
-    // Pattern 1: ¶Ç followed by a 3rd byte (seen as 8, Ö, £, ¥ in screenshots)
-    // Interpret common Mistborn sequences
-    clean.replace("¶Ç8", " -- ");
-    clean.replace("¶ÇÖ", "'");
-    clean.replace("¶Ç£", "\"");
-    clean.replace("¶Ç¥", "\"");
-    
-    // Pattern 2: Raw UTF-8 bytes (hex)
-    clean.replace("\xE2\x80\x9C", "\"");
-    clean.replace("\xE2\x80\x9D", "\"");
-    clean.replace("\xE2\x80\x98", "'");
-    clean.replace("\xE2\x80\x99", "'");
-    clean.replace("\xE2\x80\x94", " -- ");
-    clean.replace("\xE2\x80\x93", " - ");
-    clean.replace("\xE2\x80\xA6", "...");
-    
-    // Catch-all: clean up any remaining ¶Ç markers
-    clean.replace("¶Ç", " ");
-
-    // Decode HTML entities
-    clean.replace("&nbsp;", " ");
-    clean.replace("&lt;", "<");
-    clean.replace("&gt;", ">");
-    clean.replace("&amp;", "&");
-    clean.replace("&quot;", "\"");
-    clean.replace("&apos;", "'");
-
-    clean.trim();
-    return clean;
+    clean.replace("¶Ç8", " -- "); clean.replace("¶ÇÖ", "'"); clean.replace("¶Ç£", "\""); clean.replace("¶Ç¥", "\""); clean.replace("¶Ç", " ");
+    clean.replace("\xE2\x80\x9C", "\""); clean.replace("\xE2\x80\x9D", "\""); clean.replace("\xE2\x80\x98", "'"); clean.replace("\xE2\x80\x99", "'");
+    clean.replace("\xE2\x80\x94", " -- "); clean.replace("\xE2\x80\x93", " - "); clean.replace("\xE2\x80\xA6", "...");
+    clean.replace("&nbsp;", " "); clean.replace("&lt;", "<"); clean.replace("&gt;", ">"); clean.replace("&amp;", "&"); clean.replace("&quot;", "\""); clean.replace("&apos;", "'");
+    clean.trim(); return clean;
 }
 
 bool EpubLoader::parseContainer() {
     String xml = readFileFromZip("META-INF/container.xml");
     if(xml.length() == 0) return false;
-
     opfPath = extractAttribute(xml, "rootfile", "full-path");
     if(opfPath.length() == 0) return false;
-
     int lastSlash = opfPath.lastIndexOf('/');
     if(lastSlash != -1) rootDir = opfPath.substring(0, lastSlash + 1);
     else rootDir = "";
@@ -246,79 +107,54 @@ bool EpubLoader::parseContainer() {
 bool EpubLoader::parseOpf() {
     String xml = readFileFromZip(opfPath.c_str());
     if(xml.length() == 0) return false;
-
     bookTitle = extractMetadata(xml, "dc:title");
     if(bookTitle.length() == 0) bookTitle = extractMetadata(xml, "title");
-    bookAuthor = extractMetadata(xml, "dc:creator");
-    bookPublisher = extractMetadata(xml, "dc:publisher");
-    bookLanguage = extractMetadata(xml, "dc:language");
-    bookPubDate = extractMetadata(xml, "dc:date");
-
     int manifestStart = xml.indexOf("<manifest");
     int manifestEnd = xml.indexOf("</manifest>");
     if(manifestStart == -1 || manifestEnd == -1) return false;
-
     String manifestBlock = xml.substring(manifestStart, manifestEnd);
     int pos = 0;
     while(true) {
         int itemStart = manifestBlock.indexOf("<item", pos);
         if(itemStart == -1) break;
         int itemEnd = manifestBlock.indexOf(">", itemStart);
-
         String itemTag = manifestBlock.substring(itemStart, itemEnd+1);
         String id = extractAttribute(itemTag, "item", "id");
         String href = extractAttribute(itemTag, "item", "href");
         String mediaType = extractAttribute(itemTag, "item", "media-type");
-
         if(id.length() > 0 && href.length() > 0) {
             manifest[id] = href;
-            String hrefLower = href;
-            hrefLower.toLowerCase();
+            String hrefLower = href; hrefLower.toLowerCase();
             if(hrefLower.endsWith(".ttf") || hrefLower.endsWith(".otf") || mediaType.indexOf("font") != -1) {
-                FontInfo font;
-                font.path = rootDir + href;
+                FontInfo font; font.path = rootDir + href;
                 if(hrefLower.endsWith(".ttf")) font.format = "ttf";
                 else if(hrefLower.endsWith(".otf")) font.format = "otf";
-                
-                int lastSlash = href.lastIndexOf('/');
-                int lastDot = href.lastIndexOf('.');
+                int lastSlash = href.lastIndexOf('/'), lastDot = href.lastIndexOf('.');
                 if(lastSlash != -1 && lastDot != -1) font.family = href.substring(lastSlash + 1, lastDot);
                 else if(lastDot != -1) font.family = href.substring(0, lastDot);
-                
-                String filenameLower = font.family;
-                filenameLower.toLowerCase();
-                if(filenameLower.indexOf("bolditalic") != -1) font.style = "bold-italic";
-                else if(filenameLower.indexOf("bold") != -1) font.style = "bold";
-                else if(filenameLower.indexOf("italic") != -1) font.style = "italic";
+                String fLower = font.family; fLower.toLowerCase();
+                if(fLower.indexOf("bolditalic") != -1) font.style = "bold-italic";
+                else if(fLower.indexOf("bold") != -1) font.style = "bold";
+                else if(fLower.indexOf("italic") != -1) font.style = "italic";
                 else font.style = "normal";
-                
                 fonts.push_back(font);
-                Serial.printf("EPUB Font found: %s (%s)\n", font.family.c_str(), font.style.c_str());
             }
-
             if(itemTag.indexOf("properties=\"cover-image\"") != -1) coverPath = rootDir + href;
         }
         pos = itemEnd;
     }
-
-    int spineStart = xml.indexOf("<spine");
-    int spineEnd = xml.indexOf("</spine>");
+    int spineStart = xml.indexOf("<spine"), spineEnd = xml.indexOf("</spine>");
     if(spineStart == -1 || spineEnd == -1) return false;
-
     String spineBlock = xml.substring(spineStart, spineEnd);
     pos = 0;
     while(true) {
         int itemRefStart = spineBlock.indexOf("<itemref", pos);
         if(itemRefStart == -1) break;
         int itemRefEnd = spineBlock.indexOf(">", itemRefStart);
-
         String itemRefTag = spineBlock.substring(itemRefStart, itemRefEnd+1);
         String idref = extractAttribute(itemRefTag, "itemref", "idref");
-
         if(idref.length() > 0 && manifest.count(idref)) {
-            SpineItem item;
-            item.id = idref;
-            item.href = manifest[idref];
+            SpineItem item; item.id = idref; item.href = manifest[idref];
             spine.push_back(item);
         }
         pos = itemRefEnd;
@@ -326,22 +162,17 @@ bool EpubLoader::parseOpf() {
     return true;
 }
 
-String EpubLoader::getCoverPath() { return coverPath; }
-
-uint8_t* EpubLoader::getCoverData(size_t* outSize) {
-    if(coverPath.length() == 0) return nullptr;
-    if (zip->locateFile(coverPath.c_str()) != 0) return nullptr;
+uint8_t* EpubLoader::getFontData(String path, size_t* outSize) {
+    if(path.length() == 0) return nullptr;
+    if (zip->locateFile(path.c_str()) != 0) return nullptr;
     if (zip->openCurrentFile() != 0) return nullptr;
-
     unz_file_info fileInfo;
     char szName[256];
     zip->getFileInfo(&fileInfo, szName, sizeof(szName), NULL, 0, NULL, 0);
     size_t size = fileInfo.uncompressed_size;
-
     uint8_t* buffer = (uint8_t*)ps_malloc(size);
     if(!buffer) buffer = (uint8_t*)malloc(size);
     if(!buffer) { zip->closeCurrentFile(); return nullptr; }
-
     zip->readCurrentFile(buffer, size);
     zip->closeCurrentFile();
     *outSize = size;
@@ -359,13 +190,17 @@ String EpubLoader::extractAttribute(String xml, String tag, String attr) {
     return xml.substring(valStart, valEnd);
 }
 
-String EpubLoader::extractTagContent(String xml, String tag) {
-    int start = xml.indexOf("<" + tag);
-    if(start == -1) return "";
-    start = xml.indexOf(">", start) + 1;
-    int end = xml.indexOf("</" + tag);
-    if(end == -1) return "";
-    return xml.substring(start, end);
+String EpubLoader::extractMetadata(String xml, String tag) {
+    int tagStart = xml.indexOf("<" + tag);
+    if(tagStart == -1) return "";
+    int tagEnd = xml.indexOf(">", tagStart);
+    if(tagEnd == -1) return "";
+    int contentEnd = xml.indexOf("</" + tag + ">", tagEnd);
+    if(contentEnd == -1) contentEnd = xml.indexOf("</", tagEnd);
+    if(contentEnd == -1) return "";
+    String content = xml.substring(tagEnd + 1, contentEnd);
+    content.trim();
+    return content;
 }
 
 String EpubLoader::readFileFromZip(const char* path) {
@@ -386,16 +221,17 @@ String EpubLoader::readFileFromZip(const char* path) {
     return str;
 }
 
-String EpubLoader::getAuthor() { return bookAuthor.length() > 0 ? bookAuthor : "Unknown"; }
-String EpubLoader::getPublisher() { return bookPublisher.length() > 0 ? bookPublisher : "Unknown"; }
-String EpubLoader::getLanguage() { return bookLanguage.length() > 0 ? bookLanguage : "en"; }
-String EpubLoader::getPublicationDate() { return bookPubDate.length() > 0 ? bookPubDate : "Unknown"; }
-String EpubLoader::getISBN() { return bookISBN.length() > 0 ? bookISBN : "Unknown"; }
+String EpubLoader::getAuthor() { return bookAuthor; }
+String EpubLoader::getPublisher() { return bookPublisher; }
+String EpubLoader::getLanguage() { return bookLanguage; }
+String EpubLoader::getPublicationDate() { return bookPubDate; }
+String EpubLoader::getISBN() { return bookISBN; }
 std::vector<FontInfo> EpubLoader::getFonts() { return fonts; }
+String EpubLoader::getCoverPath() { return coverPath; }
 
-uint8_t* EpubLoader::getFontData(String path, size_t* outSize) {
-    if(path.length() == 0) return nullptr;
-    if (zip->locateFile(path.c_str()) != 0) return nullptr;
+uint8_t* EpubLoader::getCoverData(size_t* outSize) {
+    if(coverPath.length() == 0) return nullptr;
+    if (zip->locateFile(coverPath.c_str()) != 0) return nullptr;
     if (zip->openCurrentFile() != 0) return nullptr;
     unz_file_info fileInfo;
     char szName[256];
@@ -408,19 +244,6 @@ uint8_t* EpubLoader::getFontData(String path, size_t* outSize) {
     zip->closeCurrentFile();
     *outSize = size;
     return buffer;
-}
-
-String EpubLoader::extractMetadata(String xml, String tag) {
-    int tagStart = xml.indexOf("<" + tag);
-    if(tagStart == -1) return "";
-    int tagEnd = xml.indexOf(">", tagStart);
-    if(tagEnd == -1) return "";
-    int contentEnd = xml.indexOf("</" + tag + ">", tagEnd);
-    if(contentEnd == -1) contentEnd = xml.indexOf("</", tagEnd);
-    if(contentEnd == -1) return "";
-    String content = xml.substring(tagEnd + 1, contentEnd);
-    content.trim();
-    return content;
 }
 
 TextStyle EpubLoader::getStyleFromTag(String tag) {
@@ -507,8 +330,6 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(String html) {
         char c = html.charAt(i);
         if(c == '<') {
             if(currentText.length() > 0) {
-                // DON'T TRIM HERE - leading spaces in span elements are important!
-                // currentText.trim(); 
                 if(currentText.length() > 0) {
                     ContentNode node;
                     node.type = CONTENT_TEXT;
@@ -565,11 +386,9 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(String html) {
                     tag == "/h2" || tag == "/h3" || tag == "/h4" || tag == "/li") {
                 currentText += "\n";
             }
-            // NO-OP tags that shouldn't cause a break: span, a, em, i, b, strong
             i = tagEnd + 1;
         } else {
             if(c == '\n' || c == '\r' || c == '\t') c = ' ';
-            // Handle interpreted characters (¶Ç)
             currentText += c;
             i++;
         }
@@ -585,8 +404,6 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(String html) {
             nodes.push_back(node);
         }
     }
-    
-    // --- FINAL CLEANING ON NODES ---
     for(auto& node : nodes) {
         if(node.type == CONTENT_TEXT) {
             node.textNode.text.replace("¶Ç8", " -- ");
