@@ -67,6 +67,7 @@ AppReader::AppReader() {
     _needsRedraw = true;
     _pageTurnsSinceRefresh = 0;
     _totalBookPages = 0;
+    _refreshEveryNPages = 10; // Default to full refresh every 10 pages
     loadSettings();
 }
 

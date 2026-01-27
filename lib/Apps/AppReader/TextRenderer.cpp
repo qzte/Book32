@@ -343,14 +343,20 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
     
     if (draw) {
         Serial.printf("Dynamic Rendering page %d: startNode=%d startOffset=%d\n", pageNum+1, startNode, startOffset);
+        _ofr.setDrawer(display);
+        _ofr.setFontColor(GxEPD_BLACK);
     }
     
     int currentNode = startNode;
     int currentOffset = startOffset;
     
     while (currentNode < (int)content.size() && y < maxY) {
+        yield(); // Prevent WDT reset
         auto& node = content[currentNode];
         if (node.type == CONTENT_TEXT) {
+            if (draw) {
+                Serial.printf("  Rendering node %d (type %d) at y=%d\n", currentNode, node.textNode.style, y);
+            }
             // Setup for this specific node
             int fontSize = _fontSize;
             bool isBold = false;
