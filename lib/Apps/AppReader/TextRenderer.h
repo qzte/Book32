@@ -3,7 +3,13 @@
 
 #include <Arduino.h>
 #include <vector>
-#include <OpenFontRender.h>
+#include <Adafruit_GFX.h>
+#include <Fonts/FreeSans9pt7b.h>
+#include <Fonts/FreeSans12pt7b.h>
+#include <Fonts/FreeSans18pt7b.h>
+#include <Fonts/FreeSansBold9pt7b.h>
+#include <Fonts/FreeSansBold12pt7b.h>
+#include <Fonts/FreeSansBold18pt7b.h>
 #include "DisplayMgr.h"
 #include "EpubLoader.h"
 
@@ -52,16 +58,14 @@ private:
     int _fontSize;
     int _charsPerLine;
     int _linesPerPage;
-    int _lineHeight; // Added this
+    int _lineHeight; 
     
-    OpenFontRender _ofr;
-    bool _fontLoaded = false;
+    bool _fontLoaded = true; // GFX fonts are always "loaded"
     std::vector<RenderedLine> _lineCache;
     int _cachedPage = -1;
     
-    // Fast character width cache
-    int _charWidths[256];
-    int _lastFontSize = -1;
+    // Helper to get font pointer based on style/size
+    const GFXfont* getGFXFont(TextStyle style, int& lineHeight);
 
     std::vector<String> wrapText(const String& text);
     void renderTextNode(Book32Display& display, RichTextNode& node, int& y, int maxY);

@@ -4,69 +4,53 @@ TextRenderer::TextRenderer(int width, int height, int fontSize) {
     _width = width;
     _height = height;
     _fontSize = fontSize;
-    _fontLoaded = false;
+    _fontLoaded = true;
     _cachedPage = -1;
-    _lastFontSize = -1;
-    memset(_charWidths, 0, sizeof(_charWidths));
     calculateDimensions();
 }
 
 bool TextRenderer::loadFont(const uint8_t* data, size_t size) {
-    FT_Error err = _ofr.loadFont(data, size);
-    if (err == 0) {
-        _fontLoaded = true;
-        _ofr.setCacheSize(20, 20, 65536);
-        calculateDimensions();
-        return true;
-    }
-    return false;
+    return true; // GFX fonts are compiled in
 }
 
 void TextRenderer::calculateDimensions() {
-    if (_fontLoaded) {
-        _ofr.setFontSize(_fontSize);
-        int usableWidth = _width - 50;
-        int avgCharWidth = _ofr.getTextWidth("n");
-        _charsPerLine = usableWidth / (avgCharWidth > 0 ? avgCharWidth : (_fontSize/2));
-        _lineHeight = _fontSize + 4;
-        _linesPerPage = (_height - 70) / _lineHeight;
-    } else {
-        _charsPerLine = (_width - 50) / 10;
-        _lineHeight = 20;
-        _linesPerPage = (_height - 70) / _lineHeight;
-    }
+    _lineHeight = 24; 
+    _linesPerPage = (_height - 70) / _lineHeight;
+}
+
+const GFXfont* TextRenderer::getGFXFont(TextStyle style, int& lineHeight) {
+    if (style == STYLE_HEADER1) { lineHeight = 36; return &FreeSansBold18pt7b; }
+    if (style == STYLE_HEADER2) { lineHeight = 28; return &FreeSansBold12pt7b; }
+    if (style == STYLE_HEADER3) { lineHeight = 24; return &FreeSansBold9pt7b; }
+    if (style == STYLE_BOLD)    { lineHeight = 24; return &FreeSansBold9pt7b; }
+    
+    lineHeight = 24; // Default for 9pt Sans
+    return &FreeSans9pt7b;
 }
 
 RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const std::vector<ContentNode>& content, 
                                                  int startNode, int startOffset, int pageNum, int totalPages, bool draw) {
-    if (draw) {
-        _ofr.setDrawer(display);
-        _ofr.setFontColor(GxEPD_BLACK);
-    }
-
+    
+    // GFX font rendering is fast enough we could skip cache, but let's keep it for consistency
     if (draw && _cachedPage == pageNum && !_lineCache.empty()) {
+        display.setTextColor(GxEPD_BLACK);
         for (const auto& line : _lineCache) {
-            _ofr.setFontSize(line.fontSize);
-            _ofr.setCursor(line.x, line.y);
-            _ofr.printf("%s", line.text.c_str());
-            if (line.isBold) {
-                _ofr.setCursor(line.x + 1, line.y);
-                _ofr.printf("%s", line.text.c_str());
-            }
+            int unused;
+            display.setFont(getGFXFont((TextStyle)line.fontSize, unused)); // fontSize field hijacked for style index
+            display.setCursor(line.x, line.y);
+            display.print(line.text);
         }
-        char footer[32];
-        snprintf(footer, sizeof(footer), "Page %d", pageNum + 1);
-        _ofr.setFontSize(12);
-        int footerWidth = _ofr.getTextWidth(footer);
-        _ofr.setCursor((_width - footerWidth) / 2, _height - 15);
-        _ofr.printf("%s", footer);
+        
+        display.setFont(NULL);
+        display.setCursor(_width/2 - 20, _height - 15);
+        display.printf("Page %d", pageNum + 1);
         return {0, 0, true};
     }
 
     _lineCache.clear();
     _cachedPage = pageNum;
 
-    int y = 30;
+    int y = 40; // GFX fonts draw from baseline up, so start lower
     int maxY = _height - 40;
     RenderResult result = {0, 0, false};
     int currentNode = startNode;
@@ -77,25 +61,12 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
     while (currentNode < (int)content.size() && y < maxY) {
         auto& node = content[currentNode];
         if (node.type == CONTENT_TEXT) {
-            int fontSize = _fontSize;
-            bool isBold = false;
-            if (node.textNode.style == STYLE_HEADER1) { fontSize = _fontSize + 12; isBold = true; }
-            else if (node.textNode.style == STYLE_HEADER2) { fontSize = _fontSize + 8; isBold = true; }
-            else if (node.textNode.style == STYLE_HEADER3) { fontSize = _fontSize + 4; isBold = true; }
-            else if (node.textNode.style == STYLE_BOLD) { isBold = true; }
+            int lineSpacing = 0;
+            const GFXfont* font = getGFXFont(node.textNode.style, lineSpacing);
+            display.setFont(font);
             
-            _ofr.setFontSize(fontSize);
-            int lineSpacing = fontSize + 8;
-            int x_margin = 35;
+            int x_margin = 40;
             int usableWidth = _width - (x_margin * 2);
-
-            if (_fontLoaded && fontSize != _lastFontSize) {
-                for (int c = 32; c < 127; c++) {
-                    char buf[2] = {(char)c, 0};
-                    _charWidths[c] = _ofr.getTextWidth(buf);
-                }
-                _lastFontSize = fontSize;
-            }
 
             const char* text = node.textNode.text.c_str();
             int textLen = node.textNode.text.length();
@@ -108,52 +79,41 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
                     return result;
                 }
 
-                int line_chars = 0;
-                int line_width = 0;
                 lineBuf[0] = '\0';
+                int line_width = 0;
+                int line_chars = 0;
                 
                 if (node.textNode.isListItem && pos == currentOffset) {
-                    strcpy(lineBuf, "• ");
-                    line_width = _fontLoaded ? _charWidths['n'] * 2 : 20; 
+                    strcpy(lineBuf, "- ");
                 }
 
+                // Word wrap
                 while (pos + line_chars < textLen) {
                     int wordStart = pos + line_chars;
                     while (wordStart < textLen && isspace((unsigned char)text[wordStart])) wordStart++;
-                    
-                    if (wordStart >= textLen) {
-                        line_chars = textLen - pos;
-                        break;
-                    }
+                    if (wordStart >= textLen) { line_chars = textLen - pos; break; }
 
                     int wordEnd = wordStart;
                     while (wordEnd < textLen && !isspace((unsigned char)text[wordEnd])) wordEnd++;
                     
-                    int wordWidth = 0;
-                    for (int k = wordStart; k < wordEnd; k++) {
-                        unsigned char uc = (unsigned char)text[k];
-                        if (_fontLoaded && uc < 128 && _charWidths[uc] > 0) wordWidth += _charWidths[uc];
-                        else wordWidth += (fontSize / 2);
-                    }
+                    int wordLen = wordEnd - wordStart;
+                    char word[128];
+                    if (wordLen > 127) wordLen = 127;
+                    memcpy(word, text + wordStart, wordLen);
+                    word[wordLen] = '\0';
 
-                    int spaceWidth = (line_width > 0) ? (_fontLoaded ? _charWidths[' '] : (fontSize/4)) : 0;
+                    // Measure
+                    int16_t x1, y1; uint16_t w, h;
+                    String testLine = String(lineBuf);
+                    if (testLine.length() > 0) testLine += " ";
+                    testLine += word;
+                    display.getTextBounds(testLine.c_str(), 0, 0, &x1, &y1, &w, &h);
 
-                    if (line_width + spaceWidth + wordWidth > usableWidth && line_width > 0) {
-                        break;
-                    }
+                    if (w > (uint16_t)usableWidth && strlen(lineBuf) > 0) break;
 
-                    if (line_width > 0) {
-                        strcat(lineBuf, " ");
-                        line_width += spaceWidth;
-                    }
-                    
-                    int currentLen = strlen(lineBuf);
-                    int toCopy = wordEnd - wordStart;
-                    if (currentLen + toCopy < 255) {
-                        strncat(lineBuf, text + wordStart, toCopy);
-                        line_width += wordWidth;
-                    }
-                    
+                    if (strlen(lineBuf) > 0) strcat(lineBuf, " ");
+                    strcat(lineBuf, word);
+                    line_width = w;
                     line_chars = wordEnd - pos;
                 }
 
@@ -162,16 +122,14 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
                     if (node.textNode.align == ALIGN_CENTER) drawX = (_width - line_width) / 2;
                     else if (node.textNode.align == ALIGN_RIGHT) drawX = _width - line_width - x_margin;
                     
-                    _lineCache.push_back({drawX, y, fontSize, isBold, String(lineBuf)});
+                    _lineCache.push_back({drawX, y, (int)node.textNode.style, false, String(lineBuf)});
                     if (draw) {
-                        _ofr.setCursor(drawX, y);
-                        _ofr.printf("%s", lineBuf);
-                        if (isBold) {
-                            _ofr.setCursor(drawX + 1, y);
-                            _ofr.printf("%s", lineBuf);
-                        }
+                        display.setCursor(drawX, y);
+                        display.print(lineBuf);
                     }
                     y += lineSpacing;
+                } else {
+                    pos++; continue;
                 }
                 
                 pos += line_chars;
@@ -186,12 +144,9 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
     }
 
     if (draw) {
-        char footer[32];
-        snprintf(footer, sizeof(footer), "Page %d", pageNum + 1);
-        _ofr.setFontSize(12);
-        int footerWidth = _ofr.getTextWidth(footer);
-        _ofr.setCursor((_width - footerWidth) / 2, _height - 15);
-        _ofr.printf("%s", footer);
+        display.setFont(NULL);
+        display.setCursor(_width/2 - 20, _height - 15);
+        display.printf("Page %d", pageNum + 1);
     }
     return result;
 }
