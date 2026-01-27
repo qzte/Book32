@@ -1,10 +1,8 @@
 # Name,   Type, SubType, Offset,   Size,     Flags
-# 16MB Flash partition table for Seeed Studio XIAO ESP32-S3 (Book32 OS)
-# System partition "spiffs" is the uploadfs target (1MB for Web UI)
-# Ebook partition "ebooks" stores EPUB files (10MB)
+# 16MB Flash partition table for Seeed Studio TRMNL (Book32 OS)
 nvs,      data, nvs,     0x9000,   0x5000,
 otadata,  data, ota,     0xe000,   0x2000,
 app0,     app,  ota_0,   0x10000,  0x280000,
 app1,     app,  ota_1,   0x290000, 0x280000,
 spiffs,   data, spiffs,  0x510000, 0x100000,
-ebooks,   data, spiffs,  0x610000, 0x9F0000,
+ebooks,   data, 0x82,    0x610000, 0x9F0000,
