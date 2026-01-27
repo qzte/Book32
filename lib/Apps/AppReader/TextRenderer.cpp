@@ -340,9 +340,9 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
     if (draw) {
         _ofr.setDrawer(display);
         _ofr.setFontColor(GxEPD_BLACK);
-        _ofr.setFontSize(_fontSize);
     }
 
+    // Cache check must be very fast
     if (draw && _cachedPage == pageNum && !_lineCache.empty()) {
         for (const auto& line : _lineCache) {
             _ofr.setFontSize(line.fontSize);
@@ -374,7 +374,8 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
     int currentNode = startNode;
     int currentOffset = startOffset;
     
-    char wordBuf[256]; 
+    char wordBuf[256];
+    char lineBuf[512];
 
     while (currentNode < (int)content.size() && y < maxY) {
         yield();
@@ -382,15 +383,14 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
         if (node.type == CONTENT_TEXT) {
             int fontSize = _fontSize;
             bool isBold = false;
-            if (node.textNode.style == STYLE_HEADER1) { fontSize = _fontSize + 10; isBold = true; }
-            else if (node.textNode.style == STYLE_HEADER2) { fontSize = _fontSize + 6; isBold = true; }
-            else if (node.textNode.style == STYLE_HEADER3) { fontSize = _fontSize + 2; isBold = true; }
+            if (node.textNode.style == STYLE_HEADER1) { fontSize = _fontSize + 12; isBold = true; }
+            else if (node.textNode.style == STYLE_HEADER2) { fontSize = _fontSize + 8; isBold = true; }
+            else if (node.textNode.style == STYLE_HEADER3) { fontSize = _fontSize + 4; isBold = true; }
             else if (node.textNode.style == STYLE_BOLD) { isBold = true; }
-            else if (node.textNode.style == STYLE_BOLD_ITALIC) { isBold = true; }
             
-            int x_margin = 30; // Increased margin
+            int x_margin = 35;
             int usableWidth = _width - (x_margin * 2);
-            int lineSpacing = fontSize + 4;
+            int lineSpacing = fontSize + 6;
             
             const char* fullText = node.textNode.text.c_str();
             int textLen = node.textNode.text.length();
@@ -405,32 +405,41 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
             int pos = currentOffset;
             _ofr.setFontSize(fontSize);
 
-            while (pos < textLen) {
+            while (pos < textLen && y < maxY) {
                 if (y + lineSpacing > maxY) {
                     result.pageFull = true;
                     result.charsConsumedInLastNode = pos;
                     return result;
                 }
                 
-                String lineText = "";
-                if (node.textNode.isListItem && pos == 0) lineText = "• ";
+                lineBuf[0] = '\0';
+                int lineLen = 0;
+                if (node.textNode.isListItem && pos == currentOffset) {
+                    strcpy(lineBuf, "• ");
+                    lineLen = 2;
+                }
                 
-                int line_width = _ofr.getTextWidth(lineText.c_str());
+                int line_width = _ofr.getTextWidth(lineBuf);
                 int line_chars = 0;
                 
-                // Word wrap loop
+                // Optimized Word Wrap
                 while (pos + line_chars < textLen) {
-                    // Find next word (skip leading whitespace relative to current word)
+                    // 1. Skip whitespace to find word start
                     int wordStart = pos + line_chars;
-                    while (wordStart < textLen && isspace(fullText[wordStart])) wordStart++;
+                    while (wordStart < textLen && (fullText[wordStart] == ' ' || fullText[wordStart] == '\n' || fullText[wordStart] == '\r')) {
+                        wordStart++;
+                    }
                     
                     if (wordStart >= textLen) {
                         line_chars = textLen - pos;
                         break;
                     }
 
+                    // 2. Find word end
                     int wordEnd = wordStart;
-                    while (wordEnd < textLen && !isspace(fullText[wordEnd])) wordEnd++;
+                    while (wordEnd < textLen && !(fullText[wordEnd] == ' ' || fullText[wordEnd] == '\n' || fullText[wordEnd] == '\r')) {
+                        wordEnd++;
+                    }
                     
                     int wordLen = wordEnd - wordStart;
                     if (wordLen > 250) wordLen = 250;
@@ -438,47 +447,61 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
                     memcpy(wordBuf, fullText + wordStart, wordLen);
                     wordBuf[wordLen] = '\0';
                     
+                    // 3. Measure
                     int wordWidth = _ofr.getTextWidth(wordBuf);
-                    int spaceWidth = (line_chars > 0) ? _ofr.getTextWidth(" ") : 0;
+                    int spaceWidth = (lineLen > 0) ? _ofr.getTextWidth(" ") : 0;
                     
-                    if (line_width + spaceWidth + wordWidth > usableWidth && line_chars > 0) {
-                        // Word doesn't fit, break and finish this line
-                        break;
+                    // 4. Check fit
+                    if (lineLen > 0 && line_width + spaceWidth + wordWidth > usableWidth) {
+                        break; // Line is full
                     }
                     
-                    // Word fits
-                    if (line_chars > 0) {
-                        lineText += " ";
+                    // 5. Commit word to line
+                    if (lineLen > 0) {
+                        strcat(lineBuf, " ");
                         line_width += spaceWidth;
+                        lineLen++;
                     }
-                    lineText += wordBuf;
+                    strcat(lineBuf, wordBuf);
                     line_width += wordWidth;
+                    lineLen += wordLen;
+                    
                     line_chars = wordEnd - pos;
                     
-                    // Consume trailing space for next iteration
-                    if (wordEnd < textLen && isspace(fullText[wordEnd])) line_chars++;
+                    // Safety break for extremely long words that exceed screen width
+                    if (line_width > usableWidth && lineLen > wordLen) break;
+                    if (line_width > usableWidth) { // Single word too long? Force it and break.
+                        line_chars = wordEnd - pos;
+                        break;
+                    }
                 }
                 
-                if (lineText.length() > 0) {
+                if (lineLen > 0) {
                     int drawX = x_margin;
                     if (node.textNode.align == ALIGN_CENTER) drawX = (_width - line_width) / 2;
                     else if (node.textNode.align == ALIGN_RIGHT) drawX = _width - line_width - x_margin;
                     
-                    _lineCache.push_back({drawX, y, fontSize, isBold, lineText});
+                    _lineCache.push_back({drawX, y, fontSize, isBold, String(lineBuf)});
 
                     if (draw) {
                         _ofr.setCursor(drawX, y);
-                        _ofr.printf("%s", lineText.c_str());
+                        _ofr.printf("%s", lineBuf);
                         if (isBold) {
                             _ofr.setCursor(drawX + 1, y);
-                            _ofr.printf("%s", lineText.c_str());
+                            _ofr.printf("%s", lineBuf);
                         }
                     }
                     y += lineSpacing;
+                } else {
+                    // Empty line or whitespace only - consume it
+                    pos++;
+                    continue;
                 }
+                
                 pos += line_chars;
+                yield();
             }
-            if (y + 8 < maxY) y += 8;
+            if (y + 10 < maxY) y += 10;
         }
         
         currentNode++;
