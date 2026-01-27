@@ -3,6 +3,7 @@
 #include <AsyncJson.h>
 #include <LittleFS.h>
 #include <JPEGDEC.h>
+#include <esp_partition.h>
 #include "../Book32_Core/Book32FS.h"
 #include "../Book32_Update/GitHubMgr.h"
 #include "../Book32_Core/BatteryMgr.h"
@@ -187,20 +188,58 @@ static void listFiles(fs::FS &fs, const char * dirname, uint8_t levels) {
 }
 
 void WebMgr::mountFilesystems() {
-    Serial.println("\n=== Mounting Filesystems ===");
+    Serial.println("\n========== PARTITION TABLE DUMP ==========");
     
-    // Mount SystemFS (partition label: "spiffs") for web UI and config
-    // format-on-fail = true will format if the partition is empty/corrupt
+    // Iterate through ALL partitions on the chip
+    esp_partition_iterator_t it = esp_partition_find(ESP_PARTITION_TYPE_ANY, ESP_PARTITION_SUBTYPE_ANY, NULL);
+    while (it != NULL) {
+        const esp_partition_t* part = esp_partition_get(it);
+        Serial.printf("  [%s] type=%d subtype=0x%02X addr=0x%06X size=0x%06X (%dKB)\n",
+            part->label,
+            part->type,
+            part->subtype,
+            part->address,
+            part->size,
+            part->size / 1024);
+        it = esp_partition_next(it);
+    }
+    esp_partition_iterator_release(it);
+    
+    Serial.println("===========================================\n");
+    Serial.println("=== Mounting Filesystems ===");
+    
+    // Look for "spiffs" partition specifically
+    const esp_partition_t* spiffsPart = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, "spiffs");
+    if (spiffsPart) {
+        Serial.printf("Found 'spiffs' partition at 0x%06X, size %dKB\n", spiffsPart->address, spiffsPart->size/1024);
+    } else {
+        Serial.println("ERROR: No partition with label 'spiffs' and subtype SPIFFS found!");
+        
+        // Try to find ANY spiffs-subtype partition
+        const esp_partition_t* anySpiffs = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, NULL);
+        if (anySpiffs) {
+            Serial.printf("Found unlabeled SPIFFS partition '%s' at 0x%06X\n", anySpiffs->label, anySpiffs->address);
+        }
+    }
+    
+    // Mount SystemFS
     bool sysOK = SystemFS.begin(true, "/littlefs", 10, "spiffs");
     if (sysOK) {
         Serial.printf("SystemFS OK: %u / %u bytes used\n", SystemFS.usedBytes(), SystemFS.totalBytes());
         listFiles(SystemFS, "/", 1);
     } else {
-        Serial.println("WARNING: SystemFS mount failed! Web UI will not work.");
-        Serial.println("Try: pio run -t erase, then reflash firmware + filesystem");
+        Serial.println("WARNING: SystemFS mount FAILED!");
     }
 
-    // Mount EbookFS (partition label: "ebooks") for EPUB storage
+    // Look for "ebooks" partition
+    const esp_partition_t* ebooksPart = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, "ebooks");
+    if (ebooksPart) {
+        Serial.printf("Found 'ebooks' partition at 0x%06X, size %dKB\n", ebooksPart->address, ebooksPart->size/1024);
+    } else {
+        Serial.println("WARNING: No partition with label 'ebooks' found, trying without label...");
+    }
+
+    // Mount EbookFS
     bool ebookOK = EbookFS.begin(true, "/ebooks", 10, "ebooks");
     if (ebookOK) {
         Serial.printf("EbookFS OK: %u / %u bytes used\n", EbookFS.usedBytes(), EbookFS.totalBytes());

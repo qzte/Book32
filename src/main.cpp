@@ -19,7 +19,11 @@
 void setup() {
     Serial.begin(115200);
     delay(2000);
-    Serial.println("Book32 OS Starting...");
+    Serial.println("\n\n");
+    Serial.println("╔═══════════════════════════════════════╗");
+    Serial.println("║         Book32 OS Starting...         ║");
+    Serial.printf( "║  Build: %s %s  ║\n", __DATE__, __TIME__);
+    Serial.println("╚═══════════════════════════════════════╝");
 
     // Get singleton instances (must be done after Arduino init, not at global scope)
     DisplayMgr& displayMgr = DisplayMgr::getInstance();
