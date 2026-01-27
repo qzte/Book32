@@ -1,6 +1,7 @@
 #include "AppReader.h"
 #include "DisplayMgr.h"
 #include "InputMgr.h"
+#include "FontMgr.h"
 #include "icon_reader.h"
 #include "Book32FS.h"
 #include <LittleFS.h>
@@ -257,60 +258,27 @@ void AppReader::openBook(const String& path) {
         _textRenderer = new TextRenderer(display.width(), display.height(), 26);
     }
     
-    // FONT LOADING LOGIC
+    // FONT LOADING - Use system FontMgr if available, otherwise load separately
+    FontMgr& fontMgr = FontMgr::getInstance();
     bool fontLoaded = false;
     
-    // 1. Try EbookFS first (uploaded via web interface - most reliable)
-    if (EbookFS.exists("/DejaVuSerif.ttf")) {
-        Serial.println("Found DejaVuSerif.ttf in EbookFS, loading...");
-        File f = EbookFS.open("/DejaVuSerif.ttf", "r");
-        if (f) {
-            size_t s = f.size();
-            Serial.printf("Font file size: %d bytes\n", s);
-            uint8_t* d = (uint8_t*)ps_malloc(s);
-            if (d) {
-                f.read(d, s);
-                if (_textRenderer->loadFont(d, s)) {
-                    Serial.println("SUCCESS: Loaded DejaVu Serif from EbookFS");
-                    fontLoaded = true;
-                } else {
-                    Serial.println("FAILED: OpenFontRender rejected the font");
-                    free(d);
-                }
-            } else {
-                Serial.println("FAILED: Could not allocate memory for font");
+    if (fontMgr.hasTTFFont()) {
+        // Use the already-loaded system font
+        const uint8_t* fontData = fontMgr.getFontData();
+        size_t fontDataSize = fontMgr.getFontDataSize();
+        if (fontData && fontDataSize > 0) {
+            if (_textRenderer->loadFont(fontData, fontDataSize)) {
+                Serial.println("TextRenderer: Using system font from FontMgr");
+                fontLoaded = true;
             }
-            f.close();
-        }
-    } else {
-        Serial.println("DejaVuSerif.ttf not found in EbookFS");
-    }
-
-    // 2. Try SystemFS (if it's mounted)
-    if (!fontLoaded && SystemFS.totalBytes() > 0 && SystemFS.exists("/DejaVuSerif.ttf")) {
-        Serial.println("Found DejaVuSerif.ttf in SystemFS, loading...");
-        File f = SystemFS.open("/DejaVuSerif.ttf", "r");
-        if (f) {
-            size_t s = f.size();
-            uint8_t* d = (uint8_t*)ps_malloc(s);
-            if (d) {
-                f.read(d, s);
-                if (_textRenderer->loadFont(d, s)) {
-                    Serial.println("SUCCESS: Loaded DejaVu Serif from SystemFS");
-                    fontLoaded = true;
-                } else {
-                    free(d);
-                }
-            }
-            f.close();
         }
     }
     
-    // 3. Try to load from the EPUB itself
+    // If system font not available, try EPUB's embedded font
     if (!fontLoaded) {
         std::vector<FontInfo> fonts = _epubLoader->getFonts();
         if (!fonts.empty()) {
-            Serial.printf("EPUB has %d embedded fonts, trying to load...\n", fonts.size());
+            Serial.printf("Trying EPUB embedded fonts (%d found)...\n", fonts.size());
             int fontIdx = 0;
             for (size_t i = 0; i < fonts.size(); i++) {
                 if (fonts[i].style == "normal") { fontIdx = i; break; }
@@ -319,7 +287,7 @@ void AppReader::openBook(const String& path) {
             uint8_t* fontData = _epubLoader->getFontData(fonts[fontIdx].path, &fontSize);
             if (fontData && fontSize > 0) {
                 if (_textRenderer->loadFont(fontData, fontSize)) {
-                    Serial.printf("SUCCESS: Loaded font from EPUB: %s\n", fonts[fontIdx].family.c_str());
+                    Serial.printf("Loaded EPUB font: %s\n", fonts[fontIdx].family.c_str());
                     fontLoaded = true;
                 } else {
                     free(fontData);
@@ -327,32 +295,11 @@ void AppReader::openBook(const String& path) {
             }
         }
     }
-    
-    // 4. Generic fallback font
-    if (!fontLoaded && EbookFS.exists("/font.ttf")) {
-        File f = EbookFS.open("/font.ttf", "r");
-        if (f) {
-            size_t s = f.size();
-            uint8_t* d = (uint8_t*)ps_malloc(s);
-            if (d) {
-                f.read(d, s);
-                if (_textRenderer->loadFont(d, s)) {
-                    Serial.println("SUCCESS: Loaded generic font.ttf from EbookFS");
-                    fontLoaded = true;
-                } else {
-                    free(d);
-                }
-            }
-            f.close();
-        }
-    }
 
     if (!fontLoaded) {
-        Serial.println("WARNING: No TTF font loaded! Using fallback bitmap font.");
-        Serial.println("Upload DejaVuSerif.ttf via web interface for better rendering.");
+        Serial.println("No TTF font available - using bitmap fallback");
     }
 
-    // Recalculate dimensions based on whether font loaded
     _textRenderer->calculateDimensions();
 
     calculateTotalPages();
@@ -422,12 +369,13 @@ void AppReader::drawLibrary() {
     if (!_booksScanned) { scanBooks(); _booksScanned = true; }
     DisplayMgr& dispMgr = DisplayMgr::getInstance();
     Book32Display& display = dispMgr.getDisplay();
+    FontMgr& fontMgr = FontMgr::getInstance();
+    
     const int COVER_WIDTH = 60;
     const int COVER_HEIGHT = 80;
     const int ITEM_HEIGHT = 100;
     const int ITEM_PADDING = 20;
     const int TEXT_X = COVER_WIDTH + 40;
-    const int CHARS_PER_LINE = 30;
     
     // Use Partial Refresh for Library interactions
     display.setPartialWindow(0, 0, display.width(), display.height());
@@ -435,60 +383,77 @@ void AppReader::drawLibrary() {
     display.firstPage();
     do {
         display.fillScreen(GxEPD_WHITE);
-        display.setTextColor(GxEPD_BLACK);
-        display.setTextSize(3);
-        display.setCursor(10, 10);
-        display.print("Library");
-        display.drawLine(0, 45, display.width(), 45, GxEPD_BLACK);
+        
+        // Header "Library" (24px)
+        fontMgr.drawText(display, "Library", 15, 35, FONT_SIZE_SUBTITLE, GxEPD_BLACK);
+        display.drawLine(0, 50, display.width(), 50, GxEPD_BLACK);
+        
         if (_books.empty()) {
-            display.setCursor(20, 60);
-            display.setTextSize(2);
-            display.println("No books found.");
-            display.println("Upload EPUBs via web.");
+            fontMgr.drawText(display, "No books found.", 20, 80, FONT_SIZE_BODY, GxEPD_BLACK);
+            fontMgr.drawText(display, "Upload EPUBs via web.", 20, 110, FONT_SIZE_BODY, GxEPD_BLACK);
             continue;
         }
-        int y = 50;
+        
+        int y = 55;
         int idx = 0;
         for (const auto& book : _books) {
             bool isSelected = (idx == _selectedBookIndex);
             if (isSelected) display.fillRect(0, y, display.width(), ITEM_HEIGHT, GxEPD_BLACK);
+            
             int coverX = ITEM_PADDING;
             int coverY = y + 10;
             BookEntry& bookRef = _books[idx];
             drawCover(display, bookRef, coverX, coverY, COVER_WIDTH, COVER_HEIGHT, isSelected);
-            display.setTextColor(isSelected ? GxEPD_WHITE : GxEPD_BLACK);
-            display.setTextSize(2);
+            
+            uint16_t textColor = isSelected ? GxEPD_WHITE : GxEPD_BLACK;
+            
+            // Draw book title (20px) - wrap text manually
             String title = book.title;
-            int textY = y + 20;
+            int textY = y + 28;
             int lineCount = 0;
             const int MAX_LINES = 3;
-            int pos = 0;
-            int titleLen = title.length();
-            while (pos < titleLen && lineCount < MAX_LINES) {
-                int remaining = titleLen - pos;
-                int lineLen = (remaining < CHARS_PER_LINE) ? remaining : CHARS_PER_LINE;
-                if (pos + lineLen < titleLen) {
-                    int breakPos = -1;
-                    for (int i = pos + lineLen - 1; i > pos; i--) { if (title.charAt(i) == ' ') { breakPos = i; break; } }
-                    if (breakPos > pos) lineLen = breakPos - pos;
+            const int MAX_WIDTH = display.width() - TEXT_X - 20;
+            
+            if (fontMgr.hasTTFFont()) {
+                // Use TTF font with proper width measurement
+                int pos = 0;
+                while (pos < (int)title.length() && lineCount < MAX_LINES) {
+                    String line = "";
+                    while (pos < (int)title.length()) {
+                        int nextSpace = title.indexOf(' ', pos);
+                        if (nextSpace == -1) nextSpace = title.length();
+                        String word = title.substring(pos, nextSpace);
+                        String testLine = line.length() > 0 ? line + " " + word : word;
+                        if (fontMgr.getTextWidth(testLine.c_str(), FONT_SIZE_MENU) > MAX_WIDTH && line.length() > 0) break;
+                        line = testLine;
+                        pos = nextSpace + 1;
+                    }
+                    if (lineCount == MAX_LINES - 1 && pos < (int)title.length()) {
+                        line = line.substring(0, line.length() - 3) + "...";
+                    }
+                    fontMgr.drawText(display, line.c_str(), TEXT_X, textY, FONT_SIZE_MENU, textColor);
+                    textY += 24;
+                    lineCount++;
                 }
-                String line = title.substring(pos, pos + lineLen);
-                line.trim();
-                if (lineCount == MAX_LINES - 1 && pos + lineLen < titleLen) { if (line.length() > 3) line = line.substring(0, line.length() - 3) + "..."; }
-                if (line.length() > 0) { display.setCursor(TEXT_X, textY); display.print(line); textY += 12; lineCount++; }
-                pos += lineLen;
-                while (pos < titleLen && title.charAt(pos) == ' ') pos++;
+            } else {
+                // Fallback: bitmap font
+                display.setTextColor(textColor);
+                display.setTextSize(2);
+                display.setCursor(TEXT_X, textY - 10);
+                display.print(title.substring(0, 25));
             }
+            
             if (!isSelected) display.drawLine(ITEM_PADDING, y + ITEM_HEIGHT - 2, display.width() - ITEM_PADDING, y + ITEM_HEIGHT - 2, GxEPD_BLACK);
             y += ITEM_HEIGHT;
             idx++;
-            if (y > display.height() - 50) break;
+            if (y > display.height() - 60) break;
         }
+        
+        // Page indicator (14px)
         if (_books.size() > 1) {
-            display.setTextSize(2);
-            display.setTextColor(GxEPD_BLACK);
-            display.setCursor(display.width() - 80, display.height() - 30);
-            display.printf("%d/%d", _selectedBookIndex + 1, _books.size());
+            char pageStr[16];
+            snprintf(pageStr, sizeof(pageStr), "%d/%d", _selectedBookIndex + 1, (int)_books.size());
+            fontMgr.drawTextRight(display, pageStr, display.width() - 10, display.height() - 20, FONT_SIZE_SMALL, GxEPD_BLACK);
         }
     } while (display.nextPage());
 }

@@ -10,6 +10,7 @@
 #include "GitHubMgr.h"
 #include "BatteryMgr.h"
 #include "TimeMgr.h"
+#include "FontMgr.h"
 
 #include "../Book32_Apps/AppMainMenu.h"
 #include "../Apps/AppReader/AppReader.h"
@@ -38,6 +39,9 @@ void setup() {
 
     // 2. Mount Filesystems EARLY (before WiFi, prevents race conditions)
     webMgr.mountFilesystems();
+    
+    // 2.5. Initialize Font Manager (after filesystems, before UI)
+    FontMgr::getInstance().init();
 
     // 3. WiFi Init (using WiFiManager)
     WiFiManager wm;
