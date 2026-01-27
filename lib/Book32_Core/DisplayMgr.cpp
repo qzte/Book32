@@ -15,16 +15,13 @@ void DisplayMgr::init() {
     // For ESP32-S3 we must initialize SPI with custom pins before display.init
     SPI.begin(EPD_SCK, EPD_MISO, EPD_MOSI, EPD_CS); 
     
-    // GxEPD2 initialization
-    // 115200: baud rate for serial output
-    // true: initial reset
-    // 10: reset duration (ms)
-    // false: serial feedback disabled
     display.init(115200, true, 10, false); 
     
-    display.setRotation(3); // Portrait mode (flipped 180° for 480x800)
+    display.setRotation(0); // Landscape mode (800x480)
     display.setTextColor(GxEPD_BLACK);
-    display.setFont(NULL); // Default font
+    display.setFont(NULL);
+    
+    Serial.printf("Display initialized: %dx%d\n", display.width(), display.height());
 }
 
 void DisplayMgr::clear() {
