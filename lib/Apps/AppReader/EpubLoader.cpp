@@ -378,6 +378,7 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(String html) {
     TextAlign currentAlign = ALIGN_LEFT;
     int currentIndent = 0;
     bool isListItem = false;
+    bool nextIsBlockStart = true;
     String currentText;
     int i = 0;
     while(i < (int)html.length()) {
@@ -391,10 +392,12 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(String html) {
                 node.textNode.align = currentAlign;
                 node.textNode.isListItem = isListItem;
                 node.textNode.indent = currentIndent;
+                node.textNode.isBlockStart = nextIsBlockStart;
                 nodes.push_back(node);
                 currentText = "";
                 isListItem = false;
-                currentIndent = 0; // Reset after use
+                currentIndent = 0;
+                nextIsBlockStart = false; // Next node in same block is not a start
             }
             int tagEnd = html.indexOf('>', i);
             if(tagEnd == -1) break;
@@ -414,20 +417,23 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(String html) {
                 if(!isClosing) styleStack.push_back(getStyleFromTag(tag));
                 else if(styleStack.size() > 1) styleStack.pop_back();
             }
-            else if((tag == "p" || tag == "div") && !isClosing) {
+            else if((tag == "p" || tag == "div" || tag.startsWith("h")) && !isClosing) {
+                nextIsBlockStart = true;
                 String styleAttr = extractAttribute(fullTag, tag, "style");
                 if(styleAttr.length() > 0) {
                     currentAlign = getAlignFromStyle(styleAttr);
                     currentIndent = extractIndentFromStyle(styleAttr);
                 }
-                // Default indentation for paragraphs if not specified in style 
-                // but only if it's a real paragraph (not just a container)
                 if (tag == "p" && currentIndent == 0) {
-                    currentIndent = 30; // Standard 30px default indent
+                    currentIndent = 30; 
                 }
+            }
+            else if(tag == "/p" || tag == "/div" || tag.startsWith("/h")) {
+                nextIsBlockStart = true;
             }
             else if(tag == "li" && !isClosing) {
                 isListItem = true;
+                nextIsBlockStart = true;
             }
             else if(tag == "table" && !isClosing) {
                 int tableEnd = html.indexOf("</table>", i);
@@ -441,6 +447,7 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(String html) {
                         nodes.push_back(node);
                     }
                     i = tableEnd + 8;
+                    nextIsBlockStart = true;
                     continue;
                 }
             }
@@ -448,13 +455,11 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(String html) {
                 int skipEnd = html.indexOf("</" + tag + ">", i);
                 if(skipEnd != -1) { i = skipEnd + tag.length() + 3; continue; }
             }
-            else if(tag == "br" || tag == "/p" || tag == "/div" || tag == "/h1" ||
-                    tag == "/h2" || tag == "/h3" || tag == "/h4" || tag == "/li") {
+            else if(tag == "br") {
                 currentText += "\n";
             }
             i = tagEnd + 1;
         } else {
-            // Handle whitespace: collapse multiple spaces/newlines into single space
             if(c == '\n' || c == '\r' || c == '\t' || c == ' ') {
                 if(currentText.length() > 0 && currentText.charAt(currentText.length()-1) != ' ' && currentText.charAt(currentText.length()-1) != '\n') {
                     currentText += ' ';
@@ -466,17 +471,16 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(String html) {
         }
     }
     if(currentText.length() > 0) {
-        if(currentText.length() > 0) {
-            ContentNode node;
-            node.type = CONTENT_TEXT;
-            node.textNode.text = currentText;
-            node.textNode.style = styleStack.back();
-            node.textNode.align = currentAlign;
-            node.textNode.isListItem = isListItem;
-            nodes.push_back(node);
-        }
+        ContentNode node;
+        node.type = CONTENT_TEXT;
+        node.textNode.text = currentText;
+        node.textNode.style = styleStack.back();
+        node.textNode.align = currentAlign;
+        node.textNode.isListItem = isListItem;
+        node.textNode.indent = currentIndent;
+        node.textNode.isBlockStart = nextIsBlockStart;
+        nodes.push_back(node);
     }
-    // Final scrubbing pass on all text nodes
     for(auto& node : nodes) {
         if(node.type == CONTENT_TEXT) {
             node.textNode.text.replace("¶Ç8", " -- ");
@@ -492,14 +496,10 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(String html) {
             node.textNode.text.replace("\xE2\x80\x94", " -- ");
             node.textNode.text.replace("\xE2\x80\x93", " - ");
             node.textNode.text.replace("\xE2\x80\xA6", "...");
-            
-            // Clean up orphan newlines before punctuation
             node.textNode.text.replace("\n,", ",");
             node.textNode.text.replace("\n.", ".");
             node.textNode.text.replace("\n!", "!");
             node.textNode.text.replace("\n?", "?");
-            
-            // Re-trim trailing whitespace
             node.textNode.text.trim();
         }
     }

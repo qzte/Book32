@@ -31,9 +31,10 @@ struct RichTextNode {
     TextStyle style;
     TextAlign align;
     bool isListItem;
-    int indent; // Indentation in pixels (or relative units)
+    bool isBlockStart; // Starts a new paragraph/block
+    int indent; 
     
-    RichTextNode() : style(STYLE_NORMAL), align(ALIGN_LEFT), isListItem(false), indent(0) {}
+    RichTextNode() : style(STYLE_NORMAL), align(ALIGN_LEFT), isListItem(false), isBlockStart(true), indent(0) {}
 };
 
 // Table structures
