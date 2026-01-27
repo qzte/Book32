@@ -446,8 +446,19 @@ void AppReader::drawReading() {
     if (_currentPage >= (int)_pages.size()) return;
     DisplayMgr& dispMgr = DisplayMgr::getInstance();
     Book32Display& display = dispMgr.getDisplay();
-    if (_pageTurnsSinceRefresh >= _refreshEveryNPages) { display.setFullWindow(); _pageTurnsSinceRefresh = 0; }
-    else { display.setPartialWindow(0, 0, display.width(), display.height()); _pageTurnsSinceRefresh++; }
+    
+    // Check if we need a full refresh based on counter or if we just entered the reader
+    static bool firstDraw = true;
+    if (firstDraw || _pageTurnsSinceRefresh >= _refreshEveryNPages) { 
+        display.setFullWindow(); 
+        _pageTurnsSinceRefresh = 0; 
+        firstDraw = false;
+    }
+    else { 
+        display.setPartialWindow(0, 0, display.width(), display.height()); 
+        _pageTurnsSinceRefresh++; 
+    }
+    
     display.firstPage();
     do {
         display.fillScreen(GxEPD_WHITE);

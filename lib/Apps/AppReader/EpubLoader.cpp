@@ -365,17 +365,15 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(String html) {
         char c = html.charAt(i);
         if(c == '<') {
             if(currentText.length() > 0) {
-                if(currentText.length() > 0) {
-                    ContentNode node;
-                    node.type = CONTENT_TEXT;
-                    node.textNode.text = currentText;
-                    node.textNode.style = styleStack.back();
-                    node.textNode.align = currentAlign;
-                    node.textNode.isListItem = isListItem;
-                    nodes.push_back(node);
-                    currentText = "";
-                    isListItem = false;
-                }
+                ContentNode node;
+                node.type = CONTENT_TEXT;
+                node.textNode.text = currentText;
+                node.textNode.style = styleStack.back();
+                node.textNode.align = currentAlign;
+                node.textNode.isListItem = isListItem;
+                nodes.push_back(node);
+                currentText = "";
+                isListItem = false;
             }
             int tagEnd = html.indexOf('>', i);
             if(tagEnd == -1) break;
@@ -388,6 +386,8 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(String html) {
             tag.toLowerCase();
             bool isClosing = tag.startsWith("/");
             if(isClosing) tag = tag.substring(1);
+            
+            // Handle block elements and structure
             if(tag == "b" || tag == "strong" || tag == "i" || tag == "em" ||
                tag == "h1" || tag == "h2" || tag == "h3" || tag == "h4") {
                 if(!isClosing) styleStack.push_back(getStyleFromTag(tag));
@@ -397,7 +397,9 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(String html) {
                 String styleAttr = extractAttribute(fullTag, tag, "style");
                 if(styleAttr.length() > 0) currentAlign = getAlignFromStyle(styleAttr);
             }
-            else if(tag == "li" && !isClosing) isListItem = true;
+            else if(tag == "li" && !isClosing) {
+                isListItem = true;
+            }
             else if(tag == "table" && !isClosing) {
                 int tableEnd = html.indexOf("</table>", i);
                 if(tableEnd != -1) {
@@ -423,8 +425,14 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(String html) {
             }
             i = tagEnd + 1;
         } else {
-            if(c == '\n' || c == '\r' || c == '\t') c = ' ';
-            currentText += c;
+            // Handle whitespace: collapse multiple spaces/newlines into single space
+            if(c == '\n' || c == '\r' || c == '\t' || c == ' ') {
+                if(currentText.length() > 0 && currentText.charAt(currentText.length()-1) != ' ' && currentText.charAt(currentText.length()-1) != '\n') {
+                    currentText += ' ';
+                }
+            } else {
+                currentText += c;
+            }
             i++;
         }
     }

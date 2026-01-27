@@ -209,7 +209,8 @@ static void listFiles(fs::FS &fs, const char * dirname, uint8_t levels) {
 void WebMgr::mountFilesystems() {
     // 1. Mount System Partition (Primary LittleFS instance)
     // Label: spiffs, Mount: / (No prefix for server compatibility)
-    if(!SystemFS.begin(false, "/", 10, "spiffs")) {
+    // Try to begin with format-on-fail to ensure it works
+    if(!SystemFS.begin(true, "/", 10, "spiffs")) {
         Serial.println("SystemFS Mount Failed! Partition labeled 'spiffs' not found or corrupt.");
     } else {
         Serial.println("SystemFS mounted successfully at /.");
