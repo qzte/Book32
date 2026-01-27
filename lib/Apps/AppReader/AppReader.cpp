@@ -252,24 +252,48 @@ void AppReader::openBook(const String& path) {
     // FONT LOADING LOGIC
     bool fontLoaded = false;
     
-    // 1. Try to load from the SystemFS (Flashed with data/ - usually better performance)
-    if (SystemFS.exists("/DejaVuSerif.ttf")) {
+    // 1. Try EbookFS first (uploaded via web interface - most reliable)
+    if (EbookFS.exists("/DejaVuSerif.ttf")) {
+        Serial.println("Found DejaVuSerif.ttf in EbookFS, loading...");
+        File f = EbookFS.open("/DejaVuSerif.ttf", "r");
+        if (f) {
+            size_t s = f.size();
+            Serial.printf("Font file size: %d bytes\n", s);
+            uint8_t* d = (uint8_t*)ps_malloc(s);
+            if (d) {
+                f.read(d, s);
+                if (_textRenderer->loadFont(d, s)) {
+                    Serial.println("SUCCESS: Loaded DejaVu Serif from EbookFS");
+                    fontLoaded = true;
+                } else {
+                    Serial.println("FAILED: OpenFontRender rejected the font");
+                    free(d);
+                }
+            } else {
+                Serial.println("FAILED: Could not allocate memory for font");
+            }
+            f.close();
+        }
+    } else {
+        Serial.println("DejaVuSerif.ttf not found in EbookFS");
+    }
+
+    // 2. Try SystemFS (if it's mounted)
+    if (!fontLoaded && SystemFS.totalBytes() > 0 && SystemFS.exists("/DejaVuSerif.ttf")) {
+        Serial.println("Found DejaVuSerif.ttf in SystemFS, loading...");
         File f = SystemFS.open("/DejaVuSerif.ttf", "r");
         if (f) {
             size_t s = f.size();
             uint8_t* d = (uint8_t*)ps_malloc(s);
-            if (d) { f.read(d, s); if (_textRenderer->loadFont(d, s)) { Serial.println("Loaded DejaVu Serif from SystemFS"); fontLoaded = true; } else free(d); }
-            f.close();
-        }
-    }
-
-    // 2. Try to load specific "DejaVu Serif" if it exists in EbookFS (Uploaded via Web)
-    if (!fontLoaded && EbookFS.exists("/DejaVuSerif.ttf")) {
-        File f = EbookFS.open("/DejaVuSerif.ttf", "r");
-        if (f) {
-            size_t s = f.size();
-            uint8_t* d = (uint8_t*)ps_malloc(s);
-            if (d) { f.read(d, s); if (_textRenderer->loadFont(d, s)) { Serial.println("Loaded DejaVu Serif from EbookFS"); fontLoaded = true; } else free(d); }
+            if (d) {
+                f.read(d, s);
+                if (_textRenderer->loadFont(d, s)) {
+                    Serial.println("SUCCESS: Loaded DejaVu Serif from SystemFS");
+                    fontLoaded = true;
+                } else {
+                    free(d);
+                }
+            }
             f.close();
         }
     }
@@ -278,29 +302,49 @@ void AppReader::openBook(const String& path) {
     if (!fontLoaded) {
         std::vector<FontInfo> fonts = _epubLoader->getFonts();
         if (!fonts.empty()) {
+            Serial.printf("EPUB has %d embedded fonts, trying to load...\n", fonts.size());
             int fontIdx = 0;
-            for (size_t i = 0; i < fonts.size(); i++) { if (fonts[i].style == "normal") { fontIdx = i; break; } }
+            for (size_t i = 0; i < fonts.size(); i++) {
+                if (fonts[i].style == "normal") { fontIdx = i; break; }
+            }
             size_t fontSize = 0;
             uint8_t* fontData = _epubLoader->getFontData(fonts[fontIdx].path, &fontSize);
             if (fontData && fontSize > 0) {
-                if (_textRenderer->loadFont(fontData, fontSize)) { Serial.println("Loaded font from EPUB"); fontLoaded = true; }
-                else free(fontData);
+                if (_textRenderer->loadFont(fontData, fontSize)) {
+                    Serial.printf("SUCCESS: Loaded font from EPUB: %s\n", fonts[fontIdx].family.c_str());
+                    fontLoaded = true;
+                } else {
+                    free(fontData);
+                }
             }
         }
     }
     
-    // 4. Fallback font
+    // 4. Generic fallback font
     if (!fontLoaded && EbookFS.exists("/font.ttf")) {
         File f = EbookFS.open("/font.ttf", "r");
         if (f) {
             size_t s = f.size();
             uint8_t* d = (uint8_t*)ps_malloc(s);
-            if (d) { f.read(d, s); if (_textRenderer->loadFont(d, s)) fontLoaded = true; else free(d); }
+            if (d) {
+                f.read(d, s);
+                if (_textRenderer->loadFont(d, s)) {
+                    Serial.println("SUCCESS: Loaded generic font.ttf from EbookFS");
+                    fontLoaded = true;
+                } else {
+                    free(d);
+                }
+            }
             f.close();
         }
     }
 
-    // Final check - ensure TextRenderer knows if we are using fallback or not
+    if (!fontLoaded) {
+        Serial.println("WARNING: No TTF font loaded! Using fallback bitmap font.");
+        Serial.println("Upload DejaVuSerif.ttf via web interface for better rendering.");
+    }
+
+    // Recalculate dimensions based on whether font loaded
     _textRenderer->calculateDimensions();
 
     calculateTotalPages();

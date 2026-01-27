@@ -41,40 +41,30 @@ static int thumbDrawCallback(JPEGDRAW *pDraw) {
             int dstX = (int)(srcX * scaleX);
             if (dstX >= THUMB_WIDTH) continue;
 
-            // Get pixel (RGB565 format)
             uint16_t pixel = pDraw->pPixels[y * pDraw->iWidth + x];
-
-            // Convert RGB565 to grayscale
             int r = ((pixel >> 11) & 0x1F) << 3;
             int g = ((pixel >> 5) & 0x3F) << 2;
             int b = (pixel & 0x1F) << 3;
             int gray = (r * 30 + g * 59 + b * 11) / 100;
-
-            // Ordered dithering threshold
             int threshold = 128 + ((dstX + dstY) % 2) * 32 - 16;
-
-            // Set bit in bitmap (1 = black, 0 = white)
             int byteIndex = (dstY * THUMB_WIDTH + dstX) / 8;
             int bitIndex = 7 - ((dstY * THUMB_WIDTH + dstX) % 8);
 
             if (gray < threshold) {
-                g_thumbBitmap[byteIndex] |= (1 << bitIndex);  // Black
+                g_thumbBitmap[byteIndex] |= (1 << bitIndex);
             }
         }
     }
     return 1;
 }
 
-// Extract cover from EPUB and save as thumbnail (runs in task context)
 static void extractAndSaveCover(const String& epubPath) {
     Serial.printf("Extracting cover from: %s\n", epubPath.c_str());
 
-    // Create covers directory if needed on EbookFS
     if (!EbookFS.exists("/covers")) {
         EbookFS.mkdir("/covers");
     }
 
-    // Open EPUB and get cover data
     EpubLoader loader;
     if (!loader.open(epubPath.c_str())) {
         Serial.println("Failed to open EPUB for cover extraction");
@@ -92,19 +82,15 @@ static void extractAndSaveCover(const String& epubPath) {
 
     Serial.printf("Cover data: %d bytes, decoding...\n", coverSize);
 
-    // Allocate thumbnail bitmap in PSRAM
     g_thumbBitmap = (uint8_t*)ps_malloc(THUMB_SIZE);
-    if (!g_thumbBitmap) {
-        g_thumbBitmap = (uint8_t*)malloc(THUMB_SIZE);
-    }
+    if (!g_thumbBitmap) g_thumbBitmap = (uint8_t*)malloc(THUMB_SIZE);
     if (!g_thumbBitmap) {
         Serial.println("Failed to allocate thumbnail buffer");
         free(coverData);
         return;
     }
-    memset(g_thumbBitmap, 0, THUMB_SIZE);  // White background
+    memset(g_thumbBitmap, 0, THUMB_SIZE);
 
-    // Decode JPEG
     JPEGDEC jpeg;
     if (!jpeg.openRAM(coverData, coverSize, thumbDrawCallback)) {
         Serial.println("Failed to open JPEG");
@@ -123,11 +109,9 @@ static void extractAndSaveCover(const String& epubPath) {
     jpeg.close();
     free(coverData);
 
-    // Generate thumbnail path from epub path
     String thumbPath = "/covers" + epubPath;
     thumbPath.replace(".epub", ".thumb");
 
-    // Save thumbnail to EbookFS
     File thumbFile = EbookFS.open(thumbPath, FILE_WRITE);
     if (thumbFile) {
         thumbFile.write(g_thumbBitmap, THUMB_SIZE);
@@ -141,12 +125,11 @@ static void extractAndSaveCover(const String& epubPath) {
     g_thumbBitmap = nullptr;
 }
 
-// FreeRTOS task for cover extraction (runs with larger stack)
 static void coverExtractionTask(void* param) {
     String path = *((String*)param);
     Serial.printf("Cover extraction task started for: %s\n", path.c_str());
 
-    vTaskDelay(500 / portTICK_PERIOD_MS);  // Brief delay to let upload complete
+    vTaskDelay(500 / portTICK_PERIOD_MS);
     extractAndSaveCover(path);
 
     Serial.println("Cover extraction task completed");
@@ -154,20 +137,17 @@ static void coverExtractionTask(void* param) {
     vTaskDelete(NULL);
 }
 
-// Queue cover extraction to run in separate task
 static void queueCoverExtraction(const String& epubPath) {
-    // Store path for task
     g_pendingCoverPath = epubPath;
 
-    // Create task with 32KB stack (UNZIP uses ~41KB internal buffer + JPEG decoding)
     xTaskCreatePinnedToCore(
         coverExtractionTask,
         "CoverExtract",
-        32768,  // 32KB stack
+        32768,
         &g_pendingCoverPath,
-        1,  // Low priority
+        1,
         &g_coverTaskHandle,
-        1   // Core 1
+        1
     );
 }
 
@@ -207,42 +187,29 @@ static void listFiles(fs::FS &fs, const char * dirname, uint8_t levels) {
 }
 
 void WebMgr::mountFilesystems() {
-    // 1. Mount System Partition (Primary LittleFS instance)
-    // Label: spiffs, Mount: / (No prefix for server compatibility)
-    // Try to begin without labels first to see if it grabs the default partition
-    if(!SystemFS.begin(true, "/", 10, NULL)) {
-        Serial.println("SystemFS Mount Failed (default)! Trying 'spiffs' label...");
-        if(!SystemFS.begin(true, "/", 10, "spiffs")) {
-             Serial.println("SystemFS Mount Failed (spiffs)! Trying 'littlefs'...");
-             if(!SystemFS.begin(true, "/", 10, "littlefs")) {
-                 Serial.println("SystemFS definitely failed.");
-             } else {
-                 Serial.println("SystemFS mounted successfully as 'littlefs'.");
-             }
-        } else {
-             Serial.println("SystemFS mounted successfully as 'spiffs'.");
-        }
+    Serial.println("\n=== Mounting Filesystems ===");
+    
+    // Mount SystemFS (partition label: "spiffs") for web UI and config
+    // format-on-fail = true will format if the partition is empty/corrupt
+    bool sysOK = SystemFS.begin(true, "/littlefs", 10, "spiffs");
+    if (sysOK) {
+        Serial.printf("SystemFS OK: %u / %u bytes used\n", SystemFS.usedBytes(), SystemFS.totalBytes());
+        listFiles(SystemFS, "/", 1);
     } else {
-        Serial.println("SystemFS mounted successfully at /.");
+        Serial.println("WARNING: SystemFS mount failed! Web UI will not work.");
+        Serial.println("Try: pio run -t erase, then reflash firmware + filesystem");
     }
 
-    // 2. Mount Ebook Partition (Secondary LittleFS instance)
-    // Label: ebooks, Mount: /ebooks
-    if(!EbookFS.begin(false, "/ebooks", 10, "ebooks")) {
-        Serial.println("EbookFS Mount Failed, formatting (expected on first run)...");
-        if(!EbookFS.begin(true, "/ebooks", 10, "ebooks")) {
-            Serial.println("EbookFS definitely failed.");
-        }
+    // Mount EbookFS (partition label: "ebooks") for EPUB storage
+    bool ebookOK = EbookFS.begin(true, "/ebooks", 10, "ebooks");
+    if (ebookOK) {
+        Serial.printf("EbookFS OK: %u / %u bytes used\n", EbookFS.usedBytes(), EbookFS.totalBytes());
+        listFiles(EbookFS, "/", 1);
     } else {
-        Serial.println("EbookFS mounted successfully at /ebooks.");
+        Serial.println("WARNING: EbookFS mount failed!");
     }
-
-    Serial.println("\n--- Filesystem Map ---");
-    Serial.printf("SystemFS: %u / %u bytes used\n", SystemFS.usedBytes(), SystemFS.totalBytes());
-    listFiles(SystemFS, "/", 1);
-    Serial.printf("EbookFS : %u / %u bytes used\n", EbookFS.usedBytes(), EbookFS.totalBytes());
-    listFiles(EbookFS, "/", 1);
-    Serial.println("----------------------\n");
+    
+    Serial.println("============================\n");
 }
 
 void WebMgr::init() {
@@ -255,7 +222,6 @@ void WebMgr::init() {
 void saveBookMetadata(const String& truncatedName, const String& originalName) {
     DynamicJsonDocument doc(4096);
     
-    // Load existing metadata if it exists from SystemFS
     File metaFile = SystemFS.open("/books_meta.json", FILE_READ);
     if (metaFile) {
         DeserializationError error = deserializeJson(doc, metaFile);
@@ -266,10 +232,8 @@ void saveBookMetadata(const String& truncatedName, const String& originalName) {
         }
     }
     
-    // Add/update this book's metadata
     doc[truncatedName] = originalName;
     
-    // Save back to file on SystemFS
     metaFile = SystemFS.open("/books_meta.json", FILE_WRITE);
     if (metaFile) {
         serializeJson(doc, metaFile);
@@ -280,11 +244,10 @@ void saveBookMetadata(const String& truncatedName, const String& originalName) {
     }
 }
 
-// Helper: Get original filename from metadata
 String getOriginalFilename(const String& truncatedName) {
     File metaFile = SystemFS.open("/books_meta.json", FILE_READ);
     if (!metaFile) {
-        return truncatedName; // No metadata file, return as-is
+        return truncatedName;
     }
     
     DynamicJsonDocument doc(4096);
@@ -292,20 +255,18 @@ String getOriginalFilename(const String& truncatedName) {
     metaFile.close();
     
     if (error) {
-        return truncatedName; // Parse error, return as-is
+        return truncatedName;
     }
     
-    // Return original name if found, otherwise return truncated name
     if (doc.containsKey(truncatedName)) {
         return doc[truncatedName].as<String>();
     }
     return truncatedName;
 }
 
-// Helper: Remove book from metadata
 void removeBookMetadata(const String& truncatedName) {
     File metaFile = SystemFS.open("/books_meta.json", FILE_READ);
-    if (!metaFile) return; // No metadata file
+    if (!metaFile) return;
     
     DynamicJsonDocument doc(4096);
     DeserializationError error = deserializeJson(doc, metaFile);
@@ -313,10 +274,8 @@ void removeBookMetadata(const String& truncatedName) {
     
     if (error) return;
     
-    // Remove the entry
     doc.remove(truncatedName);
     
-    // Save back to SystemFS
     metaFile = SystemFS.open("/books_meta.json", FILE_WRITE);
     if (metaFile) {
         serializeJson(doc, metaFile);
@@ -330,7 +289,6 @@ void WebMgr::setupEndpoints() {
         AsyncResponseStream *response = request->beginResponseStream("application/json");
         DynamicJsonDocument doc(512);
 
-        // Format uptime as hours:minutes:seconds
         unsigned long totalSeconds = millis() / 1000;
         unsigned long hours = totalSeconds / 3600;
         unsigned long minutes = (totalSeconds % 3600) / 60;
@@ -340,21 +298,16 @@ void WebMgr::setupEndpoints() {
         doc["uptime"] = uptimeStr;
         doc["uptimeSeconds"] = totalSeconds;
 
-
         doc["rssi"] = WiFi.RSSI();
-
-        // Get Real Battery Data
         doc["battery"] = BatteryMgr::getInstance().getPercentage();
         doc["voltage"] = BatteryMgr::getInstance().getVoltage();
         doc["charging"] = BatteryMgr::getInstance().isCharging();
         doc["version"] = SYSTEM_VERSION;
         doc["time"] = TimeMgr::getInstance().getFormattedTime();
 
-        // Filesystem info (Combined)
         doc["freeSpace"] = EbookFS.totalBytes() - EbookFS.usedBytes();
         doc["totalSpace"] = EbookFS.totalBytes();
         doc["usedSpace"] = EbookFS.usedBytes();
-        
         doc["systemFree"] = SystemFS.totalBytes() - SystemFS.usedBytes();
 
         serializeJson(doc, *response);
@@ -374,10 +327,9 @@ void WebMgr::setupEndpoints() {
                 String name = file.name();
                 if (name.endsWith(".epub") || name.endsWith(".ttf")) {
                     JsonObject book = books.createNestedObject();
-                    // Get original filename from metadata (SystemFS)
                     String displayName = getOriginalFilename(name);
-                    book["name"] = displayName;  // Display name (original)
-                    book["filename"] = name;      // Actual filesystem name (truncated)
+                    book["name"] = displayName;
+                    book["filename"] = name;
                     book["size"] = file.size();
                 }
                 file = root.openNextFile();
@@ -399,26 +351,20 @@ void WebMgr::setupEndpoints() {
             static String originalFilename;
 
             if (index == 0) {
-                // Store original filename
                 originalFilename = filename;
-                
-                // Sanitize filename - LittleFS has ~31 char limit
                 String safeName = filename;
 
-                // Remove path separators if any
                 int lastSlash = safeName.lastIndexOf('/');
                 if (lastSlash >= 0) safeName = safeName.substring(lastSlash + 1);
                 lastSlash = safeName.lastIndexOf('\\');
                 if (lastSlash >= 0) safeName = safeName.substring(lastSlash + 1);
 
-                // If filename too long, truncate but keep extension
                 if (safeName.length() > 28) {
                     int dotPos = safeName.lastIndexOf('.');
                     String ext = (dotPos != -1) ? safeName.substring(dotPos) : "";
                     safeName = safeName.substring(0, 28 - ext.length()) + ext;
                 }
 
-                // Check for filename collision and add suffix if needed
                 String testPath = "/" + safeName;
                 if (EbookFS.exists(testPath)) {
                     int dotPos = safeName.lastIndexOf('.');
