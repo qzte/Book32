@@ -311,7 +311,7 @@ void AppReader::openBook(const String& path) {
 void AppReader::closeBook() {
     if (_epubLoader) { _epubLoader->close(); delete _epubLoader; _epubLoader = nullptr; }
     if (_textRenderer) { delete _textRenderer; _textRenderer = nullptr; }
-    _pages.clear(); _chapterPageCounts.clear(); _totalBookPages = 0;
+    _pageHistory.clear(); _chapterPageCounts.clear(); _totalBookPages = 0;
 }
 
 void AppReader::loadChapter(int chapterIndex) {

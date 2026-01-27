@@ -364,13 +364,13 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
             int usableWidth = _width - (x_margin * 2);
             int lineSpacing = fontSize + 4;
             
+            String text = node.textNode.text.substring(currentOffset);
+            if (node.textNode.isListItem && currentOffset == 0) text = "• " + text;
+            int pos = 0;
+
             if (_fontLoaded) {
                 if (draw) _ofr.setFontSize(fontSize);
                 
-                String text = node.textNode.text.substring(currentOffset);
-                if (node.textNode.isListItem && currentOffset == 0) text = "• " + text;
-                
-                int pos = 0;
                 while (pos < (int)text.length()) {
                     // Peek if next line fits
                     if (y + lineSpacing > maxY) {
@@ -391,7 +391,7 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
                         String word = text.substring(pos + line_chars, next_space);
                         if (line_chars > 0) word = " " + word;
                         
-                        int word_width = _fontLoaded ? _ofr.getTextWidth(word.c_str()) : (word.length() * 10);
+                        int word_width = _ofr.getTextWidth(word.c_str());
                         if (line_width + word_width > usableWidth && line_chars > 0) break;
                         
                         line += word;
@@ -420,6 +420,8 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
                 if (y + 6 < maxY) y += 6;
             } else {
                 // Bitmap fallback (simplified)
+                display.setCursor(x_margin, y);
+                display.print(text);
                 y += 20; 
                 pos = text.length(); 
             }
