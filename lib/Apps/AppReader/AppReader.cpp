@@ -252,19 +252,8 @@ void AppReader::openBook(const String& path) {
     // FONT LOADING LOGIC
     bool fontLoaded = false;
     
-    // 1. Try to load specific "DejaVu Serif" if it exists in EbookFS (Uploaded via Web)
-    if (EbookFS.exists("/DejaVuSerif.ttf")) {
-        File f = EbookFS.open("/DejaVuSerif.ttf", "r");
-        if (f) {
-            size_t s = f.size();
-            uint8_t* d = (uint8_t*)ps_malloc(s);
-            if (d) { f.read(d, s); if (_textRenderer->loadFont(d, s)) { Serial.println("Loaded DejaVu Serif from EbookFS"); fontLoaded = true; } else free(d); }
-            f.close();
-        }
-    }
-    
-    // 2. Try to load from the SystemFS (Flashed with data/)
-    if (!fontLoaded && SystemFS.exists("/DejaVuSerif.ttf")) {
+    // 1. Try to load from the SystemFS (Flashed with data/ - usually better performance)
+    if (SystemFS.exists("/DejaVuSerif.ttf")) {
         File f = SystemFS.open("/DejaVuSerif.ttf", "r");
         if (f) {
             size_t s = f.size();
@@ -274,6 +263,17 @@ void AppReader::openBook(const String& path) {
         }
     }
 
+    // 2. Try to load specific "DejaVu Serif" if it exists in EbookFS (Uploaded via Web)
+    if (!fontLoaded && EbookFS.exists("/DejaVuSerif.ttf")) {
+        File f = EbookFS.open("/DejaVuSerif.ttf", "r");
+        if (f) {
+            size_t s = f.size();
+            uint8_t* d = (uint8_t*)ps_malloc(s);
+            if (d) { f.read(d, s); if (_textRenderer->loadFont(d, s)) { Serial.println("Loaded DejaVu Serif from EbookFS"); fontLoaded = true; } else free(d); }
+            f.close();
+        }
+    }
+    
     // 3. Try to load from the EPUB itself
     if (!fontLoaded) {
         std::vector<FontInfo> fonts = _epubLoader->getFonts();
@@ -283,7 +283,7 @@ void AppReader::openBook(const String& path) {
             size_t fontSize = 0;
             uint8_t* fontData = _epubLoader->getFontData(fonts[fontIdx].path, &fontSize);
             if (fontData && fontSize > 0) {
-                if (_textRenderer->loadFont(fontData, fontSize)) fontLoaded = true;
+                if (_textRenderer->loadFont(fontData, fontSize)) { Serial.println("Loaded font from EPUB"); fontLoaded = true; }
                 else free(fontData);
             }
         }
@@ -299,6 +299,10 @@ void AppReader::openBook(const String& path) {
             f.close();
         }
     }
+
+    // Final check - ensure TextRenderer knows if we are using fallback or not
+    _textRenderer->calculateDimensions();
+
     calculateTotalPages();
     loadChapter(0);
     _state = VIEW_READING;
@@ -372,7 +376,10 @@ void AppReader::drawLibrary() {
     const int ITEM_PADDING = 20;
     const int TEXT_X = COVER_WIDTH + 40;
     const int CHARS_PER_LINE = 30;
-    display.setFullWindow();
+    
+    // Use Partial Refresh for Library interactions
+    display.setPartialWindow(0, 0, display.width(), display.height());
+    
     display.firstPage();
     do {
         display.fillScreen(GxEPD_WHITE);

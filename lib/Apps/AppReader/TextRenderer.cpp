@@ -24,15 +24,17 @@ void TextRenderer::calculateDimensions() {
         int usableWidth = _width - 60;
         int avgCharWidth = _ofr.getTextWidth("n");
         _charsPerLine = usableWidth / (avgCharWidth > 0 ? avgCharWidth : (_fontSize/2));
-        int lineHeight = _fontSize + 8;
-        _linesPerPage = (_height - 100) / lineHeight;
+        _lineHeight = _fontSize + 12; // Increased line spacing for better readability
+        _linesPerPage = (_height - 100) / _lineHeight;
     } else {
-        // Fallback dimensions for system font
-        int charWidth = 6 * 2;
-        _charsPerLine = (_width - 40) / charWidth;
-        _linesPerPage = (_height - 100) / 20;
+        // Fallback dimensions for system font (monospaced 12x16 or similar)
+        // Adjust these to match the ACTUAL fallback font seen in the image
+        int charWidth = 12; // Typical width for size 2 system font
+        _charsPerLine = (_width - 60) / charWidth;
+        _lineHeight = 24;   // Typical height for size 2 system font + padding
+        _linesPerPage = (_height - 100) / _lineHeight;
     }
-    Serial.printf("TextRenderer Init: %dx%d, font=%d, cpl=%d, lpp=%d\n", _width, _height, _fontSize, _charsPerLine, _linesPerPage);
+    Serial.printf("TextRenderer Init: %dx%d, fontLoaded=%d, fontSize=%d, cpl=%d, lpp=%d\n", _width, _height, _fontLoaded, _fontSize, _charsPerLine, _linesPerPage);
 }
 
 std::vector<String> TextRenderer::wrapText(const String& text) {
@@ -99,7 +101,6 @@ std::vector<String> TextRenderer::paginate(const String& text) {
 void TextRenderer::renderPage(Book32Display& display, const String& pageText, int pageNum, int totalPages) {
     int x = 30;
     int y = 50;
-    int lineHeight = _fontSize + 10;
     if (_fontLoaded) {
         _ofr.setDrawer(display); _ofr.setFontColor(GxEPD_BLACK); _ofr.setFontSize(_fontSize);
         int lineStart = 0;
@@ -108,7 +109,7 @@ void TextRenderer::renderPage(Book32Display& display, const String& pageText, in
             if (lineEnd == -1) lineEnd = pageText.length();
             _ofr.setCursor(x, y);
             _ofr.printf("%s", pageText.substring(lineStart, lineEnd).c_str());
-            y += lineHeight; lineStart = lineEnd + 1;
+            y += _lineHeight; lineStart = lineEnd + 1;
         }
     } else {
         display.setTextColor(GxEPD_BLACK); display.setTextSize(2);
@@ -118,7 +119,7 @@ void TextRenderer::renderPage(Book32Display& display, const String& pageText, in
             if (lineEnd == -1) lineEnd = pageText.length();
             display.setCursor(x, y);
             display.print(pageText.substring(lineStart, lineEnd));
-            y += 20; lineStart = lineEnd + 1;
+            y += _lineHeight; lineStart = lineEnd + 1;
         }
     }
     display.setTextSize(2);
@@ -155,12 +156,12 @@ void TextRenderer::renderTextNode(Book32Display& display, RichTextNode& node, in
             if (node.align == ALIGN_CENTER) drawX = (_width - line_width) / 2;
             else if (node.align == ALIGN_RIGHT) drawX = _width - line_width - x_margin;
             _ofr.setCursor(drawX, y); _ofr.printf("%s", line.c_str());
-            y += fontSize + 8; currentX = x_margin;
+            y += fontSize + 12; currentX = x_margin;
         }
     } else {
         display.setTextSize(2);
         String text = node.text; if (node.isListItem) text = "• " + text;
-        int charWidth = 6 * 2; int charsPerLine = usableWidth / charWidth;
+        int charWidth = 12; int charsPerLine = usableWidth / charWidth;
         int pos = 0;
         while(pos < (int)text.length() && y < maxY) {
             int len = charsPerLine;
@@ -172,7 +173,7 @@ void TextRenderer::renderTextNode(Book32Display& display, RichTextNode& node, in
             int drawX = x_margin;
             if (node.style == STYLE_NORMAL && !node.isListItem && pos == 0) drawX += 30;
             display.setCursor(drawX, y); display.print(line);
-            y += 20; pos += len;
+            y += 24; pos += len;
         }
     }
 }
@@ -190,13 +191,22 @@ std::vector<String> TextRenderer::paginateRich(std::vector<ContentNode>& content
     for (auto& node : content) {
         if (node.type == CONTENT_TEXT) {
             String serialized = "T:" + String((int)node.textNode.style) + ":" + String((int)node.textNode.align) + ":" + String(node.textNode.isListItem ? "1" : "0") + ":" + node.textNode.text + "\n";
-            int fontSize = _fontLoaded ? _fontSize : 16;
-            if (node.textNode.style >= STYLE_HEADER1) fontSize += 8;
-            int textLines = (node.textNode.text.length() / _charsPerLine) + 1;
-            int estHeight = textLines * (fontSize + 10);
-            if (currentY + estHeight > maxY && currentPage.length() > 0) { pages.push_back(currentPage); currentPage = ""; currentY = 50; }
+            int nodeHeight = 0;
+            if (_fontLoaded) {
+                int fontSize = _fontSize;
+                if (node.textNode.style >= STYLE_HEADER1) fontSize += 8;
+                // Estimate lines (not perfect but good for pagination)
+                int estCharsPerLine = (_width - 60) / (fontSize / 2);
+                int textLines = (node.textNode.text.length() / estCharsPerLine) + 1;
+                nodeHeight = textLines * (fontSize + 12);
+            } else {
+                int textLines = (node.textNode.text.length() / _charsPerLine) + 1;
+                nodeHeight = textLines * 24;
+            }
+            
+            if (currentY + nodeHeight > maxY && currentPage.length() > 0) { pages.push_back(currentPage); currentPage = ""; currentY = 50; }
             currentPage += serialized;
-            currentY += estHeight;
+            currentY += nodeHeight;
         }
         yield();
     }
