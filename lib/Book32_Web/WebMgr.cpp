@@ -475,8 +475,17 @@ void WebMgr::setupEndpoints() {
         }
     });
 
-    // Static Files from SystemFS
-    server->serveStatic("/", SystemFS, "/").setDefaultFile("index.html");
+    // Static Files - serve from EbookFS since that's where uploadfs puts them
+    // (PlatformIO uploads to the first/larger spiffs partition)
+    if (EbookFS.exists("/index.html")) {
+        Serial.println("Serving web UI from EbookFS");
+        server->serveStatic("/", EbookFS, "/").setDefaultFile("index.html");
+    } else if (SystemFS.exists("/index.html")) {
+        Serial.println("Serving web UI from SystemFS");
+        server->serveStatic("/", SystemFS, "/").setDefaultFile("index.html");
+    } else {
+        Serial.println("WARNING: No index.html found on either filesystem!");
+    }
 }
 
 void WebMgr::update() {}

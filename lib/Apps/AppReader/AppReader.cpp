@@ -70,7 +70,14 @@ AppReader::AppReader() {
 }
 
 void AppReader::loadSettings() {
-    File file = SystemFS.open("/reader_config.json", "r");
+    // Try EbookFS first (where uploadfs puts files), then SystemFS
+    File file;
+    if (EbookFS.exists("/reader_config.json")) {
+        file = EbookFS.open("/reader_config.json", "r");
+    } else if (SystemFS.exists("/reader_config.json")) {
+        file = SystemFS.open("/reader_config.json", "r");
+    }
+    
     if (file) {
         DynamicJsonDocument doc(512);
         if (!deserializeJson(doc, file)) {
@@ -78,6 +85,7 @@ void AppReader::loadSettings() {
         }
         file.close();
     }
+    // No config file is fine - just use defaults
 }
 
 AppReader::~AppReader() {
