@@ -255,7 +255,7 @@ void AppReader::openBook(const String& path) {
     if (!_textRenderer) {
         DisplayMgr& dispMgr = DisplayMgr::getInstance();
         Book32Display& display = dispMgr.getDisplay();
-        _textRenderer = new TextRenderer(display.width(), display.height(), 26);
+        _textRenderer = new TextRenderer(display.width(), display.height(), 18);  // 18px base for reading
     }
     
     // FONT LOADING - Use system FontMgr if available, otherwise load separately
