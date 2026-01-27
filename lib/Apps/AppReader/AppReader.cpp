@@ -248,16 +248,33 @@ void AppReader::openBook(const String& path) {
         Book32Display& display = dispMgr.getDisplay();
         _textRenderer = new TextRenderer(display.width(), display.height(), 26);
     }
+    
+    // FONT LOADING LOGIC
     bool fontLoaded = false;
+    
+    // 1. Try to load specific "DejaVu Serif" if it exists in EbookFS (Uploaded via Web)
     if (EbookFS.exists("/DejaVuSerif.ttf")) {
         File f = EbookFS.open("/DejaVuSerif.ttf", "r");
         if (f) {
             size_t s = f.size();
             uint8_t* d = (uint8_t*)ps_malloc(s);
-            if (d) { f.read(d, s); if (_textRenderer->loadFont(d, s)) fontLoaded = true; else free(d); }
+            if (d) { f.read(d, s); if (_textRenderer->loadFont(d, s)) { Serial.println("Loaded DejaVu Serif from EbookFS"); fontLoaded = true; } else free(d); }
             f.close();
         }
     }
+    
+    // 2. Try to load from the SystemFS (Flashed with data/)
+    if (!fontLoaded && SystemFS.exists("/DejaVuSerif.ttf")) {
+        File f = SystemFS.open("/DejaVuSerif.ttf", "r");
+        if (f) {
+            size_t s = f.size();
+            uint8_t* d = (uint8_t*)ps_malloc(s);
+            if (d) { f.read(d, s); if (_textRenderer->loadFont(d, s)) { Serial.println("Loaded DejaVu Serif from SystemFS"); fontLoaded = true; } else free(d); }
+            f.close();
+        }
+    }
+
+    // 3. Try to load from the EPUB itself
     if (!fontLoaded) {
         std::vector<FontInfo> fonts = _epubLoader->getFonts();
         if (!fonts.empty()) {
@@ -271,6 +288,8 @@ void AppReader::openBook(const String& path) {
             }
         }
     }
+    
+    // 4. Fallback font
     if (!fontLoaded && EbookFS.exists("/font.ttf")) {
         File f = EbookFS.open("/font.ttf", "r");
         if (f) {

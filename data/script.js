@@ -127,13 +127,15 @@ async function fetchBooks() {
         const data = await res.json();
 
         if (data.books && data.books.length > 0) {
-            bookList.innerHTML = data.books.map(book => `
+            bookList.innerHTML = data.books.map(book => {
+                const isFont = book.filename.endsWith('.ttf');
+                return `
                 <div class="book-item">
-                    <span class="book-title">${book.name}</span>
+                    <span class="book-title">${isFont ? '📂 [Font] ' : '📖 '}${book.name}</span>
                     <span class="book-size">${Math.round(book.size / 1024)} KB</span>
                     <button class="btn-delete" onclick="deleteBook('${book.filename}', '${book.name}')">Delete</button>
                 </div>
-            `).join('');
+            `}).join('');
         } else {
             bookList.innerHTML = '<p class="hint">No books uploaded yet.</p>';
         }
@@ -156,8 +158,8 @@ function uploadBook() {
     }
 
     const file = fileInput.files[0];
-    if (!file.name.endsWith('.epub')) {
-        status.innerText = "Only .epub files are supported.";
+    if (!file.name.endsWith('.epub') && !file.name.endsWith('.ttf')) {
+        status.innerText = "Only .epub and .ttf files are supported.";
         status.style.color = "var(--danger)";
         return;
     }

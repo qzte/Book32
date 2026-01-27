@@ -206,33 +206,24 @@ static void listFiles(fs::FS &fs, const char * dirname, uint8_t levels) {
     }
 }
 
-void WebMgr::mountFilesystems() {
-    Serial.println("\n=== Mounting Filesystems ===");
-    
+void WebMgr::init() {
     // 1. Mount System Partition (Primary LittleFS instance)
-    // Label: spiffs, Mount: /littlefs (default VFS path for LittleFS)
-    bool systemMounted = SystemFS.begin(false, "/littlefs", 10, "spiffs");
-    if(!systemMounted) {
-        Serial.println("SystemFS mount failed, attempting format...");
-        systemMounted = SystemFS.begin(true, "/littlefs", 10, "spiffs");
-    }
-    if(systemMounted) {
-        Serial.println("SystemFS: OK (mounted at /littlefs)");
+    // Label: spiffs, Mount: / (No prefix for server compatibility)
+    if(!SystemFS.begin(false, "/", 10, "spiffs")) {
+        Serial.println("SystemFS Mount Failed! Partition labeled 'spiffs' not found or corrupt.");
     } else {
-        Serial.println("SystemFS: FAILED! Web UI will not work.");
+        Serial.println("SystemFS mounted successfully at /.");
     }
 
     // 2. Mount Ebook Partition (Secondary LittleFS instance)
     // Label: ebooks, Mount: /ebooks
-    bool ebookMounted = EbookFS.begin(false, "/ebooks", 10, "ebooks");
-    if(!ebookMounted) {
-        Serial.println("EbookFS mount failed, attempting format (expected on first run)...");
-        ebookMounted = EbookFS.begin(true, "/ebooks", 10, "ebooks");
-    }
-    if(ebookMounted) {
-        Serial.println("EbookFS: OK (mounted at /ebooks)");
+    if(!EbookFS.begin(false, "/ebooks", 10, "ebooks")) {
+        Serial.println("EbookFS Mount Failed, formatting (expected on first run)...");
+        if(!EbookFS.begin(true, "/ebooks", 10, "ebooks")) {
+            Serial.println("EbookFS definitely failed.");
+        }
     } else {
-        Serial.println("EbookFS: FAILED! Ebook storage unavailable.");
+        Serial.println("EbookFS mounted successfully at /ebooks.");
     }
 
     Serial.println("\n--- Filesystem Map ---");
@@ -241,10 +232,7 @@ void WebMgr::mountFilesystems() {
     Serial.printf("EbookFS : %u / %u bytes used\n", EbookFS.usedBytes(), EbookFS.totalBytes());
     listFiles(EbookFS, "/", 1);
     Serial.println("----------------------\n");
-}
 
-void WebMgr::init() {
-    // Filesystems should already be mounted via mountFilesystems()
     setupEndpoints();
     server->begin();
     Serial.println("Web Server Started");
@@ -360,118 +348,6 @@ void WebMgr::setupEndpoints() {
         request->send(response);
     });
 
-    // API: Check Update
-    server->on("/api/check_update", HTTP_GET, [](AsyncWebServerRequest *request) {
-        AsyncResponseStream *response = request->beginResponseStream("application/json");
-        UpdateInfo info = GitHubMgr::getInstance().checkUpdate(SYSTEM_VERSION);
-        DynamicJsonDocument doc(1024);
-        doc["hasUpdate"] = info.available;
-        doc["hasFirmware"] = info.hasFirmware;
-        doc["hasFilesystem"] = info.hasFilesystem;
-        if (info.available) {
-            doc["latest"] = info.version;
-            doc["release_notes"] = info.notes;
-            doc["firmwareUrl"] = info.firmwareUrl;
-            doc["filesystemUrl"] = info.filesystemUrl;
-        }
-        serializeJson(doc, *response);
-        request->send(response);
-    });
-
-    // API: Update Firmware
-    server->on("/api/update/firmware", HTTP_POST, [](AsyncWebServerRequest *request) {
-        request->send(200, "text/plain", "Firmware Update Started");
-        Serial.println("Firmware Update Requested via Web");
-        UpdateInfo info = GitHubMgr::getInstance().checkUpdate(SYSTEM_VERSION);
-        if (info.hasFirmware) {
-            GitHubMgr::getInstance().performFirmwareUpdate(info.firmwareUrl.c_str());
-        }
-    });
-
-    // API: Update Filesystem (System partition only)
-    server->on("/api/update/filesystem", HTTP_POST, [](AsyncWebServerRequest *request) {
-        request->send(200, "text/plain", "Filesystem Update Started");
-        Serial.println("Filesystem Update Requested via Web");
-        UpdateInfo info = GitHubMgr::getInstance().checkUpdate(SYSTEM_VERSION);
-        if (info.hasFilesystem) {
-            GitHubMgr::getInstance().performFilesystemUpdate(info.filesystemUrl.c_str());
-        }
-    });
-
-    // API: Combined update endpoint (firmware + filesystem)
-    server->on("/api/update/all", HTTP_POST, [](AsyncWebServerRequest *request) {
-        request->send(200, "text/plain", "Full Update Started");
-        Serial.println("Full Update Requested via Web");
-        GitHubMgr::getInstance().performFullUpdate(SYSTEM_VERSION);
-    });
-
-    // API: Legacy update endpoint (firmware only)
-    server->on("/api/update", HTTP_POST, [](AsyncWebServerRequest *request) {
-        request->send(200, "text/plain", "Update Started");
-        Serial.println("Update Requested via Web");
-        GitHubMgr::getInstance().triggerUpdate(SYSTEM_VERSION);
-    });
-    
-    // API: Settings GET
-    server->on("/api/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
-        AsyncResponseStream *response = request->beginResponseStream("application/json");
-        DynamicJsonDocument doc(512);
-        // Load real settings from Config or Preferences in future
-        doc["bluetooth"] = true; // Example
-        
-        JsonArray apps = doc.createNestedArray("apps");
-        // Iterate available apps
-        JsonObject app1 = apps.createNestedObject();
-        app1["name"] = "Reader";
-        app1["enabled"] = true;
-        
-        serializeJson(doc, *response);
-        request->send(response);
-    });
-
-    // API: Settings POST
-    server->on("/api/settings", HTTP_POST, [](AsyncWebServerRequest *request) {
-        // TODO: Parse body and save to Preferences
-        request->send(200, "application/json", "{\"status\":\"ok\"}");
-    });
-
-    // API: Get Reader Settings
-    server->on("/api/settings/reader", HTTP_GET, [](AsyncWebServerRequest *request) {
-        AsyncResponseStream *response = request->beginResponseStream("application/json");
-        DynamicJsonDocument doc(512);
-
-        File file = SystemFS.open("/reader_config.json", "r");
-        if (file) {
-            DeserializationError error = deserializeJson(doc, file);
-            file.close();
-            if (error) doc.clear(); // Fallback to empty/defaults
-        }
-        
-        // Ensure defaults if missing
-        if (!doc.containsKey("refreshFrequency")) doc["refreshFrequency"] = 6;
-        
-        serializeJson(doc, *response);
-        request->send(response);
-    });
-
-    // API: Save Reader Settings
-    AsyncCallbackJsonWebHandler *readerSettingsHandler = new AsyncCallbackJsonWebHandler("/api/settings/reader", [](AsyncWebServerRequest *request, JsonVariant &json) {
-        DynamicJsonDocument doc(512);
-        if (json.is<JsonObject>()) {
-            doc = json.as<JsonObject>();
-        }
-        
-        File file = SystemFS.open("/reader_config.json", "w");
-        if (file) {
-            serializeJson(doc, file);
-            file.close();
-            request->send(200, "application/json", "{\"status\":\"ok\"}");
-        } else {
-            request->send(500, "application/json", "{\"status\":\"error\",\"message\":\"Failed to save config\"}");
-        }
-    });
-    server->addHandler(readerSettingsHandler);
-
     // API: List Books from EbookFS
     server->on("/api/books", HTTP_GET, [](AsyncWebServerRequest *request) {
         AsyncResponseStream *response = request->beginResponseStream("application/json");
@@ -483,7 +359,7 @@ void WebMgr::setupEndpoints() {
             File file = root.openNextFile();
             while (file) {
                 String name = file.name();
-                if (name.endsWith(".epub")) {
+                if (name.endsWith(".epub") || name.endsWith(".ttf")) {
                     JsonObject book = books.createNestedObject();
                     // Get original filename from metadata (SystemFS)
                     String displayName = getOriginalFilename(name);
@@ -522,41 +398,35 @@ void WebMgr::setupEndpoints() {
                 lastSlash = safeName.lastIndexOf('\\');
                 if (lastSlash >= 0) safeName = safeName.substring(lastSlash + 1);
 
-                // If filename too long, truncate but keep .epub extension
+                // If filename too long, truncate but keep extension
                 if (safeName.length() > 28) {
-                    safeName = safeName.substring(0, 23) + ".epub";
+                    int dotPos = safeName.lastIndexOf('.');
+                    String ext = (dotPos != -1) ? safeName.substring(dotPos) : "";
+                    safeName = safeName.substring(0, 28 - ext.length()) + ext;
                 }
 
                 // Check for filename collision and add suffix if needed
                 String testPath = "/" + safeName;
                 if (EbookFS.exists(testPath)) {
-                    // Extract base name (without .epub)
-                    String baseName = safeName.substring(0, safeName.length() - 5);
-                    // Shorten base to make room for suffix "_NN.epub" (max 3 chars + .epub = 8)
-                    if (baseName.length() > 20) {
-                        baseName = baseName.substring(0, 20);
-                    }
+                    int dotPos = safeName.lastIndexOf('.');
+                    String baseName = (dotPos != -1) ? safeName.substring(0, dotPos) : safeName;
+                    String ext = (dotPos != -1) ? safeName.substring(dotPos) : "";
+                    
+                    if (baseName.length() > 20) baseName = baseName.substring(0, 20);
 
-                    // Find unused suffix
                     int suffix = 1;
                     while (suffix < 100) {
-                        safeName = baseName + "_" + String(suffix) + ".epub";
+                        safeName = baseName + "_" + String(suffix) + ext;
                         testPath = "/" + safeName;
-                        if (!EbookFS.exists(testPath)) {
-                            break;
-                        }
+                        if (!EbookFS.exists(testPath)) break;
                         suffix++;
                     }
-                    Serial.printf("Collision detected, using: %s\n", safeName.c_str());
                 }
 
                 savedPath = "/" + safeName;
                 Serial.printf("Upload Start: %s (original: %s)\n", savedPath.c_str(), filename.c_str());
                 uploadFile = EbookFS.open(savedPath, FILE_WRITE);
-                if (!uploadFile) {
-                    Serial.println("Failed to open file for writing on EbookFS");
-                    return;
-                }
+                if (!uploadFile) return;
             }
 
             if (uploadFile && len) {
@@ -565,13 +435,9 @@ void WebMgr::setupEndpoints() {
 
             if (final) {
                 if (uploadFile) {
-                    Serial.printf("Upload Complete: %s (%u bytes)\n", savedPath.c_str(), index + len);
                     uploadFile.close();
-
-                    // Save metadata mapping truncated -> original filename (on SystemFS)
-                    String truncatedName = savedPath.substring(1); // Remove leading "/"
+                    String truncatedName = savedPath.substring(1); 
                     String origName = originalFilename;
-                    // Remove path from original filename too
                     int lastSlash = origName.lastIndexOf('/');
                     if (lastSlash >= 0) origName = origName.substring(lastSlash + 1);
                     lastSlash = origName.lastIndexOf('\\');
@@ -579,8 +445,7 @@ void WebMgr::setupEndpoints() {
 
                     saveBookMetadata(truncatedName, origName);
 
-                    // Queue cover extraction to run in separate task (avoids stack overflow)
-                    queueCoverExtraction(savedPath);
+                    if (savedPath.endsWith(".epub")) queueCoverExtraction(savedPath);
                 }
             }
         }
@@ -599,15 +464,10 @@ void WebMgr::setupEndpoints() {
         if (EbookFS.exists(path)) {
             if (EbookFS.remove(path)) {
                 Serial.printf("Deleted: %s\n", path.c_str());
-                // Also remove from metadata (SystemFS)
                 removeBookMetadata(filename);
-                // Also remove thumbnail if it exists (EbookFS)
                 String thumbPath = "/covers/" + filename;
                 thumbPath.replace(".epub", ".thumb");
-                if (EbookFS.exists(thumbPath)) {
-                    EbookFS.remove(thumbPath);
-                    Serial.printf("Deleted thumbnail: %s\n", thumbPath.c_str());
-                }
+                if (EbookFS.exists(thumbPath)) EbookFS.remove(thumbPath);
                 request->send(200, "text/plain", "Deleted");
             } else {
                 request->send(500, "text/plain", "Delete failed");
@@ -621,6 +481,4 @@ void WebMgr::setupEndpoints() {
     server->serveStatic("/", SystemFS, "/").setDefaultFile("index.html");
 }
 
-void WebMgr::update() {
-    // AsyncWebServer handles requests in background usually
-}
+void WebMgr::update() {}
