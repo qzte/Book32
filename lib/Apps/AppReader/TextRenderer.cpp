@@ -181,14 +181,19 @@ void TextRenderer::renderTextNode(Book32Display& display, RichTextNode& node, in
     
     // Determine font size based on style
     int fontSize = _fontSize;
-    if (node.style == STYLE_HEADER1) fontSize = _fontSize + 6;
-    else if (node.style == STYLE_HEADER2) fontSize = _fontSize + 4;
-    else if (node.style == STYLE_HEADER3) fontSize = _fontSize + 2;
-    else if (node.style == STYLE_BOLD || node.style == STYLE_BOLD_ITALIC) fontSize = _fontSize;
+    bool isBold = false;
+    bool isItalic = false;
+    
+    if (node.style == STYLE_HEADER1) { fontSize = _fontSize + 6; isBold = true; }
+    else if (node.style == STYLE_HEADER2) { fontSize = _fontSize + 4; isBold = true; }
+    else if (node.style == STYLE_HEADER3) { fontSize = _fontSize + 2; isBold = true; }
+    else if (node.style == STYLE_BOLD) { isBold = true; }
+    else if (node.style == STYLE_ITALIC) { isItalic = true; }
+    else if (node.style == STYLE_BOLD_ITALIC) { isBold = true; isItalic = true; }
     
     int x_margin = 25;
     int usableWidth = _width - (x_margin * 2);
-    int lineSpacing = fontSize + 4;  // Tighter spacing
+    int lineSpacing = fontSize + 4;
     
     if (_fontLoaded) {
         _ofr.setDrawer(display);
@@ -196,16 +201,15 @@ void TextRenderer::renderTextNode(Book32Display& display, RichTextNode& node, in
         _ofr.setFontColor(GxEPD_BLACK);
         
         int currentX = x_margin;
-        // Paragraph indent for normal text (first line only)
-        bool firstLine = true;
-        if (node.style == STYLE_NORMAL && !node.isListItem && node.text.length() > 30) {
-            currentX += 20;
-        }
+        // Paragraph indent for normal text (first line of long paragraphs)
+        bool doIndent = (node.style == STYLE_NORMAL && !node.isListItem && node.text.length() > 50);
+        if (doIndent) currentX += 20;
         
         String text = node.text;
         if (node.isListItem) text = "• " + text;
         
         int pos = 0;
+        bool firstLine = true;
         while(pos < (int)text.length() && y < maxY) {
             String line = "";
             int line_width = 0;
@@ -227,21 +231,28 @@ void TextRenderer::renderTextNode(Book32Display& display, RichTextNode& node, in
                 if (pos < (int)text.length() && text.charAt(pos) == ' ') pos++;
             }
             
-            // Draw the line
+            // Calculate draw position
             int drawX = currentX;
             if (node.align == ALIGN_CENTER) drawX = (_width - line_width) / 2;
             else if (node.align == ALIGN_RIGHT) drawX = _width - line_width - x_margin;
             
+            // Draw the line (with faux bold if needed)
             _ofr.setCursor(drawX, y);
             _ofr.printf("%s", line.c_str());
+            
+            // Faux bold: draw again with 1px offset
+            if (isBold) {
+                _ofr.setCursor(drawX + 1, y);
+                _ofr.printf("%s", line.c_str());
+            }
             
             y += lineSpacing;
             currentX = x_margin;  // Reset indent after first line
             firstLine = false;
         }
         
-        // Add paragraph spacing after block
-        if (node.style == STYLE_NORMAL || node.style >= STYLE_HEADER1) {
+        // Small gap after long paragraphs only
+        if (node.text.length() > 50) {
             y += 4;
         }
     } else {
@@ -275,14 +286,16 @@ void TextRenderer::renderTable(Book32Display& display, Table& table, int& y, int
 std::vector<String> TextRenderer::paginateRich(std::vector<ContentNode>& content) {
     std::vector<String> pages;
     String currentPage = "";
-    int currentY = 35;
-    int maxY = _height - 50;
+    int currentY = 30;
+    int maxY = _height - 40;  // More usable space
+    
+    Serial.printf("Paginating: screen=%dx%d maxY=%d\n", _width, _height, maxY);
     
     for (auto& node : content) {
         if (node.type == CONTENT_TEXT) {
             String serialized = "T:" + String((int)node.textNode.style) + ":" + String((int)node.textNode.align) + ":" + String(node.textNode.isListItem ? "1" : "0") + ":" + node.textNode.text + "\n";
             
-            // Calculate actual height this node will take
+            // Calculate height this node will take
             int fontSize = _fontSize;
             if (node.textNode.style == STYLE_HEADER1) fontSize += 6;
             else if (node.textNode.style == STYLE_HEADER2) fontSize += 4;
@@ -291,20 +304,24 @@ std::vector<String> TextRenderer::paginateRich(std::vector<ContentNode>& content
             int lineSpacing = fontSize + 4;
             int usableWidth = _width - 50;
             
-            // Estimate character width and lines needed
-            int avgCharWidth = _fontLoaded ? (fontSize * 5 / 9) : 10;  // Approximation
+            // More accurate width estimation for proportional fonts
+            int avgCharWidth = _fontLoaded ? 8 : 10;  // ~8px average for 18px font
             int charsPerLine = usableWidth / avgCharWidth;
-            if (charsPerLine < 10) charsPerLine = 10;
+            if (charsPerLine < 20) charsPerLine = 20;
             
             int textLen = node.textNode.text.length();
-            int textLines = (textLen / charsPerLine) + 1;
-            int nodeHeight = textLines * lineSpacing + 4;  // +4 for paragraph spacing
+            int textLines = (textLen + charsPerLine - 1) / charsPerLine;  // Ceiling division
+            if (textLines < 1) textLines = 1;
+            
+            // Only add paragraph spacing for actual paragraphs, not short lines
+            int nodeHeight = textLines * lineSpacing;
+            if (textLen > 50) nodeHeight += 6;  // Small gap after paragraphs
             
             // Check if we need a new page
             if (currentY + nodeHeight > maxY && currentPage.length() > 0) {
                 pages.push_back(currentPage);
                 currentPage = "";
-                currentY = 35;
+                currentY = 30;
             }
             
             currentPage += serialized;
@@ -314,12 +331,13 @@ std::vector<String> TextRenderer::paginateRich(std::vector<ContentNode>& content
     }
     
     if (currentPage.length() > 0) pages.push_back(currentPage);
+    Serial.printf("Paginated into %d pages\n", pages.size());
     return pages;
 }
 
 void TextRenderer::renderRichPage(Book32Display& display, const String& pageData, int pageNum, int totalPages) {
-    int y = 35;
-    int maxY = _height - 50;
+    int y = 30;  // Start near top
+    int maxY = _height - 35;  // Leave room for footer
     int lineStart = 0;
     
     while(lineStart < (int)pageData.length() && y < maxY) {
@@ -343,18 +361,18 @@ void TextRenderer::renderRichPage(Book32Display& display, const String& pageData
         lineStart = lineEnd + 1;
     }
     
-    // Footer with page number
+    // Footer with page number (small, at bottom)
     if (_fontLoaded) {
         char footer[32];
         snprintf(footer, sizeof(footer), "Page %d of %d", pageNum + 1, totalPages);
-        _ofr.setFontSize(14);
+        _ofr.setFontSize(12);
         int footerWidth = _ofr.getTextWidth(footer);
-        _ofr.setCursor((_width - footerWidth) / 2, _height - 20);
+        _ofr.setCursor((_width - footerWidth) / 2, _height - 15);
         _ofr.printf("%s", footer);
     } else {
         display.setTextSize(1);
         String f = "Page " + String(pageNum + 1) + " of " + String(totalPages);
-        display.setCursor((_width - f.length()*6)/2, _height - 20);
+        display.setCursor((_width - f.length()*6)/2, _height - 15);
         display.print(f);
     }
 }
