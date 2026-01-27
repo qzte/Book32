@@ -106,20 +106,15 @@ std::vector<String> TextRenderer::paginate(const String& text) {
     int estimatedPages = (lines.size() / _linesPerPage) + 1;
     pages.reserve(estimatedPages);
 
-    // Pre-calculate approximate page size
-    int approxPageSize = _charsPerLine * _linesPerPage + _linesPerPage;
-
     // Then group lines into pages
     String currentPage;
-    currentPage.reserve(approxPageSize);
+    currentPage.reserve(_charsPerLine * _linesPerPage + _linesPerPage);
     int linesInPage = 0;
 
     for (size_t i = 0; i < lines.size(); i++) {
         if (linesInPage >= _linesPerPage) {
-            // Page is full, save it and start a new one
             pages.push_back(currentPage);
             currentPage = "";
-            currentPage.reserve(approxPageSize);
             linesInPage = 0;
         }
 
@@ -127,18 +122,12 @@ std::vector<String> TextRenderer::paginate(const String& text) {
         currentPage += '\n';
         linesInPage++;
 
-        // Yield periodically
         if(i % 100 == 0) yield();
     }
 
-    // Add the last page if it has content
     if (currentPage.length() > 0) {
         pages.push_back(currentPage);
     }
-
-    // Clear lines vector to free memory
-    lines.clear();
-    lines.shrink_to_fit();
 
     Serial.printf("Paginated into %d pages, free heap=%d\n", pages.size(), ESP.getFreeHeap());
     return pages;
@@ -231,7 +220,6 @@ void TextRenderer::renderTextNode(Book32Display& display, RichTextNode& node, in
         _ofr.setFontSize(fontSize * 8);
         _ofr.setFontColor(GxEPD_BLACK);
         
-        // Simple manual wrapping for OFR (OFR has its own but we want control)
         String text = node.text;
         if(node.isListItem) text = "• " + text;
         
@@ -241,7 +229,6 @@ void TextRenderer::renderTextNode(Book32Display& display, RichTextNode& node, in
             int line_width = 0;
             int start_pos = pos;
             
-            // Build line until it exceeds usableWidth
             while(pos < text.length()) {
                 int next_space = text.indexOf(' ', pos);
                 if (next_space == -1) next_space = text.length();
@@ -250,9 +237,7 @@ void TextRenderer::renderTextNode(Book32Display& display, RichTextNode& node, in
                 if (pos != start_pos) word = " " + word;
                 
                 int word_width = _ofr.getTextWidth(word.c_str());
-                if (line_width + word_width > usableWidth && line.length() > 0) {
-                    break;
-                }
+                if (line_width + word_width > usableWidth && line.length() > 0) break;
                 
                 line += word;
                 line_width += word_width;
@@ -283,10 +268,7 @@ void TextRenderer::renderTextNode(Book32Display& display, RichTextNode& node, in
             
             if(remaining > charsPerLine) {
                 for(int i = pos + chunkSize - 1; i > pos; i--) {
-                    if(text.charAt(i) == ' ') {
-                        chunkSize = i - pos + 1;
-                        break;
-                    }
+                    if(text.charAt(i) == ' ') { chunkSize = i - pos + 1; break; }
                 }
             }
             
@@ -336,7 +318,47 @@ void TextRenderer::renderTable(Book32Display& display, Table& table, int& y, int
 }
 
 std::vector<String> TextRenderer::paginateRich(std::vector<ContentNode>& content) {
-    return paginate("Rich content pagination is being handled by serialize/render loop.");
+    Serial.printf("TextRenderer::paginateRich start, nodes=%d\n", content.size());
+    std::vector<String> pages;
+    String currentPage = "";
+    int currentY = 0;
+    int maxY = _height - 100; // Leave room for footer
+    
+    for(auto& node : content) {
+        if(node.type == CONTENT_TEXT) {
+            // Serialize node: T:style:align:isListItem:text
+            String serialized = "T:" + String((int)node.textNode.style) + ":" + 
+                                String((int)node.textNode.align) + ":" +
+                                String(node.textNode.isListItem ? "1" : "0") + ":" +
+                                node.textNode.text + "\n";
+            
+            // Heuristic for page overflow (simplified)
+            int fontSize = _fontSize;
+            switch(node.textNode.style) {
+                case STYLE_HEADER1: fontSize += 4; break;
+                case STYLE_HEADER2: fontSize += 3; break;
+                default: break;
+            }
+            int lineHeight = getFontHeight(fontSize) + 6;
+            int textLines = (node.textNode.text.length() / _charsPerLine) + 1;
+            
+            if(currentY + (textLines * lineHeight) > maxY && currentPage.length() > 0) {
+                pages.push_back(currentPage);
+                currentPage = "";
+                currentY = 0;
+            }
+            
+            currentPage += serialized;
+            currentY += (textLines * lineHeight);
+        }
+        // TODO: Handle tables in serialization
+        yield();
+    }
+    
+    if(currentPage.length() > 0) pages.push_back(currentPage);
+    
+    Serial.printf("Paginated rich content into %d pages\n", pages.size());
+    return pages;
 }
 
 void TextRenderer::renderRichPage(Book32Display& display, const String& pageData, int pageNum, int totalPages) {
