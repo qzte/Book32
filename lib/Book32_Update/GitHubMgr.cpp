@@ -4,6 +4,53 @@
 #include <Update.h>
 #include "../../include/Config.h"
 #include "../../include/Secrets.h"
+#include "../Book32_Core/DisplayMgr.h"
+#include "../Book32_Core/FontMgr.h"
+
+// Draw OTA progress bar on display
+static void drawOTAProgress(int progress, const char* status) {
+    auto& display = DisplayMgr::getInstance().getDisplay();
+    auto& fontMgr = FontMgr::getInstance();
+    
+    int screenW = display.width();
+    int screenH = display.height();
+    
+    // Progress bar dimensions
+    int barWidth = screenW - 100;
+    int barHeight = 30;
+    int barX = 50;
+    int barY = screenH / 2;
+    int fillWidth = (barWidth * progress) / 100;
+    
+    // Clear and draw
+    display.setFullWindow();
+    display.firstPage();
+    do {
+        display.fillScreen(GxEPD_WHITE);
+        
+        // Title
+        fontMgr.drawTextCentered(display, "Updating Firmware...", barY - 60, FONT_SIZE_TITLE, GxEPD_BLACK);
+        
+        // Status text
+        fontMgr.drawTextCentered(display, status, barY - 25, FONT_SIZE_BODY, GxEPD_BLACK);
+        
+        // Progress bar outline
+        display.drawRect(barX, barY, barWidth, barHeight, GxEPD_BLACK);
+        display.drawRect(barX + 1, barY + 1, barWidth - 2, barHeight - 2, GxEPD_BLACK);
+        
+        // Progress bar fill
+        if (fillWidth > 4) {
+            display.fillRect(barX + 2, barY + 2, fillWidth - 4, barHeight - 4, GxEPD_BLACK);
+        }
+        
+        // Percentage text
+        char percentText[16];
+        snprintf(percentText, sizeof(percentText), "%d%%", progress);
+        fontMgr.drawTextCentered(display, percentText, barY + barHeight + 40, FONT_SIZE_TITLE, GxEPD_BLACK);
+        
+    } while (display.nextPage());
+}
+
 
 GitHubMgr::GitHubMgr() {}
 
@@ -143,6 +190,9 @@ bool GitHubMgr::performFirmwareUpdate(const char* url, bool restartAfter) {
             return false;
         }
 
+        // Show initial progress on display
+        drawOTAProgress(0, "Downloading firmware...");
+
         WiFiClient *stream = http.getStreamPtr();
         
         // Use chunked download with periodic yields to prevent watchdog
@@ -171,10 +221,11 @@ bool GitHubMgr::performFirmwareUpdate(const char* url, bool restartAfter) {
                 }
                 written += bytesWritten;
                 
-                // Progress and yield every ~10%
+                // Progress and yield every ~5%
                 int progress = (written * 100) / contentLength;
-                if (progress / 10 > lastProgress / 10) {
+                if (progress / 5 > lastProgress / 5) {
                     Serial.printf("Progress: %d%%\n", progress);
+                    drawOTAProgress(progress, "Downloading firmware...");
                     lastProgress = progress;
                 }
                 
@@ -185,8 +236,11 @@ bool GitHubMgr::performFirmwareUpdate(const char* url, bool restartAfter) {
 
         if (written == contentLength) {
             Serial.println("Firmware written successfully");
+            drawOTAProgress(100, "Installing update...");
             if (Update.end()) {
                 Serial.println("Firmware update complete");
+                drawOTAProgress(100, "Restarting...");
+                delay(1000);  // Show completion message briefly
                 http.end();
                 if (restartAfter) {
                     Serial.println("Restarting...");
