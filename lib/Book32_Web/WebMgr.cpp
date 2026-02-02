@@ -264,17 +264,28 @@ void WebMgr::update() {
     // Check if OTA was requested from web UI
     if (_otaPending) {
         _otaPending = false;
-        Serial.println("Performing OTA update from main loop...");
+        Serial.println("Scheduling OTA update in separate task...");
         
-        // Stop the web server to free up async_tcp
+        // Stop the web server to free up async_tcp and memory
         server->end();
         delay(100);  // Give time for connections to close
         
-        // Now perform update - async_tcp is free
-        GitHubMgr::getInstance().performFullUpdate(SYSTEM_VERSION);
-        
-        // If we get here, update failed - restart server
-        server->begin();
+        // Create OTA task with 16KB stack (OTA needs significant stack space)
+        xTaskCreatePinnedToCore(
+            [](void* param) {
+                Serial.println("OTA task started");
+                GitHubMgr::getInstance().performFullUpdate(SYSTEM_VERSION);
+                Serial.println("OTA task complete, restarting...");
+                vTaskDelay(100 / portTICK_PERIOD_MS);
+                ESP.restart();
+            },
+            "OTA_Task",
+            16384,  // 16KB stack
+            nullptr,
+            1,      // Priority
+            nullptr,
+            1       // Core 1
+        );
     }
 }
 
