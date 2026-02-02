@@ -126,7 +126,7 @@ void AppMainMenu::draw() {
             // Draw icon
             const uint8_t* icon = app->getIconImage();
             if (icon) {
-                display.drawBitmap(x + (iconSize - 48) / 2, y + (iconSize - 48) / 2, icon, 48, 48, GxEPD_BLACK);
+                display.drawBitmap(x + (iconSize - 80) / 2, y + (iconSize - 80) / 2, icon, 80, 80, GxEPD_BLACK);
             } else {
                 display.drawRect(x, y, iconSize, iconSize, GxEPD_BLACK);
             }

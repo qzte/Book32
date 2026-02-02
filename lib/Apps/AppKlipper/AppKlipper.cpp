@@ -105,7 +105,7 @@ void AppKlipper::draw() {
 }
 
 const uint8_t* AppKlipper::getIconImage() {
-    return icon_klipper_48x48;
+    return icon_klipper_80x80;
 }
 
 void AppKlipper::scanForPrinters() {
