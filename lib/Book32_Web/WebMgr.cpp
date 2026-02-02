@@ -233,21 +233,22 @@ void WebMgr::mountFilesystems() {
         Serial.println("WARNING: SystemFS mount FAILED!");
     }
 
-    // Look for "ebooks" partition
-    const esp_partition_t* ebooksPart = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, "ebooks");
+    // Look for "ebooks" partition (now uses custom subtype 0x82 to avoid uploadfs conflict)
+    const esp_partition_t* ebooksPart = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "ebooks");
     if (ebooksPart) {
         Serial.printf("Found 'ebooks' partition at 0x%06X, size %dKB\n", ebooksPart->address, ebooksPart->size/1024);
     } else {
-        Serial.println("WARNING: No partition with label 'ebooks' found, trying without label...");
+        Serial.println("WARNING: No partition with label 'ebooks' found!");
     }
 
-    // Mount EbookFS
-    bool ebookOK = EbookFS.begin(true, "/ebooks", 10, "ebooks");
+    // Mount EbookFS - DO NOT format on fail to preserve user data
+    bool ebookOK = EbookFS.begin(false, "/ebooks", 10, "ebooks");
     if (ebookOK) {
         Serial.printf("EbookFS OK: %u / %u bytes used\n", EbookFS.usedBytes(), EbookFS.totalBytes());
         listFiles(EbookFS, "/", 1);
     } else {
-        Serial.println("WARNING: EbookFS mount failed!");
+        Serial.println("ERROR: EbookFS mount failed! Ebooks partition may need manual formatting.");
+        Serial.println("       Upload an ebook via web UI to trigger first-time format if needed.");
     }
     
     Serial.println("============================\n");
