@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Book32 OS</title>
     <link rel="stylesheet" href="style.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <!-- Using system sans-serif to match FreeSans on the e-reader -->
 </head>
 
 <body>
@@ -16,7 +16,7 @@
             <ul class="nav-links">
                 <li class="active" onclick="showTab('dashboard')">Dashboard</li>
                 <li onclick="showTab('ereader')">Ereader</li>
-                <li onclick="showTab('apps')">Apps</li>
+                <li onclick="showTab('todo')">Todo</li>
                 <li onclick="showTab('settings')">Settings</li>
             </ul>
             <div class="version">v<span id="version-display">1.0.0</span></div>
@@ -86,11 +86,23 @@
                 </div>
             </section>
 
-            <!-- Apps Tab -->
-            <section id="apps" class="tab-content">
-                <h1>Manage Apps</h1>
-                <div id="apps-list" class="apps-grid">
-                    <!-- App cards injected by JS -->
+            <!-- Todo Tab -->
+            <section id="todo" class="tab-content">
+                <h1>Todo List</h1>
+
+                <div class="card">
+                    <h3>Add Task</h3>
+                    <div class="todo-input-container">
+                        <input type="text" id="new-todo-input" placeholder="Enter a new task..." maxlength="100">
+                        <button class="btn-add" onclick="addTodo()">Add</button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3>Your Tasks</h3>
+                    <div id="todo-list">
+                        <!-- Todos injected by JS -->
+                    </div>
                 </div>
             </section>
 

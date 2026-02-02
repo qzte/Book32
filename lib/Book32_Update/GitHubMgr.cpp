@@ -1,4 +1,5 @@
 #include "GitHubMgr.h"
+#include <WiFi.h>
 #include <HTTPClient.h>
 #include <Update.h>
 #include "../../include/Config.h"
@@ -15,51 +16,98 @@ void GitHubMgr::init() {
     // any init?
 }
 
+// Check if a real token is configured (not placeholder)
+static bool hasValidToken() {
+    String token = GITHUB_TOKEN;
+    return token.length() > 10 && !token.startsWith("your_");
+}
+
 UpdateInfo GitHubMgr::checkUpdate(const char* currentVersion) {
     UpdateInfo info = {false, "", "", "", "", false, false};
 
-    if (WiFi.status() != WL_CONNECTED) return info;
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("WiFi not connected, cannot check for updates");
+        return info;
+    }
 
     HTTPClient http;
     String apiURL = String("https://api.github.com/repos/") + GITHUB_REPO + "/releases/latest";
 
+    Serial.printf("Checking: %s\n", apiURL.c_str());
+
     http.begin(apiURL);
     http.setUserAgent("Book32-ESP32");
-    http.addHeader("Authorization", String("token ") + GITHUB_TOKEN);
+    http.setTimeout(10000);  // 10 second timeout
+
+    // Only add auth header if we have a valid token
+    if (hasValidToken()) {
+        http.addHeader("Authorization", String("token ") + GITHUB_TOKEN);
+        Serial.println("Using authenticated request");
+    } else {
+        Serial.println("Using unauthenticated request (public repo)");
+    }
 
     int httpCode = http.GET();
+    Serial.printf("HTTP Response: %d\n", httpCode);
+
     if (httpCode == HTTP_CODE_OK) {
         String payload = http.getString();
-        DynamicJsonDocument doc(4096);
-        deserializeJson(doc, payload);
+        DynamicJsonDocument doc(8192);  // Increased size for release notes
+        DeserializationError err = deserializeJson(doc, payload);
+
+        if (err) {
+            Serial.printf("JSON parse error: %s\n", err.c_str());
+            http.end();
+            return info;
+        }
 
         const char* tagName = doc["tag_name"];
         info.version = tagName ? tagName : "";
         info.notes = doc["body"].as<String>();
 
-        // Check if version is different
-        if (info.version.length() > 0 && info.version != currentVersion && info.version != String("v") + currentVersion) {
-            info.available = true;
+        Serial.printf("Latest version: %s, Current: %s\n", info.version.c_str(), currentVersion);
 
-            // Find asset URLs - use API URL for private repo compatibility
+        // Check if version is different (handle both "1.0.5" and "v1.0.5" formats)
+        String currentV = currentVersion;
+        String latestV = info.version;
+        latestV.replace("v", "");  // Remove 'v' prefix if present
+
+        if (latestV.length() > 0 && latestV != currentV) {
+            info.available = true;
+            Serial.println("Update IS available");
+
+            // Find asset URLs
             JsonArray assets = doc["assets"];
             for (JsonObject asset : assets) {
                 String name = asset["name"].as<String>();
-                // Use "url" (API endpoint) instead of "browser_download_url" for private repos
-                String url = asset["url"].as<String>();
+
+                // Use browser_download_url for public repos (no auth needed)
+                // Use url (API endpoint) for private repos (needs auth)
+                String url;
+                if (hasValidToken()) {
+                    url = asset["url"].as<String>();
+                } else {
+                    url = asset["browser_download_url"].as<String>();
+                }
 
                 if (name == "firmware.bin" || name.endsWith("_firmware.bin")) {
                     info.firmwareUrl = url;
                     info.hasFirmware = true;
-                    Serial.printf("Found firmware: %s\n", url.c_str());
+                    Serial.printf("Found firmware: %s\n", name.c_str());
                 }
                 else if (name == "littlefs.bin" || name == "filesystem.bin" || name.endsWith("_littlefs.bin")) {
                     info.filesystemUrl = url;
                     info.hasFilesystem = true;
-                    Serial.printf("Found filesystem: %s\n", url.c_str());
+                    Serial.printf("Found filesystem: %s\n", name.c_str());
                 }
             }
+        } else {
+            Serial.println("Already up to date");
         }
+    } else if (httpCode == 404) {
+        Serial.println("No releases found on GitHub");
+    } else if (httpCode == 403) {
+        Serial.println("GitHub API rate limited - try again later");
     } else {
         Serial.printf("GitHub API Failed: %d\n", httpCode);
     }
@@ -76,7 +124,12 @@ bool GitHubMgr::performFirmwareUpdate(const char* url, bool restartAfter) {
     http.begin(url);
     http.setUserAgent("Book32-ESP32");
     http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-    http.addHeader("Authorization", String("token ") + GITHUB_TOKEN);
+    http.setTimeout(30000);  // 30 second timeout for large downloads
+
+    // Only add auth for API URLs (private repos)
+    if (hasValidToken()) {
+        http.addHeader("Authorization", String("token ") + GITHUB_TOKEN);
+    }
     http.addHeader("Accept", "application/octet-stream");
 
     int httpCode = http.GET();
@@ -133,7 +186,12 @@ bool GitHubMgr::performFilesystemUpdate(const char* url, bool restartAfter) {
     http.begin(url);
     http.setUserAgent("Book32-ESP32");
     http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-    http.addHeader("Authorization", String("token ") + GITHUB_TOKEN);
+    http.setTimeout(30000);  // 30 second timeout for large downloads
+
+    // Only add auth for API URLs (private repos)
+    if (hasValidToken()) {
+        http.addHeader("Authorization", String("token ") + GITHUB_TOKEN);
+    }
     http.addHeader("Accept", "application/octet-stream");
 
     int httpCode = http.GET();

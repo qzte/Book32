@@ -15,6 +15,7 @@
 #include "../Book32_Apps/AppMainMenu.h"
 #include "../Apps/AppReader/AppReader.h"
 #include "../Apps/AppKlipper/AppKlipper.h"
+#include "../Apps/AppTodo/AppTodo.h"
 #include <WiFiManager.h>
 
 void setup() {
@@ -75,6 +76,7 @@ void setup() {
     // 5. App Init
     appMgr.registerApp(new AppMainMenu());
     appMgr.registerApp(new AppReader());
+    appMgr.registerApp(new AppTodo());
     appMgr.registerApp(new AppKlipper());
 
     appMgr.switchTo(0);

@@ -3,12 +3,25 @@ function showTab(tabId) {
     document.querySelectorAll('.nav-links li').forEach(el => el.classList.remove('active'));
 
     document.getElementById(tabId).classList.add('active');
-    const navItems = ['dashboard', 'ereader', 'apps', 'settings'];
+    const navItems = ['dashboard', 'ereader', 'todo', 'settings'];
     document.querySelectorAll('.nav-links li')[navItems.indexOf(tabId)].classList.add('active');
 
-    // Load books when switching to ereader tab
+    // Load data when switching tabs
     if (tabId === 'ereader') {
         fetchBooks();
+        switchDeviceApp('Reader');
+    } else if (tabId === 'todo') {
+        fetchTodos();
+        switchDeviceApp('Todo');
+    }
+}
+
+// Switch the app on the device
+async function switchDeviceApp(appName) {
+    try {
+        await fetch('/api/app/switch?name=' + encodeURIComponent(appName));
+    } catch (e) {
+        console.log("Could not switch device app:", e);
     }
 }
 
@@ -284,3 +297,168 @@ function saveReaderSettings() {
             statusDiv.style.color = "red";
         });
 }
+
+// === Todo Management ===
+async function fetchTodos() {
+    const todoList = document.getElementById('todo-list');
+    todoList.innerHTML = '<p>Loading...</p>';
+
+    try {
+        const res = await fetch('/api/todos');
+        const data = await res.json();
+
+        if (data.todos && data.todos.length > 0) {
+            todoList.innerHTML = data.todos.map(todo => `
+                <div class="todo-item ${todo.completed ? 'completed' : ''}" data-id="${todo.id}">
+                    <input type="checkbox" class="todo-checkbox" ${todo.completed ? 'checked' : ''} onchange="toggleTodo(${todo.id})">
+                    <span class="todo-text" ondblclick="startEditTodo(${todo.id}, this)">${escapeHtml(todo.text)}</span>
+                    <div class="todo-actions">
+                        <button class="btn-edit" onclick="startEditTodo(${todo.id}, this.parentElement.previousElementSibling)">Edit</button>
+                        <button class="btn-delete" onclick="deleteTodo(${todo.id})">Delete</button>
+                    </div>
+                </div>
+            `).join('');
+        } else {
+            todoList.innerHTML = '<p class="hint">No tasks yet. Add one above!</p>';
+        }
+    } catch (e) {
+        todoList.innerHTML = '<p class="error">Error loading tasks.</p>';
+        console.error("Failed to fetch todos", e);
+    }
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+async function addTodo() {
+    const input = document.getElementById('new-todo-input');
+    const text = input.value.trim();
+
+    if (!text) {
+        input.focus();
+        return;
+    }
+
+    try {
+        const res = await fetch('/api/todos/add', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: text })
+        });
+
+        if (res.ok) {
+            input.value = '';
+            fetchTodos();
+        } else {
+            alert("Failed to add task.");
+        }
+    } catch (e) {
+        alert("Error adding task.");
+        console.error("Add todo failed", e);
+    }
+}
+
+async function toggleTodo(id) {
+    try {
+        const res = await fetch('/api/todos/toggle', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: id })
+        });
+
+        if (res.ok) {
+            fetchTodos();
+        } else {
+            alert("Failed to toggle task.");
+        }
+    } catch (e) {
+        alert("Error toggling task.");
+        console.error("Toggle todo failed", e);
+    }
+}
+
+function startEditTodo(id, spanElement) {
+    const currentText = spanElement.textContent;
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = currentText;
+    input.className = 'todo-edit-input';
+
+    const saveEdit = async () => {
+        const newText = input.value.trim();
+        if (newText && newText !== currentText) {
+            await editTodo(id, newText);
+        } else {
+            fetchTodos(); // Restore original if cancelled
+        }
+    };
+
+    input.onblur = saveEdit;
+    input.onkeydown = (e) => {
+        if (e.key === 'Enter') {
+            input.blur();
+        } else if (e.key === 'Escape') {
+            input.value = currentText;
+            input.blur();
+        }
+    };
+
+    spanElement.replaceWith(input);
+    input.focus();
+    input.select();
+}
+
+async function editTodo(id, text) {
+    try {
+        const res = await fetch('/api/todos/edit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: id, text: text })
+        });
+
+        if (res.ok) {
+            fetchTodos();
+        } else {
+            alert("Failed to edit task.");
+            fetchTodos();
+        }
+    } catch (e) {
+        alert("Error editing task.");
+        console.error("Edit todo failed", e);
+        fetchTodos();
+    }
+}
+
+async function deleteTodo(id) {
+    if (!confirm("Delete this task?")) return;
+
+    try {
+        const res = await fetch('/api/todos/delete?id=' + encodeURIComponent(id), {
+            method: 'DELETE'
+        });
+
+        if (res.ok) {
+            fetchTodos();
+        } else {
+            alert("Failed to delete task.");
+        }
+    } catch (e) {
+        alert("Error deleting task.");
+        console.error("Delete todo failed", e);
+    }
+}
+
+// Handle Enter key in todo input
+document.addEventListener('DOMContentLoaded', () => {
+    const todoInput = document.getElementById('new-todo-input');
+    if (todoInput) {
+        todoInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                addTodo();
+            }
+        });
+    }
+});

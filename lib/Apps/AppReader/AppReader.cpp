@@ -2,6 +2,7 @@
 #include "DisplayMgr.h"
 #include "InputMgr.h"
 #include "FontMgr.h"
+#include "AppMgr.h"
 #include "icon_reader.h"
 #include "Book32FS.h"
 #include <LittleFS.h>
@@ -210,16 +211,23 @@ void AppReader::drawCover(Book32Display& display, BookEntry& book, int x, int y,
 void AppReader::handleInput(InputAction action) {
     if (action == INPUT_NONE) return;
     if (_state == VIEW_LIBRARY) {
+        // Index -1 = "Back to Menu", 0+ = books
+        int maxIndex = (int)_books.size() - 1;
         if (action == INPUT_NEXT) {
             _selectedBookIndex++;
-            if (_selectedBookIndex >= (int)_books.size()) _selectedBookIndex = 0;
+            if (_selectedBookIndex > maxIndex) _selectedBookIndex = -1;  // Wrap to Back option
             _needsRedraw = true;
         } else if (action == INPUT_PREV) {
             _selectedBookIndex--;
-            if (_selectedBookIndex < 0) _selectedBookIndex = _books.size() - 1;
+            if (_selectedBookIndex < -1) _selectedBookIndex = maxIndex;  // Wrap to last book
             _needsRedraw = true;
         } else if (action == INPUT_SELECT) {
-             if(!_books.empty()) openBook(_books[_selectedBookIndex].path.c_str());
+            if (_selectedBookIndex == -1) {
+                // Back to main menu
+                AppMgr::getInstance().switchTo(0);
+            } else if (!_books.empty() && _selectedBookIndex >= 0) {
+                openBook(_books[_selectedBookIndex].path.c_str());
+            }
         }
     } else if (_state == VIEW_READING) {
         if (action == INPUT_NEXT) nextPage();
@@ -261,47 +269,8 @@ void AppReader::openBook(const String& path) {
         _textRenderer = new TextRenderer(display.width(), display.height(), 18);  // 18px base for reading
     }
     
-    // FONT LOADING - Use system FontMgr if available, otherwise load separately
-    FontMgr& fontMgr = FontMgr::getInstance();
-    bool fontLoaded = false;
-    
-    if (fontMgr.hasTTFFont()) {
-        // Use the already-loaded system font
-        const uint8_t* fontData = fontMgr.getFontData();
-        size_t fontDataSize = fontMgr.getFontDataSize();
-        if (fontData && fontDataSize > 0) {
-            if (_textRenderer->loadFont(fontData, fontDataSize)) {
-                Serial.println("TextRenderer: Using system font from FontMgr");
-                fontLoaded = true;
-            }
-        }
-    }
-    
-    // If system font not available, try EPUB's embedded font
-    if (!fontLoaded) {
-        std::vector<FontInfo> fonts = _epubLoader->getFonts();
-        if (!fonts.empty()) {
-            Serial.printf("Trying EPUB embedded fonts (%d found)...\n", fonts.size());
-            int fontIdx = 0;
-            for (size_t i = 0; i < fonts.size(); i++) {
-                if (fonts[i].style == "normal") { fontIdx = i; break; }
-            }
-            size_t fontSize = 0;
-            uint8_t* fontData = _epubLoader->getFontData(fonts[fontIdx].path, &fontSize);
-            if (fontData && fontSize > 0) {
-                if (_textRenderer->loadFont(fontData, fontSize)) {
-                    Serial.printf("Loaded EPUB font: %s\n", fonts[fontIdx].family.c_str());
-                    fontLoaded = true;
-                } else {
-                    free(fontData);
-                }
-            }
-        }
-    }
-
-    if (!fontLoaded) {
-        Serial.println("No TTF font available - using bitmap fallback");
-    }
+    // Using Adafruit GFX FreeSans bitmap fonts (same as main menu and all apps)
+    Serial.println("TextRenderer: Using Adafruit GFX FreeSans fonts");
 
     _textRenderer->calculateDimensions();
 
@@ -417,52 +386,66 @@ void AppReader::drawLibrary() {
     DisplayMgr& dispMgr = DisplayMgr::getInstance();
     Book32Display& display = dispMgr.getDisplay();
     FontMgr& fontMgr = FontMgr::getInstance();
-    
+
+    const int BACK_ITEM_HEIGHT = 50;
     const int COVER_WIDTH = 60;
     const int COVER_HEIGHT = 80;
     const int ITEM_HEIGHT = 100;
     const int ITEM_PADDING = 20;
     const int TEXT_X = COVER_WIDTH + 40;
-    
+
     // Use Partial Refresh for Library interactions
     display.setPartialWindow(0, 0, display.width(), display.height());
-    
+
     display.firstPage();
     do {
         display.fillScreen(GxEPD_WHITE);
-        
+
         // Header "Library" (24px)
         fontMgr.drawText(display, "Library", 15, 35, FONT_SIZE_SUBTITLE, GxEPD_BLACK);
         display.drawLine(0, 50, display.width(), 50, GxEPD_BLACK);
-        
-        if (_books.empty()) {
-            fontMgr.drawText(display, "No books found.", 20, 80, FONT_SIZE_BODY, GxEPD_BLACK);
-            fontMgr.drawText(display, "Upload EPUBs via web.", 20, 110, FONT_SIZE_BODY, GxEPD_BLACK);
-            continue;
-        }
-        
+
         int y = 55;
-        int idx = 0;
-        for (const auto& book : _books) {
-            bool isSelected = (idx == _selectedBookIndex);
-            if (isSelected) display.fillRect(0, y, display.width(), ITEM_HEIGHT, GxEPD_BLACK);
-            
-            int coverX = ITEM_PADDING;
-            int coverY = y + 10;
-            BookEntry& bookRef = _books[idx];
-            drawCover(display, bookRef, coverX, coverY, COVER_WIDTH, COVER_HEIGHT, isSelected);
-            
-            uint16_t textColor = isSelected ? GxEPD_WHITE : GxEPD_BLACK;
-            
-            // Draw book title (20px) - wrap text manually
-            String title = book.title;
-            int textY = y + 28;
-            int lineCount = 0;
-            const int MAX_LINES = 3;
-            const int MAX_WIDTH = display.width() - TEXT_X - 20;
-            
-            if (fontMgr.hasTTFFont()) {
-                // Use TTF font with proper width measurement
+
+        // === "Back to Menu" option (index -1) ===
+        bool backSelected = (_selectedBookIndex == -1);
+        if (backSelected) {
+            display.fillRect(0, y, display.width(), BACK_ITEM_HEIGHT, GxEPD_BLACK);
+        }
+        // Draw back arrow and text
+        uint16_t backColor = backSelected ? GxEPD_WHITE : GxEPD_BLACK;
+        fontMgr.drawText(display, "<  Back to Menu", ITEM_PADDING, y + 32, FONT_SIZE_MENU, backColor);
+        if (!backSelected) {
+            display.drawLine(ITEM_PADDING, y + BACK_ITEM_HEIGHT - 2, display.width() - ITEM_PADDING, y + BACK_ITEM_HEIGHT - 2, GxEPD_BLACK);
+        }
+        y += BACK_ITEM_HEIGHT;
+
+        // === Book list ===
+        if (_books.empty()) {
+            fontMgr.drawText(display, "No books found.", 20, y + 30, FONT_SIZE_BODY, GxEPD_BLACK);
+            fontMgr.drawText(display, "Upload EPUBs via web.", 20, y + 60, FONT_SIZE_BODY, GxEPD_BLACK);
+        } else {
+            int idx = 0;
+            for (const auto& book : _books) {
+                if (y > display.height() - 60) break;
+
+                bool isSelected = (idx == _selectedBookIndex);
+                if (isSelected) display.fillRect(0, y, display.width(), ITEM_HEIGHT, GxEPD_BLACK);
+
+                int coverX = ITEM_PADDING;
+                int coverY = y + 10;
+                BookEntry& bookRef = _books[idx];
+                drawCover(display, bookRef, coverX, coverY, COVER_WIDTH, COVER_HEIGHT, isSelected);
+
+                uint16_t textColor = isSelected ? GxEPD_WHITE : GxEPD_BLACK;
+
+                // Draw book title with word wrapping
+                String title = book.title;
+                int textY = y + 28;
+                int lineCount = 0;
+                const int MAX_LINES = 3;
+                const int MAX_WIDTH = display.width() - TEXT_X - 20;
+
                 int pos = 0;
                 while (pos < (int)title.length() && lineCount < MAX_LINES) {
                     String line = "";
@@ -482,26 +465,22 @@ void AppReader::drawLibrary() {
                     textY += 24;
                     lineCount++;
                 }
-            } else {
-                // Fallback: bitmap font
-                display.setTextColor(textColor);
-                display.setTextSize(2);
-                display.setCursor(TEXT_X, textY - 10);
-                display.print(title.substring(0, 25));
+
+                if (!isSelected) display.drawLine(ITEM_PADDING, y + ITEM_HEIGHT - 2, display.width() - ITEM_PADDING, y + ITEM_HEIGHT - 2, GxEPD_BLACK);
+                y += ITEM_HEIGHT;
+                idx++;
             }
-            
-            if (!isSelected) display.drawLine(ITEM_PADDING, y + ITEM_HEIGHT - 2, display.width() - ITEM_PADDING, y + ITEM_HEIGHT - 2, GxEPD_BLACK);
-            y += ITEM_HEIGHT;
-            idx++;
-            if (y > display.height() - 60) break;
         }
-        
-        // Page indicator (14px)
-        if (_books.size() > 1) {
-            char pageStr[16];
+
+        // Page indicator (14px) - show current selection
+        char pageStr[24];
+        if (_selectedBookIndex == -1) {
+            snprintf(pageStr, sizeof(pageStr), "Menu");
+        } else {
             snprintf(pageStr, sizeof(pageStr), "%d/%d", _selectedBookIndex + 1, (int)_books.size());
-            fontMgr.drawTextRight(display, pageStr, display.width() - 10, display.height() - 20, FONT_SIZE_SMALL, GxEPD_BLACK);
         }
+        fontMgr.drawTextRight(display, pageStr, display.width() - 10, display.height() - 20, FONT_SIZE_SMALL, GxEPD_BLACK);
+
     } while (display.nextPage());
 }
 

@@ -11,14 +11,15 @@ InputMgr& InputMgr::getInstance() {
 }
 
 void InputMgr::init() {
+    // Configure timing FIRST - ULTRA SNAPPY SETTINGS
+    btn.setDebounceMs(30);      // Reduced debounce (default 50ms)
+    btn.setClickMs(100);        // Very short click window - no waiting for double-click
+    btn.setPressMs(400);        // Faster long press detection (400ms)
+
     // Attach static handlers that trampoline to member functions
     btn.attachClick(staticClick, this);
-    btn.attachDoubleClick(staticDoubleClick, this);
     btn.attachLongPressStart(staticLongPress, this);
-    
-    // Configure timing - SNAPPY SETTINGS
-    btn.setClickMs(180);        // Reduced from 300ms for faster response
-    btn.setPressMs(600);        // Reduced from 800ms for faster select
+    // Double-click disabled for faster response
 }
 
 void InputMgr::update() {
@@ -38,16 +39,17 @@ void InputMgr::staticLongPress(void *ptr) {
 
 // Handlers -> Dispatch to App
 void InputMgr::onClick() {
-    // Single press: Next / Turn page / Navigate down
+    Serial.println("INPUT: Click -> NEXT");
     if(callback) callback(INPUT_NEXT);
 }
 
 void InputMgr::onDoubleClick() {
-    // Not used currently
+    // Disabled for faster single-click response
+    Serial.println("INPUT: Double-Click -> PREV");
     if(callback) callback(INPUT_PREV);
 }
 
 void InputMgr::onLongPress() {
-    // Long press: Select / Open app / Open book
+    Serial.println("INPUT: Long Press -> SELECT");
     if(callback) callback(INPUT_SELECT);
 }

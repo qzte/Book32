@@ -9,6 +9,8 @@
 #include "../Book32_Core/BatteryMgr.h"
 #include "../Book32_Core/TimeMgr.h"
 #include "../Apps/AppReader/EpubLoader.h"
+#include "../Apps/AppTodo/AppTodo.h"
+#include "../Book32_Core/AppMgr.h"
 #include "../../include/Config.h"
 
 // Cover thumbnail dimensions
@@ -473,6 +475,238 @@ void WebMgr::setupEndpoints() {
         } else {
             request->send(404, "text/plain", "Not found");
         }
+    });
+
+    // API: Check for Updates
+    server->on("/api/check_update", HTTP_GET, [](AsyncWebServerRequest *request) {
+        AsyncResponseStream *response = request->beginResponseStream("application/json");
+        DynamicJsonDocument doc(1024);
+
+        Serial.println("Checking for updates...");
+        UpdateInfo info = GitHubMgr::getInstance().checkUpdate(SYSTEM_VERSION);
+
+        doc["hasUpdate"] = info.available;
+        doc["latest"] = info.version;
+        doc["current"] = SYSTEM_VERSION;
+        doc["hasFirmware"] = info.hasFirmware;
+        doc["hasFilesystem"] = info.hasFilesystem;
+        doc["release_notes"] = info.notes;
+
+        if (info.available) {
+            Serial.printf("Update available: %s\n", info.version.c_str());
+        } else {
+            Serial.println("No update available");
+        }
+
+        serializeJson(doc, *response);
+        request->send(response);
+    });
+
+    // API: Perform Full Update (firmware + filesystem)
+    server->on("/api/update/all", HTTP_POST, [](AsyncWebServerRequest *request) {
+        request->send(200, "text/plain", "Update started");
+
+        // Perform update in background after response is sent
+        Serial.println("Starting OTA update...");
+        GitHubMgr::getInstance().performFullUpdate(SYSTEM_VERSION);
+    });
+
+    // API: Reader Settings - GET
+    server->on("/api/settings/reader", HTTP_GET, [](AsyncWebServerRequest *request) {
+        AsyncResponseStream *response = request->beginResponseStream("application/json");
+        DynamicJsonDocument doc(256);
+
+        // Try to load existing settings
+        File file;
+        if (EbookFS.exists("/reader_config.json")) {
+            file = EbookFS.open("/reader_config.json", "r");
+        } else if (SystemFS.exists("/reader_config.json")) {
+            file = SystemFS.open("/reader_config.json", "r");
+        }
+
+        if (file) {
+            DynamicJsonDocument savedDoc(256);
+            if (!deserializeJson(savedDoc, file)) {
+                doc["refreshFrequency"] = savedDoc["refreshFrequency"] | 10;
+            } else {
+                doc["refreshFrequency"] = 10;  // Default
+            }
+            file.close();
+        } else {
+            doc["refreshFrequency"] = 10;  // Default
+        }
+
+        serializeJson(doc, *response);
+        request->send(response);
+    });
+
+    // API: Reader Settings - POST
+    AsyncCallbackJsonWebHandler* readerSettingsHandler = new AsyncCallbackJsonWebHandler("/api/settings/reader",
+        [](AsyncWebServerRequest *request, JsonVariant &json) {
+            DynamicJsonDocument doc(256);
+
+            if (json.containsKey("refreshFrequency")) {
+                doc["refreshFrequency"] = json["refreshFrequency"].as<int>();
+            }
+
+            // Save to EbookFS (primary storage)
+            File file = EbookFS.open("/reader_config.json", FILE_WRITE);
+            if (file) {
+                serializeJson(doc, file);
+                file.close();
+                Serial.printf("Saved reader settings: refreshFrequency=%d\n", doc["refreshFrequency"].as<int>());
+                request->send(200, "application/json", "{\"status\":\"ok\"}");
+            } else {
+                request->send(500, "application/json", "{\"status\":\"error\",\"message\":\"Failed to save\"}");
+            }
+        }
+    );
+    server->addHandler(readerSettingsHandler);
+
+    // API: Switch to app by name
+    server->on("/api/app/switch", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (!request->hasParam("name")) {
+            request->send(400, "application/json", "{\"error\":\"App name required\"}");
+            return;
+        }
+
+        String appName = request->getParam("name")->value();
+        AppMgr& appMgr = AppMgr::getInstance();
+
+        int appIndex = -1;
+        int idx = 0;
+        for (auto* app : appMgr.getApps()) {
+            if (appName.equalsIgnoreCase(app->getName())) {
+                appIndex = idx;
+                break;
+            }
+            idx++;
+        }
+
+        if (appIndex >= 0) {
+            appMgr.switchTo(appIndex);
+            request->send(200, "application/json", "{\"status\":\"ok\"}");
+            Serial.printf("Switched to app: %s\n", appName.c_str());
+        } else {
+            request->send(404, "application/json", "{\"error\":\"App not found\"}");
+        }
+    });
+
+    // === TODO API ENDPOINTS ===
+
+    // Helper to get AppTodo instance
+    auto getTodoApp = []() -> AppTodo* {
+        AppMgr& appMgr = AppMgr::getInstance();
+        for (auto* app : appMgr.getApps()) {
+            if (strcmp(app->getName(), "Todo") == 0) {
+                return static_cast<AppTodo*>(app);
+            }
+        }
+        return nullptr;
+    };
+
+    // GET /api/todos - List all todos
+    server->on("/api/todos", HTTP_GET, [getTodoApp](AsyncWebServerRequest *request) {
+        AsyncResponseStream *response = request->beginResponseStream("application/json");
+        DynamicJsonDocument doc(4096);
+        JsonArray arr = doc.createNestedArray("todos");
+
+        AppTodo* todoApp = getTodoApp();
+        if (todoApp) {
+            for (const auto& item : todoApp->getTodos()) {
+                JsonObject obj = arr.createNestedObject();
+                obj["id"] = item.id;
+                obj["text"] = item.text;
+                obj["completed"] = item.completed;
+            }
+        }
+
+        serializeJson(doc, *response);
+        request->send(response);
+    });
+
+    // NOTE: Register more specific routes FIRST to avoid prefix matching issues
+
+    // POST /api/todos/toggle - Toggle a todo's completed status
+    AsyncCallbackJsonWebHandler* toggleTodoHandler = new AsyncCallbackJsonWebHandler("/api/todos/toggle",
+        [getTodoApp](AsyncWebServerRequest *request, JsonVariant &json) {
+            AppTodo* todoApp = getTodoApp();
+            if (!todoApp) {
+                request->send(500, "application/json", "{\"error\":\"Todo app not found\"}");
+                return;
+            }
+
+            int id = json["id"] | -1;
+            if (id < 0) {
+                request->send(400, "application/json", "{\"error\":\"Valid ID is required\"}");
+                return;
+            }
+
+            todoApp->toggleTodo(id);
+            request->send(200, "application/json", "{\"status\":\"ok\"}");
+        }
+    );
+    server->addHandler(toggleTodoHandler);
+
+    // POST /api/todos/edit - Edit a todo's text
+    AsyncCallbackJsonWebHandler* editTodoHandler = new AsyncCallbackJsonWebHandler("/api/todos/edit",
+        [getTodoApp](AsyncWebServerRequest *request, JsonVariant &json) {
+            AppTodo* todoApp = getTodoApp();
+            if (!todoApp) {
+                request->send(500, "application/json", "{\"error\":\"Todo app not found\"}");
+                return;
+            }
+
+            int id = json["id"] | -1;
+            String text = json["text"].as<String>();
+            if (id < 0 || text.length() == 0) {
+                request->send(400, "application/json", "{\"error\":\"Valid ID and text are required\"}");
+                return;
+            }
+
+            todoApp->editTodo(id, text);
+            request->send(200, "application/json", "{\"status\":\"ok\"}");
+        }
+    );
+    server->addHandler(editTodoHandler);
+
+    // POST /api/todos/add - Add a new todo (use specific path to avoid conflicts)
+    AsyncCallbackJsonWebHandler* addTodoHandler = new AsyncCallbackJsonWebHandler("/api/todos/add",
+        [getTodoApp](AsyncWebServerRequest *request, JsonVariant &json) {
+            AppTodo* todoApp = getTodoApp();
+            if (!todoApp) {
+                request->send(500, "application/json", "{\"error\":\"Todo app not found\"}");
+                return;
+            }
+
+            String text = json["text"].as<String>();
+            if (text.length() == 0) {
+                request->send(400, "application/json", "{\"error\":\"Text is required\"}");
+                return;
+            }
+
+            todoApp->addTodo(text);
+            request->send(200, "application/json", "{\"status\":\"ok\"}");
+        }
+    );
+    server->addHandler(addTodoHandler);
+
+    // DELETE /api/todos - Delete a todo
+    server->on("/api/todos/delete", HTTP_DELETE, [getTodoApp](AsyncWebServerRequest *request) {
+        AppTodo* todoApp = getTodoApp();
+        if (!todoApp) {
+            request->send(500, "application/json", "{\"error\":\"Todo app not found\"}");
+            return;
+        }
+
+        if (!request->hasParam("id")) {
+            request->send(400, "application/json", "{\"error\":\"ID parameter is required\"}");
+            return;
+        }
+
+        int id = request->getParam("id")->value().toInt();
+        todoApp->deleteTodo(id);
+        request->send(200, "application/json", "{\"status\":\"ok\"}");
     });
 
     // Static Files - serve from EbookFS since that's where uploadfs puts them

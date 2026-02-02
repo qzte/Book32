@@ -15,4 +15,5 @@ public:
 private:
     int selectedIndex = 0;
     bool _needsRedraw = false;
+    bool _firstDraw = true;
 };

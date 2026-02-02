@@ -18,7 +18,7 @@
 }
 
 body {
-    font-family: 'Inter', sans-serif;
+    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; /* Matches FreeSans on e-reader */
     background-color: var(--bg-color);
     color: var(--text-primary);
     display: flex;
@@ -415,4 +415,131 @@ input:checked+.slider:before {
 
 .error {
     color: var(--danger);
+}
+
+/* Todo Styles */
+#todo .card {
+    margin-bottom: 1.5rem;
+}
+
+.todo-input-container {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+#new-todo-input {
+    flex: 1;
+    padding: 0.8rem 1rem;
+    border: 1px solid #444;
+    border-radius: 6px;
+    background-color: #1e1e1e;
+    color: var(--text-primary);
+    font-size: 1rem;
+}
+
+#new-todo-input:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+#new-todo-input::placeholder {
+    color: var(--text-secondary);
+}
+
+.todo-item {
+    display: flex;
+    align-items: flex-start;
+    padding: 1rem;
+    border-bottom: 1px solid #444;
+    gap: 1rem;
+    transition: background-color 0.2s;
+}
+
+.todo-item:hover {
+    background-color: rgba(255, 255, 255, 0.02);
+}
+
+.todo-item:last-child {
+    border-bottom: none;
+}
+
+.todo-item.completed .todo-text {
+    text-decoration: line-through;
+    color: var(--text-secondary);
+}
+
+.todo-checkbox {
+    width: 20px;
+    height: 20px;
+    cursor: pointer;
+    accent-color: var(--accent);
+}
+
+.todo-text {
+    flex: 1;
+    min-width: 0;
+    font-size: 1rem;
+    cursor: pointer;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    word-break: break-word;
+    white-space: normal;
+}
+
+.todo-edit-input {
+    flex: 1;
+    padding: 0.5rem;
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    background-color: #1e1e1e;
+    color: var(--text-primary);
+    font-size: 1rem;
+}
+
+.todo-actions {
+    display: flex;
+    gap: 0.5rem;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.todo-item:hover .todo-actions {
+    opacity: 1;
+}
+
+.btn-edit {
+    background: var(--accent);
+    color: #000;
+    border: none;
+    padding: 0.4rem 0.8rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85rem;
+}
+
+.btn-edit:hover {
+    background: var(--accent-hover);
+}
+
+.btn-add {
+    background-color: var(--accent);
+    color: #000;
+    border: none;
+    padding: 0.8rem 1.5rem;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: 0.2s;
+}
+
+.btn-add:hover {
+    background-color: var(--accent-hover);
+}
+
+#todo .hint {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    text-align: center;
+    padding: 2rem;
 }
