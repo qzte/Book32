@@ -134,29 +134,56 @@ bool GitHubMgr::performFirmwareUpdate(const char* url, bool restartAfter) {
 
     int httpCode = http.GET();
     if (httpCode == HTTP_CODE_OK) {
-        int len = http.getSize();
-        Serial.printf("Firmware size: %d bytes\n", len);
+        int contentLength = http.getSize();
+        Serial.printf("Firmware size: %d bytes\n", contentLength);
 
-        if (!Update.begin(len, U_FLASH)) {
+        if (!Update.begin(contentLength, U_FLASH)) {
             Serial.println("Not enough space for firmware update");
             http.end();
             return false;
         }
 
-        // Disable all watchdogs during long write operation
-        disableCore0WDT();
-        disableCore1WDT();
-        disableLoopWDT();
-
         WiFiClient *stream = http.getStreamPtr();
-        size_t written = Update.writeStream(*stream);
+        
+        // Use chunked download with periodic yields to prevent watchdog
+        uint8_t buff[4096];
+        size_t written = 0;
+        int lastProgress = 0;
+        
+        while (written < contentLength) {
+            // Read chunk
+            size_t available = stream->available();
+            if (available == 0) {
+                delay(1);  // Yield to other tasks
+                continue;
+            }
+            
+            size_t toRead = min(available, sizeof(buff));
+            size_t bytesRead = stream->readBytes(buff, toRead);
+            
+            if (bytesRead > 0) {
+                size_t bytesWritten = Update.write(buff, bytesRead);
+                if (bytesWritten != bytesRead) {
+                    Serial.println("Write error during update");
+                    Update.abort();
+                    http.end();
+                    return false;
+                }
+                written += bytesWritten;
+                
+                // Progress and yield every ~10%
+                int progress = (written * 100) / contentLength;
+                if (progress / 10 > lastProgress / 10) {
+                    Serial.printf("Progress: %d%%\n", progress);
+                    lastProgress = progress;
+                }
+                
+                // Yield frequently to feed watchdog
+                yield();
+            }
+        }
 
-        // Re-enable watchdogs
-        enableCore0WDT();
-        enableCore1WDT();
-        enableLoopWDT();
-
-        if (written == len) {
+        if (written == contentLength) {
             Serial.println("Firmware written successfully");
             if (Update.end()) {
                 Serial.println("Firmware update complete");
@@ -168,7 +195,7 @@ bool GitHubMgr::performFirmwareUpdate(const char* url, bool restartAfter) {
                 return true;
             }
         } else {
-            Serial.printf("Firmware write failed. Written: %d / %d\n", written, len);
+            Serial.printf("Firmware write failed. Written: %d / %d\n", written, contentLength);
         }
     } else {
         Serial.printf("Firmware download failed: %d\n", httpCode);
@@ -196,30 +223,53 @@ bool GitHubMgr::performFilesystemUpdate(const char* url, bool restartAfter) {
 
     int httpCode = http.GET();
     if (httpCode == HTTP_CODE_OK) {
-        int len = http.getSize();
-        Serial.printf("Filesystem size: %d bytes\n", len);
+        int contentLength = http.getSize();
+        Serial.printf("Filesystem size: %d bytes\n", contentLength);
 
         // U_SPIFFS is used for both SPIFFS and LittleFS partitions
-        if (!Update.begin(len, U_SPIFFS)) {
+        if (!Update.begin(contentLength, U_SPIFFS)) {
             Serial.println("Not enough space for filesystem update");
             http.end();
             return false;
         }
 
-        // Disable all watchdogs during long write operation
-        disableCore0WDT();
-        disableCore1WDT();
-        disableLoopWDT();
-
         WiFiClient *stream = http.getStreamPtr();
-        size_t written = Update.writeStream(*stream);
+        
+        // Use chunked download with periodic yields to prevent watchdog
+        uint8_t buff[4096];
+        size_t written = 0;
+        int lastProgress = 0;
+        
+        while (written < contentLength) {
+            size_t available = stream->available();
+            if (available == 0) {
+                delay(1);
+                continue;
+            }
+            
+            size_t toRead = min(available, sizeof(buff));
+            size_t bytesRead = stream->readBytes(buff, toRead);
+            
+            if (bytesRead > 0) {
+                size_t bytesWritten = Update.write(buff, bytesRead);
+                if (bytesWritten != bytesRead) {
+                    Serial.println("Write error during filesystem update");
+                    Update.abort();
+                    http.end();
+                    return false;
+                }
+                written += bytesWritten;
+                
+                int progress = (written * 100) / contentLength;
+                if (progress / 10 > lastProgress / 10) {
+                    Serial.printf("FS Progress: %d%%\n", progress);
+                    lastProgress = progress;
+                }
+                yield();
+            }
+        }
 
-        // Re-enable watchdogs
-        enableCore0WDT();
-        enableCore1WDT();
-        enableLoopWDT();
-
-        if (written == len) {
+        if (written == contentLength) {
             Serial.println("Filesystem written successfully");
             if (Update.end()) {
                 Serial.println("Filesystem update complete");
@@ -231,7 +281,7 @@ bool GitHubMgr::performFilesystemUpdate(const char* url, bool restartAfter) {
                 return true;
             }
         } else {
-            Serial.printf("Filesystem write failed. Written: %d / %d\n", written, len);
+            Serial.printf("Filesystem write failed. Written: %d / %d\n", written, contentLength);
         }
     } else {
         Serial.printf("Filesystem download failed: %d\n", httpCode);
