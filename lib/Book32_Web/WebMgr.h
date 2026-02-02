@@ -12,7 +12,9 @@ public:
     
     void mountFilesystems();  // Call early, before WiFi
     void init();              // Call after WiFi connected
-    void update(); // Handle any main loop needs
+    void update(); // Handle any main loop needs (including pending OTA)
+    
+    volatile bool _otaPending = false;  // Flag to trigger OTA from main loop
     
 private:
     WebMgr();

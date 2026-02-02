@@ -260,6 +260,24 @@ void WebMgr::init() {
     Serial.println("Web Server Started");
 }
 
+void WebMgr::update() {
+    // Check if OTA was requested from web UI
+    if (_otaPending) {
+        _otaPending = false;
+        Serial.println("Performing OTA update from main loop...");
+        
+        // Stop the web server to free up async_tcp
+        server->end();
+        delay(100);  // Give time for connections to close
+        
+        // Now perform update - async_tcp is free
+        GitHubMgr::getInstance().performFullUpdate(SYSTEM_VERSION);
+        
+        // If we get here, update failed - restart server
+        server->begin();
+    }
+}
+
 // Helper: Save original filename to metadata
 void saveBookMetadata(const String& truncatedName, const String& originalName) {
     DynamicJsonDocument doc(4096);
@@ -504,12 +522,11 @@ void WebMgr::setupEndpoints() {
     });
 
     // API: Perform Full Update (firmware + filesystem)
+    // Sets flag to perform OTA from main loop (avoids blocking async_tcp)
     server->on("/api/update/all", HTTP_POST, [](AsyncWebServerRequest *request) {
-        request->send(200, "text/plain", "Update started");
-
-        // Perform update in background after response is sent
-        Serial.println("Starting OTA update...");
-        GitHubMgr::getInstance().performFullUpdate(SYSTEM_VERSION);
+        request->send(200, "text/plain", "Update scheduled - will start in a moment");
+        Serial.println("OTA update requested via web UI, scheduling...");
+        WebMgr::getInstance()._otaPending = true;
     });
 
     // API: Reader Settings - GET
@@ -722,5 +739,3 @@ void WebMgr::setupEndpoints() {
         Serial.println("WARNING: No index.html found on either filesystem!");
     }
 }
-
-void WebMgr::update() {}
