@@ -22,8 +22,8 @@ static void drawOTAProgress(int progress, const char* status) {
     int barY = screenH / 2;
     int fillWidth = (barWidth * progress) / 100;
     
-    // Clear and draw
-    display.setFullWindow();
+    // Clear and draw with partial refresh for faster updates
+    display.setPartialWindow(0, 0, screenW, screenH);
     display.firstPage();
     do {
         display.fillScreen(GxEPD_WHITE);
