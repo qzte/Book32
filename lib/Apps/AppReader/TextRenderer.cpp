@@ -21,9 +21,10 @@ void TextRenderer::calculateDimensions() {
 }
 
 const GFXfont* TextRenderer::getGFXFont(TextStyle style, int& lineHeight) {
-    if (style == STYLE_HEADER1) { lineHeight = 36; return &FreeSansBold18pt7b; }
-    if (style == STYLE_HEADER2) { lineHeight = 28; return &FreeSansBold12pt7b; }
-    if (style == STYLE_HEADER3) { lineHeight = 24; return &FreeSansBold9pt7b; }
+    if (style == STYLE_HEADER1) { lineHeight = 48; return &FreeSansBold24pt7b; } // Chapter titles - biggest
+    if (style == STYLE_HEADER2) { lineHeight = 40; return &FreeSansBold18pt7b; }
+    if (style == STYLE_HEADER3) { lineHeight = 32; return &FreeSansBold12pt7b; }
+    if (style == STYLE_HEADER4) { lineHeight = 28; return &FreeSansBold9pt7b; }
     if (style == STYLE_BOLD)    { lineHeight = 24; return &FreeSansBold9pt7b; }
     
     lineHeight = 24; 
@@ -84,6 +85,17 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
             if (node.textNode.isBlockStart && currentOffset == 0) {
                 if (line_width > 0) { y += nodeLineHeight; line_width = 0; }
                 currentX = x_margin + node.textNode.indent;
+                
+                // Add extra spacing before headers
+                if (node.textNode.style == STYLE_HEADER1) {
+                    y += 30; // Big gap before chapter title
+                    currentX = 0; // Will be centered below
+                } else if (node.textNode.style == STYLE_HEADER2) {
+                    y += 20;
+                    currentX = 0; // Centered
+                } else if (node.textNode.style == STYLE_HEADER3) {
+                    y += 12;
+                }
             }
 
             const char* text = node.textNode.text.c_str();
@@ -151,8 +163,13 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
                 }
 
                 if (strlen(lineBuf) > 0) {
-                    _lineCache.push_back({currentX + line_width, y, (int)node.textNode.style, false, String(lineBuf)});
-                    if (draw) { display.setCursor(currentX + line_width, y); display.print(lineBuf); }
+                    int drawX = currentX + line_width;
+                    // Center headers (H1, H2)
+                    if (node.textNode.style == STYLE_HEADER1 || node.textNode.style == STYLE_HEADER2) {
+                        drawX = (_width - segment_width) / 2;
+                    }
+                    _lineCache.push_back({drawX, y, (int)node.textNode.style, false, String(lineBuf)});
+                    if (draw) { display.setCursor(drawX, y); display.print(lineBuf); }
                     line_width += segment_width;
                 }
                 
@@ -167,6 +184,14 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
             }
             if (node.textNode.isBlockStart && currentNode < (int)content.size() - 1 && content[currentNode+1].textNode.isBlockStart) {
                 y += 8; // Paragraph gap
+            }
+            // Add extra spacing after headers
+            if (node.textNode.style == STYLE_HEADER1) {
+                y += 25; // Extra gap after chapter title
+            } else if (node.textNode.style == STYLE_HEADER2) {
+                y += 15;
+            } else if (node.textNode.style == STYLE_HEADER3) {
+                y += 10;
             }
         }
         currentNode++;
