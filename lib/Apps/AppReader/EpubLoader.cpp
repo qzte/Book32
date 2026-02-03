@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
+#include <algorithm>
 
 #ifndef ZIP_SUCCESS
 #define ZIP_SUCCESS 0
@@ -458,7 +459,7 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(String html) {
                     continue;
                 }
             }
-            else if(tag == "script" || tag == "style" || tag == "head" || tag == "figure" || tag == "svg") {
+            else if(tag == "script" || tag == "style" || tag == "head" || tag == "figure" || tag == "svg" || tag == "figcaption") {
                 int skipEnd = html.indexOf("</" + tag + ">", i);
                 if(skipEnd != -1) { i = skipEnd + tag.length() + 3; continue; }
             }
@@ -512,8 +513,17 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(String html) {
             node.textNode.text.replace("\n!", "!");
             node.textNode.text.replace("\n?", "?");
             node.textNode.text.trim();
+            // Filter out common image alt text placeholders
+            if(node.textNode.text == "Unknown" || node.textNode.text == "image" || 
+               node.textNode.text == "Image" || node.textNode.text == "[image]") {
+                node.textNode.text = "";
+            }
         }
     }
+    // Remove empty text nodes
+    nodes.erase(std::remove_if(nodes.begin(), nodes.end(), [](const ContentNode& n) {
+        return n.type == CONTENT_TEXT && n.textNode.text.length() == 0;
+    }), nodes.end());
     return nodes;
 }
 
