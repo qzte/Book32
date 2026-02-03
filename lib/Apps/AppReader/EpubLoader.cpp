@@ -419,25 +419,50 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(String html) {
             bool isClosing = tag.startsWith("/");
             if(isClosing) tag = tag.substring(1);
             
-            // Handle block elements and structure
-            if(tag == "b" || tag == "strong" || tag == "i" || tag == "em" ||
-               tag == "h1" || tag == "h2" || tag == "h3" || tag == "h4") {
+            // Handle inline styling elements
+            if(tag == "b" || tag == "strong" || tag == "i" || tag == "em") {
                 if(!isClosing) styleStack.push_back(getStyleFromTag(tag));
                 else if(styleStack.size() > 1) styleStack.pop_back();
+            }
+            // Handle header elements - they are BOTH styled AND block elements
+            else if(tag == "h1" || tag == "h2" || tag == "h3" || tag == "h4" || tag == "h5" || tag == "h6") {
+                if(!isClosing) {
+                    styleStack.push_back(getStyleFromTag(tag));
+                    nextIsBlockStart = true;
+                } else {
+                    if(styleStack.size() > 1) styleStack.pop_back();
+                    nextIsBlockStart = true;
+                }
             }
             else if((tag == "p" || tag == "div" || tag.startsWith("h")) && !isClosing) {
                 nextIsBlockStart = true;
                 String styleAttr = extractAttribute(fullTag, tag, "style");
+                String classAttr = extractAttribute(fullTag, tag, "class");
+                classAttr.toLowerCase();
+                
+                // Detect chapter numbers/titles by CSS class
+                if(classAttr.indexOf("chapter") != -1 || classAttr.indexOf("title") != -1 ||
+                   classAttr.indexOf("num") != -1 || classAttr.indexOf("heading") != -1 ||
+                   classAttr.indexOf("ct") != -1 || classAttr.indexOf("cn") != -1) {
+                    // This is likely a chapter number/title - use header style
+                    styleStack.push_back(STYLE_HEADER1);
+                }
+                
                 if(styleAttr.length() > 0) {
                     currentAlign = getAlignFromStyle(styleAttr);
                     currentIndent = extractIndentFromStyle(styleAttr);
                 }
-                if (tag == "p" && currentIndent == 0) {
+                if (tag == "p" && currentIndent == 0 && styleStack.back() == STYLE_NORMAL) {
                     currentIndent = 30; 
                 }
             }
             else if(tag == "/p" || tag == "/div" || tag.startsWith("/h")) {
                 nextIsBlockStart = true;
+                // Pop any header style that was pushed for this block
+                if(styleStack.size() > 1 && (styleStack.back() == STYLE_HEADER1 || 
+                   styleStack.back() == STYLE_HEADER2 || styleStack.back() == STYLE_HEADER3)) {
+                    styleStack.pop_back();
+                }
             }
             else if(tag == "li" && !isClosing) {
                 isListItem = true;
