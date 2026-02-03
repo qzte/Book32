@@ -86,6 +86,13 @@ String EpubLoader::getChapterContent(int index) {
                 if(clean.length() > 0 && clean.charAt(clean.length()-1) != '\n') clean += "\n";
                 clean += "• ";
             }
+            // Skip image/media elements completely
+            else if(currentTag == "img" || currentTag == "svg" || currentTag == "figure" || currentTag == "image") {
+                // Skip - these are self-closing or we don't want their content
+            }
+            else if(currentTag == "/figure" || currentTag == "/svg") {
+                // End of skipped elements
+            }
             else if(currentTag == "script" || currentTag == "style" || currentTag == "head") skipContent = true;
             else if(currentTag == "/script" || currentTag == "/style" || currentTag == "/head") skipContent = false;
         } else if (c == '>') {
@@ -451,9 +458,13 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(String html) {
                     continue;
                 }
             }
-            else if(tag == "script" || tag == "style" || tag == "head") {
+            else if(tag == "script" || tag == "style" || tag == "head" || tag == "figure" || tag == "svg") {
                 int skipEnd = html.indexOf("</" + tag + ">", i);
                 if(skipEnd != -1) { i = skipEnd + tag.length() + 3; continue; }
+            }
+            // Skip self-closing image tags
+            else if(tag == "img" || tag == "image") {
+                // Just skip - nothing to do for self-closing tags
             }
             else if(tag == "br") {
                 currentText += "\n";
