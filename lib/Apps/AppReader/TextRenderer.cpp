@@ -32,7 +32,7 @@ const GFXfont* TextRenderer::getGFXFont(TextStyle style, int& lineHeight) {
 }
 
 RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const std::vector<ContentNode>& content, 
-                                                 int startNode, int startOffset, int pageNum, int totalPages, bool draw) {
+                                                 int startNode, int startOffset, int pageNum, int pageNumForDisplay, bool draw) {
     if (draw) {
         display.setTextColor(GxEPD_BLACK);
     }
@@ -46,7 +46,7 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
         }
         display.setFont(NULL);
         display.setCursor(_width/2 - 20, _height - 15);
-        display.printf("Page %d", pageNum + 1);
+        display.printf("Page %d", pageNumForDisplay);
         return {0, 0, true};
     }
 
@@ -222,7 +222,7 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
     if (draw) {
         display.setFont(NULL);
         display.setCursor(_width/2 - 20, _height - 15);
-        display.printf("Page %d", pageNum + 1);
+        display.printf("Page %d", pageNumForDisplay);
     }
     return result;
 }

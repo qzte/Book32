@@ -320,7 +320,7 @@ void AppReader::nextPage() {
     RenderResult result = _textRenderer->renderRichPageDynamic(display, _currentRichContent, 
                                                             _currentPagePointer.nodeIndex, 
                                                             _currentPagePointer.charOffset, 
-                                                            currentPageNum, _totalBookPages, false);
+                                                            currentPageNum, 0, false); // 0 for pageNumForDisplay - not used
     
     if (result.pageFull) {
         // Save current position to history before advancing
@@ -506,9 +506,10 @@ void AppReader::drawReading() {
         _pageTurnsSinceRefresh++; 
     }
     
-    // Use consistent page number: 0-indexed current page within chapter
-    int currentPageNum = _pageHistory.size();
-    int globalPageForDisplay = getGlobalPageNumber();
+    // Page numbers: use global page (across all chapters) for display
+    // but still use chapter-relative for cache key consistency
+    int currentPageNum = _pageHistory.size();  // For render cache key
+    int globalPageForDisplay = getGlobalPageNumber();  // For page number display
     
     display.firstPage();
     do {
@@ -516,7 +517,7 @@ void AppReader::drawReading() {
         _textRenderer->renderRichPageDynamic(display, _currentRichContent, 
                                            _currentPagePointer.nodeIndex, 
                                            _currentPagePointer.charOffset, 
-                                           currentPageNum, _totalBookPages, true);
+                                           currentPageNum, globalPageForDisplay, true);
     } while (display.nextPage());
 }
 

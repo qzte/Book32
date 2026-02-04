@@ -42,7 +42,7 @@ public:
 
     // New Dynamic Rendering
     RenderResult renderRichPageDynamic(Book32Display& display, const std::vector<ContentNode>& content, 
-                                     int startNode, int startOffset, int pageNum, int totalPages, bool draw = true);
+                                     int startNode, int startOffset, int pageNum, int pageNumForDisplay, bool draw = true);
 
     void clearCache() { _lineCache.clear(); }
 
