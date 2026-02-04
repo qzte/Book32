@@ -69,6 +69,7 @@ private:
     String _currentBookPath;
     int _currentChapter;
     int _currentPage; // Current page number within the whole book
+    int _globalPageNumber; // Runtime tracking of global page (1-indexed)
     bool _needsRedraw;
     
     // Dynamic Pagination

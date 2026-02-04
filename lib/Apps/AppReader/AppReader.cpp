@@ -276,6 +276,7 @@ void AppReader::openBook(const String& path) {
 
     // calculateTotalPages(); // DISABLING: This takes forever on large books
     _totalBookPages = 0; // Show simplified pagination for now
+    _globalPageNumber = 1; // Start at page 1
     
     loadChapter(0);
     _state = VIEW_READING;
@@ -330,6 +331,9 @@ void AppReader::nextPage() {
         _currentPagePointer.nodeIndex += result.nodesConsumed;
         _currentPagePointer.charOffset = result.charsConsumedInLastNode;
         
+        // Increment global page counter
+        _globalPageNumber++;
+        
         // Clear cache since we're moving to a new page
         _textRenderer->clearCache();
         _needsRedraw = true;
@@ -338,6 +342,7 @@ void AppReader::nextPage() {
         if (_currentChapter < _epubLoader->getChapterCount() - 1) {
             // Save current chapter state to history
             _pageHistory.push_back(_currentPagePointer);
+            _globalPageNumber++; // Next page in next chapter
             loadChapter(_currentChapter + 1);
         }
         // If at end of book, do nothing
@@ -348,6 +353,7 @@ void AppReader::prevPage() {
     if (!_pageHistory.empty()) {
         _currentPagePointer = _pageHistory.back();
         _pageHistory.pop_back();
+        if (_globalPageNumber > 1) _globalPageNumber--; // Decrement global page counter
         if (_textRenderer) _textRenderer->clearCache();
         _needsRedraw = true;
     } else {
@@ -356,6 +362,7 @@ void AppReader::prevPage() {
             // NOTE: Going to the "last page" of the previous chapter is tricky
             // because we don't know where it starts without rendering it.
             // For now, we go to the start of the previous chapter.
+            if (_globalPageNumber > 1) _globalPageNumber--; // Decrement for prev chapter
             prevChapter();
         }
     }
@@ -506,10 +513,8 @@ void AppReader::drawReading() {
         _pageTurnsSinceRefresh++; 
     }
     
-    // Page numbers: use global page (across all chapters) for display
-    // but still use chapter-relative for cache key consistency
+    // Page numbers: use _globalPageNumber which is tracked at runtime
     int currentPageNum = _pageHistory.size();  // For render cache key
-    int globalPageForDisplay = getGlobalPageNumber();  // For page number display
     
     display.firstPage();
     do {
@@ -517,7 +522,7 @@ void AppReader::drawReading() {
         _textRenderer->renderRichPageDynamic(display, _currentRichContent, 
                                            _currentPagePointer.nodeIndex, 
                                            _currentPagePointer.charOffset, 
-                                           currentPageNum, globalPageForDisplay, true);
+                                           currentPageNum, _globalPageNumber, true);
     } while (display.nextPage());
 }
 
