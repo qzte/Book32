@@ -2,6 +2,7 @@
 #include "DisplayMgr.h"
 #include "AppMgr.h"
 #include "FontMgr.h"
+#include "BatteryMgr.h"
 #include "icon_klipper.h"
 #include <WiFi.h>
 #include <HTTPClient.h>
@@ -61,17 +62,27 @@ void AppKlipper::handleInput(InputAction action) {
             // Single press in scanning view: start manual scan
             scanForPrinters();
         }
-        else if (_state == KLIPPER_LIST && !_printers.empty()) {
-            // Cycle through printers
-            _selectedIndex++;
-            if (_selectedIndex >= (int)_printers.size()) {
-                _selectedIndex = 0;
+        else if (_state == KLIPPER_LIST) {
+            // Single press in list view: refresh status
+            for (auto& printer : _printers) {
+                fetchPrinterStatus(printer);
             }
             _needsRedraw = true;
         }
     }
-    else if (action == INPUT_SELECT || action == INPUT_BACK) {
-        // Any long press or back: return to main menu
+    else if (action == INPUT_SELECT) {
+        // Long press: scan/refresh or rescan
+        if (_state == KLIPPER_LIST) {
+            // Rescan for printers
+            _printers.clear();
+            _state = KLIPPER_SCANNING;
+            scanForPrinters();
+        } else {
+            scanForPrinters();
+        }
+    }
+    else if (action == INPUT_BACK) {
+        // Double-press or back: return to main menu
         AppMgr::getInstance().switchTo(0);
     }
 }
@@ -457,7 +468,7 @@ void AppKlipper::drawScanning() {
         }
 
         // Footer
-        fontMgr.drawTextCentered(display, "Hold to exit", screenH - 30, FONT_SIZE_SMALL, GxEPD_BLACK);
+        fontMgr.drawTextCentered(display, "HOLD: Scan | Double-press: Menu", screenH - 30, FONT_SIZE_SMALL, GxEPD_BLACK);
 
     } while (display.nextPage());
 }
@@ -465,8 +476,6 @@ void AppKlipper::drawScanning() {
 void AppKlipper::drawPrinterList() {
     if (_printers.empty()) return;
 
-    // Show the selected printer's details
-    PrinterInfo& printer = _printers[_selectedIndex];
     DisplayMgr& dispMgr = DisplayMgr::getInstance();
     Book32Display& display = dispMgr.getDisplay();
     FontMgr& fontMgr = FontMgr::getInstance();
@@ -479,103 +488,105 @@ void AppKlipper::drawPrinterList() {
     do {
         display.fillScreen(GxEPD_WHITE);
 
+        const int MARGIN = 10;
+        const int CARD_HEIGHT = 145;  // Height per printer card (fits 4 on screen)
         int y = 0;
-        const int LEFT_MARGIN = 20;
-        const int RIGHT_MARGIN = 20;
-        const int CONTENT_WIDTH = screenW - LEFT_MARGIN - RIGHT_MARGIN;
 
-        // === Header: Hostname ===
-        y = 45;
-        fontMgr.drawText(display, printer.hostname.c_str(), LEFT_MARGIN, y, FONT_SIZE_SUBTITLE, GxEPD_BLACK);
-        y += 15;
+        // === Header ===
+        y = 35;
+        fontMgr.drawText(display, "Klipper Printers", MARGIN, y, FONT_SIZE_SUBTITLE, GxEPD_BLACK);
+
+        // Battery percentage in header
+        BatteryStatus bat = BatteryMgr::getInstance().getStatus();
+        char batStr[8];
+        snprintf(batStr, sizeof(batStr), "%d%%", bat.percentage);
+        fontMgr.drawTextRight(display, batStr, screenW - MARGIN - 25, y, FONT_SIZE_SMALL, GxEPD_BLACK);
+        // Battery icon
+        int batX = screenW - MARGIN - 20;
+        int batY = y - 12;
+        display.drawRect(batX, batY, 18, 10, GxEPD_BLACK);
+        display.fillRect(batX + 18, batY + 2, 2, 6, GxEPD_BLACK);
+        int batFill = (bat.percentage * 14) / 100;
+        if (batFill > 0) display.fillRect(batX + 2, batY + 2, batFill, 6, GxEPD_BLACK);
+
+        y += 10;
         display.drawLine(0, y, screenW, y, GxEPD_BLACK);
 
-        // === IP Address ===
-        y += 35;
-        fontMgr.drawText(display, "IP Address", LEFT_MARGIN, y, FONT_SIZE_SMALL, GxEPD_BLACK);
-        y += 30;
-        String ipStr = printer.ip + ":" + String(printer.port);
-        fontMgr.drawText(display, ipStr.c_str(), LEFT_MARGIN, y, FONT_SIZE_MENU, GxEPD_BLACK);
+        // === Found X printer(s) ===
+        y += 22;
+        char foundStr[32];
+        snprintf(foundStr, sizeof(foundStr), "Found %d printer(s):", (int)_printers.size());
+        fontMgr.drawText(display, foundStr, MARGIN, y, FONT_SIZE_SMALL, GxEPD_BLACK);
+        y += 10;
 
-        // === Status ===
-        y += 50;
-        fontMgr.drawText(display, "Status", LEFT_MARGIN, y, FONT_SIZE_SMALL, GxEPD_BLACK);
-        y += 30;
-        String stateDisplay = printer.state;
-        if (stateDisplay.length() > 0) {
-            stateDisplay[0] = toupper(stateDisplay[0]);
+        // === Printer Cards ===
+        int cardY = y;
+        int printedCount = 0;
+
+        for (size_t i = 0; i < _printers.size() && printedCount < 4; i++) {
+            const PrinterInfo& printer = _printers[i];
+            int cardTop = cardY + (printedCount * CARD_HEIGHT);
+
+            // Don't draw if card would go past footer area
+            if (cardTop + CARD_HEIGHT > screenH - 50) break;
+
+            // Card border
+            display.drawRect(MARGIN, cardTop, screenW - (MARGIN * 2), CARD_HEIGHT - 5, GxEPD_BLACK);
+
+            int lineY = cardTop + 22;
+            int textX = MARGIN + 8;
+            int rightX = screenW - MARGIN - 8;
+
+            // Line 1: Hostname + [status]
+            fontMgr.drawText(display, printer.hostname.c_str(), textX, lineY, FONT_SIZE_MENU, GxEPD_BLACK);
+            String statusStr = "[" + printer.state + "]";
+            fontMgr.drawTextRight(display, statusStr.c_str(), rightX, lineY, FONT_SIZE_SMALL, GxEPD_BLACK);
+
+            // Line 2: IP address
+            lineY += 24;
+            String ipLine = "IP: " + printer.ip;
+            fontMgr.drawText(display, ipLine.c_str(), textX, lineY, FONT_SIZE_SMALL, GxEPD_BLACK);
+
+            // Line 3: Extruder temp
+            lineY += 22;
+            char extStr[48];
+            snprintf(extStr, sizeof(extStr), "Extruder: %.1fC / %.1fC", printer.extruderTemp, printer.extruderTarget);
+            fontMgr.drawText(display, extStr, textX, lineY, FONT_SIZE_SMALL, GxEPD_BLACK);
+
+            // Line 4: Bed temp
+            lineY += 22;
+            char bedStr[48];
+            snprintf(bedStr, sizeof(bedStr), "Bed: %.1fC / %.1fC", printer.bedTemp, printer.bedTarget);
+            fontMgr.drawText(display, bedStr, textX, lineY, FONT_SIZE_SMALL, GxEPD_BLACK);
+
+            // Line 5: Progress bar (if printing) or filename
+            lineY += 22;
+            if (printer.state == "printing" && printer.progress > 0) {
+                // Mini progress bar
+                int barX = textX;
+                int barW = 150;
+                int barH = 12;
+                display.drawRect(barX, lineY - 10, barW, barH, GxEPD_BLACK);
+                int fillW = (int)(printer.progress * (barW - 2) / 100.0f);
+                if (fillW > 0) display.fillRect(barX + 1, lineY - 9, fillW, barH - 2, GxEPD_BLACK);
+
+                // Progress % and filename
+                char progStr[64];
+                String fname = printer.filename;
+                if (fname.length() > 15) fname = fname.substring(0, 12) + "...";
+                snprintf(progStr, sizeof(progStr), "%.0f%% %s", printer.progress, fname.c_str());
+                fontMgr.drawText(display, progStr, barX + barW + 8, lineY, FONT_SIZE_SMALL, GxEPD_BLACK);
+            } else if (printer.filename.length() > 0) {
+                String fname = "File: " + printer.filename;
+                if (fname.length() > 35) fname = fname.substring(0, 32) + "...";
+                fontMgr.drawText(display, fname.c_str(), textX, lineY, FONT_SIZE_SMALL, GxEPD_BLACK);
+            }
+
+            printedCount++;
         }
-        fontMgr.drawText(display, stateDisplay.c_str(), LEFT_MARGIN, y, FONT_SIZE_MENU, GxEPD_BLACK);
-
-        // === Divider ===
-        y += 30;
-        display.drawLine(LEFT_MARGIN, y, screenW - RIGHT_MARGIN, y, GxEPD_BLACK);
-
-        // === Temperatures Section ===
-        y += 35;
-        fontMgr.drawText(display, "Temperatures", LEFT_MARGIN, y, FONT_SIZE_SMALL, GxEPD_BLACK);
-
-        // Extruder
-        y += 40;
-        fontMgr.drawText(display, "Extruder", LEFT_MARGIN, y, FONT_SIZE_BODY, GxEPD_BLACK);
-        char extruderStr[32];
-        snprintf(extruderStr, sizeof(extruderStr), "%.0f / %.0f C", printer.extruderTemp, printer.extruderTarget);
-        fontMgr.drawTextRight(display, extruderStr, screenW - RIGHT_MARGIN, y, FONT_SIZE_BODY, GxEPD_BLACK);
-
-        // Bed
-        y += 35;
-        fontMgr.drawText(display, "Bed", LEFT_MARGIN, y, FONT_SIZE_BODY, GxEPD_BLACK);
-        char bedStr[32];
-        snprintf(bedStr, sizeof(bedStr), "%.0f / %.0f C", printer.bedTemp, printer.bedTarget);
-        fontMgr.drawTextRight(display, bedStr, screenW - RIGHT_MARGIN, y, FONT_SIZE_BODY, GxEPD_BLACK);
-
-        // === Divider ===
-        y += 30;
-        display.drawLine(LEFT_MARGIN, y, screenW - RIGHT_MARGIN, y, GxEPD_BLACK);
-
-        // === Print Progress Section ===
-        y += 35;
-        fontMgr.drawText(display, "Print Progress", LEFT_MARGIN, y, FONT_SIZE_SMALL, GxEPD_BLACK);
-
-        // Progress bar
-        y += 25;
-        int barWidth = CONTENT_WIDTH;
-        int barHeight = 30;
-        int barX = LEFT_MARGIN;
-        display.drawRect(barX, y, barWidth, barHeight, GxEPD_BLACK);
-
-        int fillWidth = (int)(printer.progress * (barWidth - 4) / 100.0f);
-        if (fillWidth > 0) {
-            display.fillRect(barX + 2, y + 2, fillWidth, barHeight - 4, GxEPD_BLACK);
-        }
-
-        // Progress percentage
-        y += barHeight + 25;
-        char progressStr[16];
-        snprintf(progressStr, sizeof(progressStr), "%.0f%%", printer.progress);
-        fontMgr.drawTextCentered(display, progressStr, y, FONT_SIZE_MENU, GxEPD_BLACK);
-
-        // === Print Filename ===
-        y += 45;
-        fontMgr.drawText(display, "Current Print", LEFT_MARGIN, y, FONT_SIZE_SMALL, GxEPD_BLACK);
-        y += 30;
-
-        String fname = printer.filename;
-        if (fname.length() == 0) {
-            fname = "No active print";
-        } else if (fname.length() > 28) {
-            fname = fname.substring(0, 25) + "...";
-        }
-        fontMgr.drawText(display, fname.c_str(), LEFT_MARGIN, y, FONT_SIZE_BODY, GxEPD_BLACK);
 
         // === Footer ===
-        // Show printer index if multiple printers
-        if (_printers.size() > 1) {
-            char indexStr[16];
-            snprintf(indexStr, sizeof(indexStr), "%d / %d", _selectedIndex + 1, (int)_printers.size());
-            fontMgr.drawTextCentered(display, indexStr, screenH - 60, FONT_SIZE_SMALL, GxEPD_BLACK);
-        }
-        fontMgr.drawTextCentered(display, "Press: Next  |  Hold: Exit", screenH - 30, FONT_SIZE_SMALL, GxEPD_BLACK);
+        fontMgr.drawTextCentered(display, "NEXT: Navigate | HOLD: Scan/Refresh", screenH - 30, FONT_SIZE_SMALL, GxEPD_BLACK);
 
     } while (display.nextPage());
 }
