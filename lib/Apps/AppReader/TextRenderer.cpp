@@ -199,6 +199,16 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
         result.nodesConsumed++;
     }
 
+    // CRITICAL: Check if we stopped because the page is full but there's more content
+    // This happens when y >= maxY but we haven't processed all nodes
+    if (currentNode < (int)content.size()) {
+        // There's still more content to display
+        result.pageFull = true;
+        result.charsConsumedInLastNode = currentOffset; // Position in current node
+        // nodesConsumed already reflects completed nodes
+    }
+    // If currentNode >= content.size(), all content was displayed -> pageFull stays false (true end of chapter)
+
     if (draw) {
         display.setFont(NULL);
         display.setCursor(_width/2 - 20, _height - 15);
