@@ -88,10 +88,10 @@ void AppMainMenu::draw() {
     int16_t screenH = display.height();  // 800
 
     // Layout constants
-    const int ICON_SIZE = 80;
+    const int ICON_SIZE = 160;
     const int COLS = 2;
-    const int ROW_HEIGHT = 150;
-    const int START_Y = 200;
+    const int ROW_HEIGHT = 240;
+    const int START_Y = 180;
 
     // Use full refresh only on first draw, partial refresh for navigation
     if (_firstDraw) {
@@ -158,7 +158,7 @@ void AppMainMenu::draw() {
 
             const uint8_t* icon = app->getIconImage();
             if (icon) {
-                display.drawBitmap(x, y, icon, 80, 80, GxEPD_BLACK);
+                display.drawBitmap(x, y, icon, ICON_SIZE, ICON_SIZE, GxEPD_BLACK);
             } else {
                 display.drawRect(x, y, ICON_SIZE, ICON_SIZE, GxEPD_BLACK);
             }
@@ -185,7 +185,7 @@ void AppMainMenu::draw() {
                 display.drawRect(x - 7, y - 7, ICON_SIZE + 14, ICON_SIZE + 14, GxEPD_BLACK);
             }
             
-            display.drawBitmap(x, y, icon_update_80x80, 80, 80, GxEPD_BLACK);
+            display.drawBitmap(x, y, icon_update_160x160, ICON_SIZE, ICON_SIZE, GxEPD_BLACK);
             
             String updateText = "Update " + _updateVersion;
             int nameWidth = fontMgr.getTextWidth(updateText.c_str(), FONT_SIZE_MENU);

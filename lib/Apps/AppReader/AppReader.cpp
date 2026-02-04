@@ -108,7 +108,7 @@ void AppReader::stop() {
     InputMgr::getInstance().clearCallback();
 }
 
-const uint8_t* AppReader::getIconImage() { return icon_reader_80x80; }
+const uint8_t* AppReader::getIconImage() { return icon_reader_160x160; }
 
 void AppReader::scanBooks() {
     _books.clear();

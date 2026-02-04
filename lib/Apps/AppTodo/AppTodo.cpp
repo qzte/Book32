@@ -7,7 +7,7 @@
 #include "../Book32_Core/Book32FS.h"
 #include <ArduinoJson.h>
 
-const uint8_t* AppTodo::getIconImage() { return icon_todo_80x80; }
+const uint8_t* AppTodo::getIconImage() { return icon_todo_160x160; }
 
 void AppTodo::start() {
     _needsRedraw = true;
