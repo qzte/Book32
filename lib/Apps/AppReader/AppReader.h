@@ -35,7 +35,7 @@ public:
     
     // Icon
     const uint8_t* getIconImage() override; 
-    const char* getName() override { return "Library"; }
+    const char* getName() override { return "eReader"; }
 
     void handleInput(InputAction action);
 
