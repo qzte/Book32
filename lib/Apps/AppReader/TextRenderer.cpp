@@ -44,9 +44,7 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
             display.setCursor(line.x, line.y);
             display.print(line.text);
         }
-        display.setFont(NULL);
-        display.setCursor(_width/2 - 20, _height - 15);
-        display.printf("Page %d", pageNumForDisplay);
+        // Page number drawing moved to AppReader for consistency
         return {0, 0, true};
     }
 
@@ -219,11 +217,7 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
     }
     // If currentNode >= content.size(), all content was displayed -> pageFull stays false (true end of chapter)
 
-    if (draw) {
-        display.setFont(NULL);
-        display.setCursor(_width/2 - 20, _height - 15);
-        display.printf("Page %d", pageNumForDisplay);
-    }
+    // Page number drawing moved to AppReader for consistency
     return result;
 }
 

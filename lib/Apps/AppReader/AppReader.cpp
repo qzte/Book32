@@ -523,6 +523,11 @@ void AppReader::drawReading() {
                                            _currentPagePointer.nodeIndex, 
                                            _currentPagePointer.charOffset, 
                                            currentPageNum, _globalPageNumber, true);
+        // Draw page number directly here for consistent display
+        display.setFont(NULL);
+        display.setTextColor(GxEPD_BLACK);
+        display.setCursor(display.width()/2 - 20, display.height() - 15);
+        display.printf("Page %d", _globalPageNumber);
     } while (display.nextPage());
 }
 
