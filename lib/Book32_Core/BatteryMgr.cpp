@@ -2,7 +2,9 @@
 #include "../../include/Config.h"
 #include "Config.h"
 
-BatteryMgr::BatteryMgr() {}
+BatteryMgr::BatteryMgr() : _lastReadTime(0) {
+    _cachedStatus = {0.0f, 0, false};
+}
 
 BatteryMgr& BatteryMgr::getInstance() {
     static BatteryMgr instance;
@@ -17,51 +19,62 @@ void BatteryMgr::init() {
 #endif
     // ADC calibration/attentuation might be needed for S3
     analogSetAttenuation(ADC_11db);
+
+    // Perform initial read to populate cache
+    updateCache();
 }
 
-float BatteryMgr::getVoltage() {
+void BatteryMgr::updateCache() {
 #ifdef PIN_VBAT_SWITCH
     digitalWrite(PIN_VBAT_SWITCH, VBAT_SWITCH_LEVEL); // Turn on measurement
     delay(5); // Wait for stabilization
 #endif
 
-    // Read ADC
+    // Read ADC - average 10 samples
     uint32_t raw = 0;
-    // Average a few samples
-    for(int i=0; i<10; i++) {
+    for(int i = 0; i < 10; i++) {
         raw += analogRead(PIN_BAT_VOLT);
         delay(1);
     }
     raw /= 10;
-    
+
 #ifdef PIN_VBAT_SWITCH
     digitalWrite(PIN_VBAT_SWITCH, !VBAT_SWITCH_LEVEL); // Turn off to save power
 #endif
 
-    // Convert to Voltage
-    // XIAO ESP32-S3 divider is usually 1M/1M? Or 100k/100k?
-    // Seeed TRMNL project uses:
-    // float voltage = (raw / 4095.0) * 3.3 * 2.0;
-    
-    float voltage = (raw / 4095.0) * 3.3 * 2.0 * 1.0; // Adjust calibration if needed
-    
-    return voltage;
+    // Convert to voltage (divider ratio x2)
+    float voltage = (raw / 4095.0f) * 3.3f * 2.0f;
+
+    // Calculate percentage (LiPo: 3.0V = 0%, 4.2V = 100%)
+    int percentage = 0;
+    if (voltage >= 4.2f) percentage = 100;
+    else if (voltage <= 3.0f) percentage = 0;
+    else percentage = (int)((voltage - 3.0f) / (4.2f - 3.0f) * 100.0f);
+
+    // Check if charging (voltage > 4.22V indicates external power)
+    bool charging = (voltage > 4.22f);
+
+    // Update cache
+    _cachedStatus = {voltage, percentage, charging};
+    _lastReadTime = millis();
+}
+
+BatteryStatus BatteryMgr::getStatus() {
+    // Refresh cache if expired
+    if (millis() - _lastReadTime >= CACHE_DURATION_MS) {
+        updateCache();
+    }
+    return _cachedStatus;
+}
+
+float BatteryMgr::getVoltage() {
+    return getStatus().voltage;
 }
 
 int BatteryMgr::getPercentage() {
-    float v = getVoltage();
-    // LiPo Curve Approximation
-    // 4.2V = 100%, 3.0V = 0%
-    if (v >= 4.2) return 100;
-    if (v <= 3.0) return 0;
-    
-    int p = (int)((v - 3.0) / (4.2 - 3.0) * 100);
-    return p;
+    return getStatus().percentage;
 }
 
 bool BatteryMgr::isCharging() {
-    // Basic heuristic: if voltage is > 4.22V, it's likely charging or fully charged and plugged in.
-    // The T-Energy-S3 charge IC usually charges up to 4.2V, but while plugged in 
-    // and charging, the voltage seen on the divider can be slightly higher due to the charging voltage.
-    return getVoltage() > 4.22;
+    return getStatus().charging;
 }

@@ -113,27 +113,26 @@ void AppMainMenu::draw() {
         snprintf(versionStr, sizeof(versionStr), " v%s", SYSTEM_VERSION);
         fontMgr.drawText(display, versionStr, 15 + book32Width, 35, FONT_SIZE_SMALL, GxEPD_BLACK);
 
-        // === Battery Status ===
-        float voltage = BatteryMgr::getInstance().getVoltage();
-        int percentage = BatteryMgr::getInstance().getPercentage();
+        // === Battery Status (single cached read) ===
+        BatteryStatus bat = BatteryMgr::getInstance().getStatus();
         int batX = screenW - 60;
         int batY = 10;
 
         char batText[16];
-        if (BatteryMgr::getInstance().isCharging()) {
+        if (bat.charging) {
             snprintf(batText, sizeof(batText), "CHG");
         } else {
-            snprintf(batText, sizeof(batText), "%.2fV", voltage);
+            snprintf(batText, sizeof(batText), "%.2fV", bat.voltage);
         }
         fontMgr.drawTextRight(display, batText, batX - 5, batY + 14, FONT_SIZE_SMALL, GxEPD_BLACK);
 
         display.drawRect(batX, batY, 40, 20, GxEPD_BLACK);
         display.fillRect(batX + 40, batY + 5, 3, 10, GxEPD_BLACK);
 
-        int fillWidth = (percentage * 36) / 100;
+        int fillWidth = (bat.percentage * 36) / 100;
         if(fillWidth > 36) fillWidth = 36;
         if(fillWidth < 0) fillWidth = 0;
-        if (percentage > 0) {
+        if (bat.percentage > 0) {
             display.fillRect(batX + 2, batY + 2, fillWidth, 16, GxEPD_BLACK);
         }
 
