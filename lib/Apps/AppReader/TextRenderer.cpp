@@ -182,6 +182,16 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
                 }
                 yield();
             }
+            
+            // CRITICAL: Check if we exited the text loop because page is full but text remains
+            if (pos < textLen && y >= maxY) {
+                // Page full but this node has more text - return position in this node
+                result.pageFull = true;
+                result.charsConsumedInLastNode = pos;
+                // nodesConsumed is the count of COMPLETED nodes before this one
+                return result;
+            }
+            
             if (node.textNode.isBlockStart && currentNode < (int)content.size() - 1 && content[currentNode+1].textNode.isBlockStart) {
                 y += 8; // Paragraph gap
             }
