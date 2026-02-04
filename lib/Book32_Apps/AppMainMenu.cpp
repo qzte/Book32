@@ -6,26 +6,67 @@
 #include "../Book32_Core/FontMgr.h"
 #include "../../include/Config.h"
 #include <WiFi.h>
+#include "icon_update.h"
+#include "../Book32_Update/GitHubMgr.h"
+
+void AppMainMenu::updateCheckTask(void* parameter) {
+    AppMainMenu* self = (AppMainMenu*)parameter;
+    
+    // Wait for connection (max 10s)
+    int attempts = 0;
+    while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+        vTaskDelay(pdMS_TO_TICKS(500));
+        attempts++;
+    }
+    
+    if (WiFi.status() == WL_CONNECTED) {
+        UpdateInfo info = GitHubMgr::getInstance().checkUpdate(SYSTEM_VERSION);
+        if (info.available) {
+            self->_updateAvailable = true;
+            self->_updateVersion = info.version;
+            self->_needsRedraw = true; // Trigger redraw to show icon
+        }
+    }
+    
+    self->_updateTaskHandle = nullptr;
+    vTaskDelete(NULL);
+}
 
 void AppMainMenu::start() {
     selectedIndex = 1; // Start with first app (skip main menu itself)
     _needsRedraw = true;
     _firstDraw = true;  // Force full refresh on first draw
     InputMgr::getInstance().setCallback(std::bind(&AppMainMenu::handleInput, this, std::placeholders::_1));
+    
+    // Spawn update check task if not already found
+    if (!_updateTaskHandle && !_updateAvailable) {
+        xTaskCreatePinnedToCore(updateCheckTask, "UpdateCheck", 8192, this, 1, &_updateTaskHandle, 0);
+    }
 }
 
 void AppMainMenu::handleInput(InputAction action) {
     AppMgr& appMgr = AppMgr::getInstance();
     std::vector<App*>& apps = appMgr.getApps();
+    
+    // Max index is apps.size() - 1 + 1 (if update available)
+    int maxIndex = apps.size() - 1 + (_updateAvailable ? 1 : 0); // 0-based index? No selectedIndex is 1-based (starts at 1)
+    // Actually selectedIndex starts at 1. App 1 is index 1.
+    // apps[0] is MainMenu. apps[1]...apps[N-1] are apps.
+    // Update button would be index N (apps.size())
+    int maxSelectable = apps.size() - 1 + (_updateAvailable ? 1 : 0);
 
     if (action == INPUT_NEXT) {
         selectedIndex++;
-        if (selectedIndex >= (int)apps.size()) selectedIndex = 1;
-        if (selectedIndex == 0) selectedIndex = 1;
+        if (selectedIndex > maxSelectable) selectedIndex = 1;
+        if (selectedIndex == 0) selectedIndex = 1; // Should not happen but safety
         _needsRedraw = true;
     }
     else if (action == INPUT_SELECT) {
-        if (selectedIndex > 0 && selectedIndex < (int)apps.size()) {
+        if (_updateAvailable && selectedIndex == (int)apps.size()) {
+            // Update selected
+             GitHubMgr::getInstance().triggerUpdate(SYSTEM_VERSION);
+        }
+        else if (selectedIndex > 0 && selectedIndex < (int)apps.size()) {
             appMgr.switchTo(selectedIndex);
         }
     }
@@ -126,6 +167,30 @@ void AppMainMenu::draw() {
             int nameWidth = fontMgr.getTextWidth(name, FONT_SIZE_MENU);
             int nameX = x + (ICON_SIZE - nameWidth) / 2;
             fontMgr.drawText(display, name, nameX, y + ICON_SIZE + 25, FONT_SIZE_MENU, GxEPD_BLACK);
+        }
+        
+        // Render Update Icon if available
+        if (_updateAvailable) {
+            int i = apps.size(); // Index for update app (virtual index)
+            int idx = i - 1;
+            int col = idx % COLS;
+            int row = idx / COLS;
+            
+            int x = col * colWidth + (colWidth - ICON_SIZE) / 2;
+            int y = START_Y + row * ROW_HEIGHT;
+            
+             if ((int)i == selectedIndex) {
+                 // Selection Box
+                display.drawRect(x - 8, y - 8, ICON_SIZE + 16, ICON_SIZE + 16, GxEPD_BLACK);
+                display.drawRect(x - 7, y - 7, ICON_SIZE + 14, ICON_SIZE + 14, GxEPD_BLACK);
+            }
+            
+            display.drawBitmap(x, y, icon_update_80x80, 80, 80, GxEPD_BLACK);
+            
+            String updateText = "Update " + _updateVersion;
+            int nameWidth = fontMgr.getTextWidth(updateText.c_str(), FONT_SIZE_MENU);
+            int nameX = x + (ICON_SIZE - nameWidth) / 2;
+            fontMgr.drawText(display, updateText.c_str(), nameX, y + ICON_SIZE + 25, FONT_SIZE_MENU, GxEPD_BLACK);
         }
 
         // === Footer ===
