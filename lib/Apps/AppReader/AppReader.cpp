@@ -315,28 +315,32 @@ void AppReader::nextPage() {
     DisplayMgr& dispMgr = DisplayMgr::getInstance();
     Book32Display& display = dispMgr.getDisplay();
     
-    // Save current spot to history
-    _pageHistory.push_back(_currentPagePointer);
-    
-    // Calculate next page start without drawing
-    // This will ALSO fill the TextRenderer cache for the next draw call
+    // Calculate what the CURRENT page contains (this fills the cache for drawing)
+    int currentPageNum = _pageHistory.size(); // 0-indexed current page within chapter
     RenderResult result = _textRenderer->renderRichPageDynamic(display, _currentRichContent, 
                                                             _currentPagePointer.nodeIndex, 
                                                             _currentPagePointer.charOffset, 
-                                                            _pageHistory.size(), _totalBookPages, false);
+                                                            currentPageNum, _totalBookPages, false);
     
     if (result.pageFull) {
+        // Save current position to history before advancing
+        _pageHistory.push_back(_currentPagePointer);
+        
+        // Calculate next page start position
         _currentPagePointer.nodeIndex += result.nodesConsumed;
         _currentPagePointer.charOffset = result.charsConsumedInLastNode;
+        
+        // Clear cache since we're moving to a new page
+        _textRenderer->clearCache();
         _needsRedraw = true;
     } else {
-        // End of chapter
+        // End of chapter - advance to next
         if (_currentChapter < _epubLoader->getChapterCount() - 1) {
+            // Save current chapter state to history
+            _pageHistory.push_back(_currentPagePointer);
             loadChapter(_currentChapter + 1);
-        } else {
-            // End of book - don't advance
-            _pageHistory.pop_back();
         }
+        // If at end of book, do nothing
     }
 }
 
@@ -502,7 +506,9 @@ void AppReader::drawReading() {
         _pageTurnsSinceRefresh++; 
     }
     
-    int globalPageNum = getGlobalPageNumber();
+    // Use consistent page number: 0-indexed current page within chapter
+    int currentPageNum = _pageHistory.size();
+    int globalPageForDisplay = getGlobalPageNumber();
     
     display.firstPage();
     do {
@@ -510,7 +516,7 @@ void AppReader::drawReading() {
         _textRenderer->renderRichPageDynamic(display, _currentRichContent, 
                                            _currentPagePointer.nodeIndex, 
                                            _currentPagePointer.charOffset, 
-                                           globalPageNum - 1, _totalBookPages, true);
+                                           currentPageNum, _totalBookPages, true);
     } while (display.nextPage());
 }
 
