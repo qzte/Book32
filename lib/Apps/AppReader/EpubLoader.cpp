@@ -543,6 +543,17 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(String html) {
                node.textNode.text == "Image" || node.textNode.text == "[image]") {
                 node.textNode.text = "";
             }
+            
+            // Heuristic: Short numeric content (1-3 digits) that starts a block is likely a chapter number
+            if(node.textNode.isBlockStart && node.textNode.text.length() > 0 && node.textNode.text.length() <= 3) {
+                bool isNumeric = true;
+                for(int i = 0; i < (int)node.textNode.text.length(); i++) {
+                    if(!isdigit(node.textNode.text.charAt(i))) { isNumeric = false; break; }
+                }
+                if(isNumeric) {
+                    node.textNode.style = STYLE_HEADER1; // Chapter number - use big centered style
+                }
+            }
         }
     }
     // Remove empty text nodes
