@@ -3,6 +3,7 @@
 #include "AppMgr.h"
 #include "FontMgr.h"
 #include "BatteryMgr.h"
+#include "Book32FS.h"
 #include "icon_klipper.h"
 #include <WiFi.h>
 #include <HTTPClient.h>
@@ -25,6 +26,25 @@ AppKlipper::AppKlipper() {
     _scanProgress = 0;
     _scannedIPs = 0;
     _totalIPs = 0;
+    _fullRefreshInterval = 5;  // Default: full refresh every 5 minutes
+    _lastFullRefreshTime = 0;
+    _firstDraw = true;
+    loadSettings();
+}
+
+void AppKlipper::loadSettings() {
+    // Load settings from EbookFS (persists through OTA updates)
+    if (EbookFS.exists("/klipper_config.json")) {
+        File file = EbookFS.open("/klipper_config.json", "r");
+        if (file) {
+            DynamicJsonDocument doc(256);
+            if (!deserializeJson(doc, file)) {
+                _fullRefreshInterval = doc["fullRefreshInterval"] | 5;
+                Serial.printf("Klipper: Loaded settings - fullRefreshInterval=%d min\n", _fullRefreshInterval);
+            }
+            file.close();
+        }
+    }
 }
 
 AppKlipper::~AppKlipper() {
@@ -39,6 +59,11 @@ void AppKlipper::start() {
     _scanning = true;
     _lastScanTime = 0;
     _lastUpdateTime = 0;
+    _lastFullRefreshTime = 0;
+    _firstDraw = true;
+
+    // Reload settings in case they changed
+    loadSettings();
 
     InputMgr::getInstance().setCallback(std::bind(&AppKlipper::handleInput, this, std::placeholders::_1));
 
@@ -436,7 +461,15 @@ void AppKlipper::drawScanning() {
     int screenW = display.width();   // 480
     int screenH = display.height();  // 800
 
-    display.setPartialWindow(0, 0, screenW, screenH);
+    // Use full refresh on first draw, partial otherwise
+    if (_firstDraw) {
+        display.setFullWindow();
+        _lastFullRefreshTime = millis();
+        _firstDraw = false;
+    } else {
+        display.setPartialWindow(0, 0, screenW, screenH);
+    }
+
     display.firstPage();
     do {
         display.fillScreen(GxEPD_WHITE);
@@ -483,7 +516,27 @@ void AppKlipper::drawPrinterList() {
     int screenW = display.width();   // 480
     int screenH = display.height();  // 800
 
-    display.setPartialWindow(0, 0, screenW, screenH);
+    // Determine if we need a full refresh
+    unsigned long now = millis();
+    bool doFullRefresh = _firstDraw;
+
+    // Check if full refresh interval has elapsed (if interval > 0)
+    if (!doFullRefresh && _fullRefreshInterval > 0) {
+        unsigned long intervalMs = (unsigned long)_fullRefreshInterval * 60 * 1000;
+        if (now - _lastFullRefreshTime >= intervalMs) {
+            doFullRefresh = true;
+        }
+    }
+
+    if (doFullRefresh) {
+        Serial.printf("Klipper: Full refresh (interval=%d min)\n", _fullRefreshInterval);
+        display.setFullWindow();
+        _lastFullRefreshTime = now;
+        _firstDraw = false;
+    } else {
+        display.setPartialWindow(0, 0, screenW, screenH);
+    }
+
     display.firstPage();
     do {
         display.fillScreen(GxEPD_WHITE);

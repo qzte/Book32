@@ -56,6 +56,14 @@ private:
     int _scannedIPs;
     int _totalIPs;
 
+    // Full refresh settings (0 = partial only, >0 = minutes between full refreshes)
+    int _fullRefreshInterval;  // Minutes between full refreshes (default 5)
+    unsigned long _lastFullRefreshTime;
+    bool _firstDraw;
+
+    // Settings
+    void loadSettings();
+
     // Scanning
     void scanForPrinters();
     void scanSubnet();  // Fallback: scan local subnet for Moonraker port

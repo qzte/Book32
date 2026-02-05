@@ -578,7 +578,7 @@ void WebMgr::setupEndpoints() {
                 doc["refreshFrequency"] = json["refreshFrequency"].as<int>();
             }
 
-            // Save to EbookFS (primary storage)
+            // Save to EbookFS (primary storage - persists through OTA)
             File file = EbookFS.open("/reader_config.json", FILE_WRITE);
             if (file) {
                 serializeJson(doc, file);
@@ -591,6 +591,56 @@ void WebMgr::setupEndpoints() {
         }
     );
     server->addHandler(readerSettingsHandler);
+
+    // API: Klipper Settings - GET
+    server->on("/api/settings/klipper", HTTP_GET, [](AsyncWebServerRequest *request) {
+        AsyncResponseStream *response = request->beginResponseStream("application/json");
+        DynamicJsonDocument doc(256);
+
+        // Try to load existing settings from EbookFS
+        if (EbookFS.exists("/klipper_config.json")) {
+            File file = EbookFS.open("/klipper_config.json", "r");
+            if (file) {
+                DynamicJsonDocument savedDoc(256);
+                if (!deserializeJson(savedDoc, file)) {
+                    doc["fullRefreshInterval"] = savedDoc["fullRefreshInterval"] | 5;
+                } else {
+                    doc["fullRefreshInterval"] = 5;  // Default
+                }
+                file.close();
+            } else {
+                doc["fullRefreshInterval"] = 5;  // Default
+            }
+        } else {
+            doc["fullRefreshInterval"] = 5;  // Default: 5 minutes
+        }
+
+        serializeJson(doc, *response);
+        request->send(response);
+    });
+
+    // API: Klipper Settings - POST
+    AsyncCallbackJsonWebHandler* klipperSettingsHandler = new AsyncCallbackJsonWebHandler("/api/settings/klipper",
+        [](AsyncWebServerRequest *request, JsonVariant &json) {
+            DynamicJsonDocument doc(256);
+
+            if (json.containsKey("fullRefreshInterval")) {
+                doc["fullRefreshInterval"] = json["fullRefreshInterval"].as<int>();
+            }
+
+            // Save to EbookFS (persists through OTA updates)
+            File file = EbookFS.open("/klipper_config.json", FILE_WRITE);
+            if (file) {
+                serializeJson(doc, file);
+                file.close();
+                Serial.printf("Saved Klipper settings: fullRefreshInterval=%d min\n", doc["fullRefreshInterval"].as<int>());
+                request->send(200, "application/json", "{\"status\":\"ok\"}");
+            } else {
+                request->send(500, "application/json", "{\"status\":\"error\",\"message\":\"Failed to save\"}");
+            }
+        }
+    );
+    server->addHandler(klipperSettingsHandler);
 
     // API: Switch to app by name
     server->on("/api/app/switch", HTTP_GET, [](AsyncWebServerRequest *request) {

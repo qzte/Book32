@@ -3,13 +3,15 @@ function showTab(tabId) {
     document.querySelectorAll('.nav-links li').forEach(el => el.classList.remove('active'));
 
     document.getElementById(tabId).classList.add('active');
-    const navItems = ['dashboard', 'ereader', 'todo', 'settings'];
+    const navItems = ['dashboard', 'ereader', 'klipper', 'todo', 'settings'];
     document.querySelectorAll('.nav-links li')[navItems.indexOf(tabId)].classList.add('active');
 
     // Load data when switching tabs
     if (tabId === 'ereader') {
         fetchBooks();
         switchDeviceApp('Reader');
+    } else if (tabId === 'klipper') {
+        switchDeviceApp('Klipper');
     } else if (tabId === 'todo') {
         fetchTodos();
         switchDeviceApp('Todo');
@@ -257,6 +259,7 @@ async function deleteBook(filename, displayName) {
 setInterval(fetchStatus, 5000);
 fetchStatus();
 getReaderSettings();
+getKlipperSettings();
 
 function getReaderSettings() {
     fetch('/api/settings/reader')
@@ -293,6 +296,47 @@ function saveReaderSettings() {
         })
         .catch(error => {
             console.error('Error saving settings:', error);
+            statusDiv.textContent = "Connection error.";
+            statusDiv.style.color = "red";
+        });
+}
+
+// === Klipper Settings ===
+function getKlipperSettings() {
+    fetch('/api/settings/klipper')
+        .then(response => response.json())
+        .then(data => {
+            if (data.fullRefreshInterval !== undefined) {
+                document.getElementById('klipper-refresh').value = data.fullRefreshInterval;
+            }
+        })
+        .catch(error => console.error('Error loading Klipper settings:', error));
+}
+
+function saveKlipperSettings() {
+    const refreshInterval = parseInt(document.getElementById('klipper-refresh').value);
+    const statusDiv = document.getElementById('klipper-settings-status');
+
+    fetch('/api/settings/klipper', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ fullRefreshInterval: refreshInterval }),
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'ok') {
+                statusDiv.textContent = "Settings saved!";
+                statusDiv.style.color = "green";
+                setTimeout(() => statusDiv.textContent = "", 3000);
+            } else {
+                statusDiv.textContent = "Error saving settings.";
+                statusDiv.style.color = "red";
+            }
+        })
+        .catch(error => {
+            console.error('Error saving Klipper settings:', error);
             statusDiv.textContent = "Connection error.";
             statusDiv.style.color = "red";
         });
