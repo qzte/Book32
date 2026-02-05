@@ -238,8 +238,9 @@ void AppKlipper::scanTask() {
     IPAddress localIP = WiFi.localIP();
     Serial.printf("Local IP: %s, scanning full subnet for Moonraker...\n", localIP.toString().c_str());
 
-    // Default Moonraker port
-    const uint16_t MOONRAKER_PORT = 7125;
+    // Common Moonraker ports: 7125 (default), 80 (nginx proxy), 4408 (Creality/alternative)
+    const uint16_t MOONRAKER_PORTS[] = {7125, 80, 4408};
+    const int NUM_PORTS = 3;
 
     // Get base octets from local IP
     uint8_t oct1 = localIP[0];
@@ -261,63 +262,69 @@ void AppKlipper::scanTask() {
         // Yield frequently to let other tasks run (critical for watchdog)
         vTaskDelay(pdMS_TO_TICKS(2));
 
-        if (probeMoonraker(targetStr, MOONRAKER_PORT)) {
-            // Check if already in found list
-            bool exists = false;
-            for (const auto& p : _foundPrinters) {
-                if (p.ip == targetStr) {
-                    exists = true;
-                    break;
-                }
-            }
+        // Try each common Moonraker port
+        for (int p = 0; p < NUM_PORTS && found < 10; p++) {
+            uint16_t port = MOONRAKER_PORTS[p];
 
-            if (!exists) {
-                PrinterInfo printer;
-                printer.ip = targetStr;
-                printer.port = MOONRAKER_PORT;
-                printer.hostname = "Klipper";
-                printer.state = "unknown";
-                printer.extruderTemp = 0;
-                printer.extruderTarget = 0;
-                printer.bedTemp = 0;
-                printer.bedTarget = 0;
-                printer.progress = 0;
-                printer.filename = "";
-
-                // Try to get printer name from Moonraker database (where Mainsail stores it)
-                vTaskDelay(pdMS_TO_TICKS(5));
-                String dbUrl = "http://" + printer.ip + ":" + String(printer.port) + "/server/database/item?namespace=mainsail";
-                String dbResponse = httpGet(dbUrl);
-                if (dbResponse.length() > 0) {
-                    DynamicJsonDocument doc(4096);
-                    if (deserializeJson(doc, dbResponse) == DeserializationError::Ok) {
-                        const char* printerName = doc["result"]["value"]["general"]["printername"] | nullptr;
-                        if (printerName && strlen(printerName) > 0) {
-                            printer.hostname = printerName;
-                            Serial.printf("Got printer name from Mainsail DB: %s\n", printerName);
-                        }
+            if (probeMoonraker(targetStr, port)) {
+                // Check if already in found list (same IP, any port)
+                bool exists = false;
+                for (const auto& pr : _foundPrinters) {
+                    if (pr.ip == targetStr) {
+                        exists = true;
+                        break;
                     }
                 }
 
-                // If we didn't get a custom name, try /printer/info for hostname
-                if (printer.hostname == "Klipper") {
+                if (!exists) {
+                    PrinterInfo printer;
+                    printer.ip = targetStr;
+                    printer.port = port;
+                    printer.hostname = "Klipper";
+                    printer.state = "unknown";
+                    printer.extruderTemp = 0;
+                    printer.extruderTarget = 0;
+                    printer.bedTemp = 0;
+                    printer.bedTarget = 0;
+                    printer.progress = 0;
+                    printer.filename = "";
+
+                    // Try to get printer name from Moonraker database (where Mainsail stores it)
                     vTaskDelay(pdMS_TO_TICKS(5));
-                    String infoUrl = "http://" + printer.ip + ":" + String(printer.port) + "/printer/info";
-                    String infoResponse = httpGet(infoUrl);
-                    if (infoResponse.length() > 0) {
-                        DynamicJsonDocument doc(2048);
-                        if (deserializeJson(doc, infoResponse) == DeserializationError::Ok) {
-                            const char* hostname = doc["result"]["hostname"] | "Klipper";
-                            printer.hostname = hostname;
-                            Serial.printf("Got hostname from /printer/info: %s\n", hostname);
+                    String dbUrl = "http://" + printer.ip + ":" + String(printer.port) + "/server/database/item?namespace=mainsail";
+                    String dbResponse = httpGet(dbUrl);
+                    if (dbResponse.length() > 0) {
+                        DynamicJsonDocument doc(4096);
+                        if (deserializeJson(doc, dbResponse) == DeserializationError::Ok) {
+                            const char* printerName = doc["result"]["value"]["general"]["printername"] | nullptr;
+                            if (printerName && strlen(printerName) > 0) {
+                                printer.hostname = printerName;
+                                Serial.printf("Got printer name from Mainsail DB: %s\n", printerName);
+                            }
                         }
                     }
-                }
 
-                Serial.printf("✓ Found: %s at %s:%d\n",
-                             printer.hostname.c_str(), printer.ip.c_str(), printer.port);
-                _foundPrinters.push_back(printer);
-                found++;
+                    // If we didn't get a custom name, try /printer/info for hostname
+                    if (printer.hostname == "Klipper") {
+                        vTaskDelay(pdMS_TO_TICKS(5));
+                        String infoUrl = "http://" + printer.ip + ":" + String(printer.port) + "/printer/info";
+                        String infoResponse = httpGet(infoUrl);
+                        if (infoResponse.length() > 0) {
+                            DynamicJsonDocument doc(2048);
+                            if (deserializeJson(doc, infoResponse) == DeserializationError::Ok) {
+                                const char* hostname = doc["result"]["hostname"] | "Klipper";
+                                printer.hostname = hostname;
+                                Serial.printf("Got hostname from /printer/info: %s\n", hostname);
+                            }
+                        }
+                    }
+
+                    Serial.printf("✓ Found: %s at %s:%d\n",
+                                 printer.hostname.c_str(), printer.ip.c_str(), printer.port);
+                    _foundPrinters.push_back(printer);
+                    found++;
+                    break;  // Found on this IP, skip remaining ports
+                }
             }
         }
 
