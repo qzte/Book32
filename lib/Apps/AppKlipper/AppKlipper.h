@@ -4,6 +4,8 @@
 #include "BaseApp.h"
 #include "../../Book32_Core/InputMgr.h"
 #include <vector>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 enum KlipperState {
     KLIPPER_SCANNING,
@@ -42,19 +44,28 @@ public:
 
     void handleInput(InputAction action);
 
+    // Static task function for FreeRTOS
+    static void scanTaskWrapper(void* param);
+    void scanTask();  // The actual scanning logic
+
 private:
     KlipperState _state;
     std::vector<PrinterInfo> _printers;
     int _selectedIndex;
     bool _needsRedraw;
-    bool _scanning;
+    volatile bool _scanning;  // volatile for thread safety
+    volatile bool _scanComplete;  // Flag to indicate scan finished
     unsigned long _lastScanTime;
     unsigned long _lastUpdateTime;
-    
+    TaskHandle_t _scanTaskHandle;  // FreeRTOS task handle
+
     // Scan progress
-    int _scanProgress;  // 0-100%
-    int _scannedIPs;
+    volatile int _scanProgress;  // 0-100%
+    volatile int _scannedIPs;
     int _totalIPs;
+
+    // Found printers during scan (temporary storage)
+    std::vector<PrinterInfo> _foundPrinters;
 
     // Full refresh settings (0 = partial only, >0 = minutes between full refreshes)
     int _fullRefreshInterval;  // Minutes between full refreshes (default 5)
@@ -65,8 +76,7 @@ private:
     void loadSettings();
 
     // Scanning
-    void scanForPrinters();
-    void scanSubnet();  // Fallback: scan local subnet for Moonraker port
+    void startScan();  // Starts the background scan task
     bool probeMoonraker(const String& ip, uint16_t port);  // Check if IP is Moonraker
     void drawScanning();
 

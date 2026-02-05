@@ -22,11 +22,13 @@ AppKlipper::AppKlipper() {
     _selectedIndex = 0;
     _needsRedraw = true;
     _scanning = false;
+    _scanComplete = false;
     _lastScanTime = 0;
     _lastUpdateTime = 0;
     _scanProgress = 0;
     _scannedIPs = 0;
     _totalIPs = 0;
+    _scanTaskHandle = NULL;
     _fullRefreshInterval = 5;  // Default: full refresh every 5 minutes
     _lastFullRefreshTime = 0;
     _firstDraw = true;
@@ -49,7 +51,13 @@ void AppKlipper::loadSettings() {
 }
 
 AppKlipper::~AppKlipper() {
+    // Stop scan task if running
+    if (_scanTaskHandle != NULL) {
+        vTaskDelete(_scanTaskHandle);
+        _scanTaskHandle = NULL;
+    }
     _printers.clear();
+    _foundPrinters.clear();
 }
 
 void AppKlipper::start() {
@@ -57,36 +65,40 @@ void AppKlipper::start() {
     _state = KLIPPER_SCANNING;
     _selectedIndex = 0;
     _needsRedraw = true;
-    _scanning = true;
+    _scanning = false;
+    _scanComplete = false;
     _lastScanTime = 0;
     _lastUpdateTime = 0;
     _lastFullRefreshTime = 0;
     _firstDraw = true;
+    _scanTaskHandle = NULL;
 
     // Reload settings in case they changed
     loadSettings();
 
     InputMgr::getInstance().setCallback(std::bind(&AppKlipper::handleInput, this, std::placeholders::_1));
 
-    // Start mDNS if not already started
-    if (!MDNS.begin("book32")) {
-        Serial.println("mDNS already running or failed");
-    }
-
-    // Trigger immediate scan
-    scanForPrinters();
+    // Trigger immediate scan in background task
+    startScan();
 }
 
 void AppKlipper::stop() {
     Serial.println("Klipper App Stopped");
+    // Stop scan task if running
+    if (_scanTaskHandle != NULL) {
+        vTaskDelete(_scanTaskHandle);
+        _scanTaskHandle = NULL;
+    }
+    _scanning = false;
     _printers.clear();
+    _foundPrinters.clear();
 }
 
 void AppKlipper::handleInput(InputAction action) {
     if (action == INPUT_NEXT) {
         if (_state == KLIPPER_SCANNING && !_scanning) {
             // Single press in scanning view: start manual scan
-            scanForPrinters();
+            startScan();
         }
         else if (_state == KLIPPER_LIST) {
             // Single press in list view: refresh status
@@ -102,9 +114,9 @@ void AppKlipper::handleInput(InputAction action) {
             // Rescan for printers
             _printers.clear();
             _state = KLIPPER_SCANNING;
-            scanForPrinters();
+            startScan();
         } else {
-            scanForPrinters();
+            startScan();
         }
     }
     else if (action == INPUT_BACK) {
@@ -116,7 +128,31 @@ void AppKlipper::handleInput(InputAction action) {
 void AppKlipper::update() {
     unsigned long now = millis();
 
-    // No auto-rescanning - user must press button to scan
+    // Check if background scan completed
+    if (_scanComplete) {
+        _scanComplete = false;
+        _scanning = false;
+
+        // Transfer found printers to main list
+        _printers = _foundPrinters;
+        _foundPrinters.clear();
+
+        // Clean up task handle
+        _scanTaskHandle = NULL;
+
+        Serial.printf("Scan complete: found %d printers\n", (int)_printers.size());
+
+        // Transition to list view if we found printers
+        if (!_printers.empty()) {
+            _state = KLIPPER_LIST;
+            // Fetch initial status for all printers
+            for (auto& printer : _printers) {
+                fetchPrinterStatus(printer);
+            }
+        }
+
+        _needsRedraw = true;
+    }
 
     // Periodic status update in list view (partial refresh)
     if (_state == KLIPPER_LIST && !_printers.empty() && (now - _lastUpdateTime > UPDATE_INTERVAL)) {
@@ -146,52 +182,61 @@ const uint8_t* AppKlipper::getIconImage() {
     return icon_klipper_160x160;
 }
 
-void AppKlipper::scanForPrinters() {
-    Serial.println("Scanning for Klipper/Moonraker printers...");
-    
+void AppKlipper::startScan() {
+    // Don't start a new scan if one is already running
+    if (_scanning || _scanTaskHandle != NULL) {
+        Serial.println("Scan already in progress");
+        return;
+    }
+
     // Verify WiFi is connected before scanning
     if (WiFi.status() != WL_CONNECTED) {
         Serial.println("ERROR: WiFi not connected!");
-        _scanning = false;
         _needsRedraw = true;
         return;
     }
-    
+
+    Serial.println("Starting background scan for Klipper printers...");
     _scanning = true;
+    _scanComplete = false;
+    _foundPrinters.clear();
+    _scanProgress = 0;
+    _scannedIPs = 0;
+    _totalIPs = 254;  // Full subnet scan
     _needsRedraw = true;
-    draw();  // Show scanning message
     _lastScanTime = millis();
 
-    // Skip mDNS discovery - it blocks too long and triggers watchdog
-    // Go directly to subnet scanning which has yield() calls
-    Serial.println("Scanning subnet for Moonraker printers...");
-    yield();  // Let async tasks run before scanning
-    scanSubnet();
+    // Create FreeRTOS task on Core 0 (async_tcp runs on Core 0, but we'll yield frequently)
+    // Stack size 8KB, priority 1 (low)
+    BaseType_t result = xTaskCreatePinnedToCore(
+        scanTaskWrapper,    // Task function
+        "KlipperScan",      // Task name
+        8192,               // Stack size
+        this,               // Parameter (this pointer)
+        1,                  // Priority (low)
+        &_scanTaskHandle,   // Task handle
+        0                   // Core 0
+    );
 
-    _scanning = false;
-
-    // Transition to list view if we found printers
-    if (!_printers.empty()) {
-        _state = KLIPPER_LIST;
-        // Fetch initial status for all printers
-        for (auto& printer : _printers) {
-            fetchPrinterStatus(printer);
-        }
+    if (result != pdPASS) {
+        Serial.println("Failed to create scan task!");
+        _scanning = false;
+        _scanTaskHandle = NULL;
     }
-
-    _needsRedraw = true;
 }
 
-void AppKlipper::scanSubnet() {
-    // Verify WiFi is connected
-    if (WiFi.status() != WL_CONNECTED) {
-        Serial.println("WiFi not connected, cannot scan subnet");
-        return;
-    }
+void AppKlipper::scanTaskWrapper(void* param) {
+    AppKlipper* self = static_cast<AppKlipper*>(param);
+    self->scanTask();
+    vTaskDelete(NULL);  // Delete this task when done
+}
+
+void AppKlipper::scanTask() {
+    Serial.println("Scan task started on core " + String(xPortGetCoreID()));
 
     // Get local IP
     IPAddress localIP = WiFi.localIP();
-    Serial.printf("Local IP: %s, scanning subnet for Moonraker...\n", localIP.toString().c_str());
+    Serial.printf("Local IP: %s, scanning full subnet for Moonraker...\n", localIP.toString().c_str());
 
     // Default Moonraker port
     const uint16_t MOONRAKER_PORT = 7125;
@@ -203,38 +248,23 @@ void AppKlipper::scanSubnet() {
     uint8_t myOct4 = localIP[3];
 
     int found = 0;
-    int scanned = 0;
 
-    _scanProgress = 0;
-    _scannedIPs = 0;
-    _totalIPs = 20;  // Reduced range: .100-.120
-
-    // Scan reduced range to avoid watchdog timeout
-    // Most Klipper printers are in .100-.120 DHCP range
-    for (int i = 100; i <= 120 && found < 5; i++) {
+    // Scan full subnet (1-254), skip .0 and .255
+    for (int i = 1; i <= 254 && found < 10; i++) {
         if (i == myOct4) continue;
 
         IPAddress target(oct1, oct2, oct3, i);
         String targetStr = target.toString();
-        _scannedIPs++;
-        _scanProgress = (_scannedIPs * 100) / _totalIPs;
+        _scannedIPs = i;
+        _scanProgress = (i * 100) / 254;
 
-        // Update display and yield on every IP to let async tasks run
-        _needsRedraw = true;
-        draw();
-
-        // Give async_tcp time to process - this is critical to prevent watchdog
-        for (int j = 0; j < 10; j++) {
-            yield();
-            delay(1);
-        }
-
-        scanned++;
+        // Yield frequently to let other tasks run (critical for watchdog)
+        vTaskDelay(pdMS_TO_TICKS(2));
 
         if (probeMoonraker(targetStr, MOONRAKER_PORT)) {
-            // Check if already in list
+            // Check if already in found list
             bool exists = false;
-            for (const auto& p : _printers) {
+            for (const auto& p : _foundPrinters) {
                 if (p.ip == targetStr) {
                     exists = true;
                     break;
@@ -255,13 +285,12 @@ void AppKlipper::scanSubnet() {
                 printer.filename = "";
 
                 // Try to get printer name from Moonraker database (where Mainsail stores it)
-                // This is the custom name set in Mainsail UI
+                vTaskDelay(pdMS_TO_TICKS(5));
                 String dbUrl = "http://" + printer.ip + ":" + String(printer.port) + "/server/database/item?namespace=mainsail";
                 String dbResponse = httpGet(dbUrl);
                 if (dbResponse.length() > 0) {
                     DynamicJsonDocument doc(4096);
                     if (deserializeJson(doc, dbResponse) == DeserializationError::Ok) {
-                        // Try to get printer name from general settings
                         const char* printerName = doc["result"]["value"]["general"]["printername"] | nullptr;
                         if (printerName && strlen(printerName) > 0) {
                             printer.hostname = printerName;
@@ -269,9 +298,10 @@ void AppKlipper::scanSubnet() {
                         }
                     }
                 }
-                
+
                 // If we didn't get a custom name, try /printer/info for hostname
                 if (printer.hostname == "Klipper") {
+                    vTaskDelay(pdMS_TO_TICKS(5));
                     String infoUrl = "http://" + printer.ip + ":" + String(printer.port) + "/printer/info";
                     String infoResponse = httpGet(infoUrl);
                     if (infoResponse.length() > 0) {
@@ -286,22 +316,21 @@ void AppKlipper::scanSubnet() {
 
                 Serial.printf("✓ Found: %s at %s:%d\n",
                              printer.hostname.c_str(), printer.ip.c_str(), printer.port);
-                _printers.push_back(printer);
+                _foundPrinters.push_back(printer);
                 found++;
             }
         }
 
-        // Progress feedback and delay every 10 IPs
-        if (_scannedIPs % 10 == 0) {
-            Serial.printf("Scanned %d/%d IPs (%d%%)...\n", _scannedIPs, _totalIPs, _scanProgress);
-            yield();
+        // Progress feedback every 25 IPs
+        if (i % 25 == 0) {
+            Serial.printf("Scanned %d/254 IPs (%d%%), found %d printers\n", i, _scanProgress, found);
         }
-        
-        // Small delay between probes to avoid overwhelming WiFi stack
-        delay(10);  // Reduced from 20ms
     }
 
-    Serial.printf("Subnet scan complete: %d IPs scanned, %d printers found\n", _scannedIPs, found);
+    Serial.printf("Scan task complete: 254 IPs scanned, %d printers found\n", found);
+
+    // Signal completion to main thread
+    _scanComplete = true;
 }
 
 bool AppKlipper::probeMoonraker(const String& ip, uint16_t port) {
