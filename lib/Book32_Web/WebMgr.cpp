@@ -788,14 +788,14 @@ void WebMgr::setupEndpoints() {
         request->send(200, "application/json", "{\"status\":\"ok\"}");
     });
 
-    // Static Files - serve from EbookFS since that's where uploadfs puts them
-    // (PlatformIO uploads to the first/larger spiffs partition)
-    if (EbookFS.exists("/index.html")) {
-        Serial.println("Serving web UI from EbookFS");
-        server->serveStatic("/", EbookFS, "/").setDefaultFile("index.html");
-    } else if (SystemFS.exists("/index.html")) {
+    // Static Files - serve from SystemFS first (where OTA filesystem updates go)
+    // Fall back to EbookFS if not found
+    if (SystemFS.exists("/index.html")) {
         Serial.println("Serving web UI from SystemFS");
         server->serveStatic("/", SystemFS, "/").setDefaultFile("index.html");
+    } else if (EbookFS.exists("/index.html")) {
+        Serial.println("Serving web UI from EbookFS");
+        server->serveStatic("/", EbookFS, "/").setDefaultFile("index.html");
     } else {
         Serial.println("WARNING: No index.html found on either filesystem!");
     }
