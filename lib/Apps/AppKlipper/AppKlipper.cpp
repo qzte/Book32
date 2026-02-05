@@ -161,53 +161,11 @@ void AppKlipper::scanForPrinters() {
     draw();  // Show scanning message
     _lastScanTime = millis();
 
-    // Keep track of existing IPs to avoid duplicates
-    std::vector<String> existingIPs;
-    for (const auto& p : _printers) {
-        existingIPs.push_back(p.ip);
-    }
-
-    // Method 1: Try mDNS discovery
-    Serial.println("Trying mDNS discovery...");
-    int n = MDNS.queryService("moonraker", "tcp");
-    Serial.printf("mDNS found %d Moonraker services\n", n);
-
-    for (int i = 0; i < n; i++) {
-        String ip = MDNS.IP(i).toString();
-
-        // Check if already in list
-        bool exists = false;
-        for (const auto& existingIP : existingIPs) {
-            if (existingIP == ip) {
-                exists = true;
-                break;
-            }
-        }
-
-        if (!exists) {
-            PrinterInfo printer;
-            printer.hostname = MDNS.hostname(i);
-            printer.ip = ip;
-            printer.port = MDNS.port(i);
-            printer.state = "unknown";
-            printer.extruderTemp = 0;
-            printer.extruderTarget = 0;
-            printer.bedTemp = 0;
-            printer.bedTarget = 0;
-            printer.progress = 0;
-            printer.filename = "";
-
-            Serial.printf("mDNS found: %s at %s:%d\n", printer.hostname.c_str(), printer.ip.c_str(), printer.port);
-            _printers.push_back(printer);
-            existingIPs.push_back(ip);
-        }
-    }
-
-    // Method 2: If mDNS found nothing, scan local subnet
-    if (_printers.empty()) {
-        Serial.println("mDNS found nothing, scanning subnet...");
-        scanSubnet();
-    }
+    // Skip mDNS discovery - it blocks too long and triggers watchdog
+    // Go directly to subnet scanning which has yield() calls
+    Serial.println("Scanning subnet for Moonraker printers...");
+    yield();  // Let async tasks run before scanning
+    scanSubnet();
 
     _scanning = false;
 
@@ -264,8 +222,10 @@ void AppKlipper::scanSubnet() {
         if (_scannedIPs % 5 == 0) {
             _needsRedraw = true;
             draw();
+            yield();  // Allow other tasks to run during scan
         }
         scanned++;
+        yield();  // Yield on every iteration to prevent watchdog
 
         if (probeMoonraker(targetStr, MOONRAKER_PORT)) {
             // Check if already in list
