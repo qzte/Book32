@@ -441,9 +441,11 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(String html) {
                 classAttr.toLowerCase();
                 
                 // Detect chapter numbers/titles by CSS class
-                if(classAttr.indexOf("chapter") != -1 || classAttr.indexOf("title") != -1 ||
-                   classAttr.indexOf("num") != -1 || classAttr.indexOf("heading") != -1 ||
-                   classAttr.indexOf("ct") != -1 || classAttr.indexOf("cn") != -1) {
+                // Be specific to avoid false positives like "title-page" on copyright pages
+                if(classAttr.indexOf("chapter") != -1 || classAttr.indexOf("chap-") != -1 ||
+                   classAttr.indexOf("heading") != -1 || classAttr.indexOf("section-title") != -1 ||
+                   (classAttr.indexOf("ct") != -1 && classAttr.indexOf("ct") == 0) ||
+                   (classAttr.indexOf("cn") != -1 && classAttr.indexOf("cn") == 0)) {
                     // This is likely a chapter number/title - use header style
                     styleStack.push_back(STYLE_HEADER1);
                 }
