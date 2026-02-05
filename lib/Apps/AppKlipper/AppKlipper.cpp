@@ -10,6 +10,7 @@
 #include <ArduinoJson.h>
 #include <ESPmDNS.h>
 #include <LittleFS.h>
+#include <esp_task_wdt.h>
 
 // Scan interval (30 seconds)
 static const unsigned long SCAN_INTERVAL = 30000;
@@ -206,26 +207,29 @@ void AppKlipper::scanSubnet() {
 
     _scanProgress = 0;
     _scannedIPs = 0;
-    _totalIPs = 50;  // Only scanning .100-.150
+    _totalIPs = 20;  // Reduced range: .100-.120
 
-    // Only scan .100-.150 range (common DHCP range)
-    // This is much faster than scanning .1-.50 + .100-.200
-    for (int i = 100; i <= 150 && found < 5; i++) {
+    // Scan reduced range to avoid watchdog timeout
+    // Most Klipper printers are in .100-.120 DHCP range
+    for (int i = 100; i <= 120 && found < 5; i++) {
         if (i == myOct4) continue;
 
         IPAddress target(oct1, oct2, oct3, i);
         String targetStr = target.toString();
         _scannedIPs++;
         _scanProgress = (_scannedIPs * 100) / _totalIPs;
-        
-        // Update display every 5 IPs
-        if (_scannedIPs % 5 == 0) {
-            _needsRedraw = true;
-            draw();
-            yield();  // Allow other tasks to run during scan
+
+        // Update display and yield on every IP to let async tasks run
+        _needsRedraw = true;
+        draw();
+
+        // Give async_tcp time to process - this is critical to prevent watchdog
+        for (int j = 0; j < 10; j++) {
+            yield();
+            delay(1);
         }
+
         scanned++;
-        yield();  // Yield on every iteration to prevent watchdog
 
         if (probeMoonraker(targetStr, MOONRAKER_PORT)) {
             // Check if already in list
@@ -302,36 +306,41 @@ void AppKlipper::scanSubnet() {
 
 bool AppKlipper::probeMoonraker(const String& ip, uint16_t port) {
     WiFiClient client;
-    
-    // Try TCP connection first with faster timeout
-    // Reduced to 300ms for faster scanning
-    if (!client.connect(ip.c_str(), port, 300)) {
+
+    // Let other tasks run before and after socket operations
+    vTaskDelay(pdMS_TO_TICKS(5));
+
+    // Try TCP connection with short timeout (100ms)
+    if (!client.connect(ip.c_str(), port, 100)) {
         // Connection failed - port is closed or unreachable
+        vTaskDelay(pdMS_TO_TICKS(5));
         return false;
     }
-    
+
     // Port is open, close the TCP probe
     client.stop();
-    delay(10);  // Brief delay to let socket cleanup
-    
+    vTaskDelay(pdMS_TO_TICKS(10));  // Let socket cleanup and other tasks run
+
     // Now verify it's actually Moonraker by hitting the API
-    // /server/info is the correct Moonraker endpoint (no auth required)
     String url = "http://" + ip + ":" + String(port) + "/server/info";
     HTTPClient http;
-    http.setTimeout(2000);  // 2 second timeout for HTTP
-    
+    http.setTimeout(1000);  // 1 second timeout for HTTP
+    http.setConnectTimeout(500);  // 500ms connect timeout
+
     if (!http.begin(url)) {
         return false;
     }
-    
+
     int httpCode = http.GET();
     http.end();
-    
+
+    vTaskDelay(pdMS_TO_TICKS(5));  // Let other tasks run after HTTP
+
     if (httpCode == HTTP_CODE_OK) {
         Serial.printf("✓ Moonraker found at %s:%d\n", ip.c_str(), port);
         return true;
     }
-    
+
     return false;
 }
 
