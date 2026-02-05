@@ -78,7 +78,13 @@ void AppKlipper::start() {
 
     InputMgr::getInstance().setCallback(std::bind(&AppKlipper::handleInput, this, std::placeholders::_1));
 
-    // Trigger immediate scan in background task
+    // Draw initial screen first (full refresh), then start scanning
+    draw();
+
+    // Small delay to let display finish before starting network operations
+    delay(100);
+
+    // Trigger scan in background task
     startScan();
 }
 
@@ -151,6 +157,13 @@ void AppKlipper::update() {
             }
         }
 
+        _needsRedraw = true;
+    }
+
+    // Update progress bar during scanning (every 500ms)
+    static unsigned long lastProgressUpdate = 0;
+    if (_scanning && (now - lastProgressUpdate > 500)) {
+        lastProgressUpdate = now;
         _needsRedraw = true;
     }
 
