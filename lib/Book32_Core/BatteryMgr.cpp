@@ -18,7 +18,7 @@ BatteryMgr::BatteryMgr() : _lastReadTime(0), _historyIndex(0), _lastHistoryUpdat
                            _lastDisplayedCharging(false), _lastIndicatorUpdate(0) {
     _cachedStatus = {0.0f, 0, false};
     // Initialize history
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 5; i++) {
         _voltageHistory[i] = 0.0f;
         _historyTimes[i] = 0;
     }
@@ -43,7 +43,7 @@ void BatteryMgr::init() {
 
     // Initialize voltage history and previous voltage with current reading
     _previousVoltage = _cachedStatus.voltage;
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 5; i++) {
         _voltageHistory[i] = _cachedStatus.voltage;
         _historyTimes[i] = millis();
     }
@@ -85,7 +85,7 @@ void BatteryMgr::update() {
         // Add current voltage to history
         _voltageHistory[_historyIndex] = _cachedStatus.voltage;
         _historyTimes[_historyIndex] = now;
-        _historyIndex = (_historyIndex + 1) % 3;
+        _historyIndex = (_historyIndex + 1) % 5;
         _lastHistoryUpdate = now;
 
         // Check if voltage is trending upward (charging)
@@ -94,8 +94,8 @@ void BatteryMgr::update() {
         float oldestVoltage = _voltageHistory[oldestIndex];
         unsigned long oldestTime = _historyTimes[oldestIndex];
 
-        // Compare with oldest reading (at least 30 seconds old for faster detection)
-        if (oldestTime > 0 && (now - oldestTime) >= 30000) {
+        // Compare with oldest reading (at least 90 seconds old for slow charging detection)
+        if (oldestTime > 0 && (now - oldestTime) >= 90000) {
             float voltageChange = _cachedStatus.voltage - oldestVoltage;
 
             // If voltage increased by more than threshold, we're charging

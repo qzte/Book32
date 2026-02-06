@@ -51,12 +51,12 @@ private:
     static const unsigned long CACHE_DURATION_MS = 5000; // Cache for 5 seconds
 
     // Charge detection via voltage trend
-    float _voltageHistory[3];          // Store 3 readings over time
-    unsigned long _historyTimes[3];    // Timestamps for each reading
+    float _voltageHistory[5];          // Store 5 readings over time (for 2+ minute trend)
+    unsigned long _historyTimes[5];    // Timestamps for each reading
     int _historyIndex;                 // Current index in circular buffer
     unsigned long _lastHistoryUpdate;  // Last time we added to history
     float _previousVoltage;            // Previous voltage reading for short-term trend
-    static const unsigned long HISTORY_INTERVAL_MS = 15000; // Sample every 15 seconds (faster detection)
+    static const unsigned long HISTORY_INTERVAL_MS = 30000; // Sample every 30 seconds (better for slow charging)
     static const float CHARGE_THRESHOLD;  // Voltage increase threshold to detect charging
     static const float HIGH_VOLTAGE_THRESHOLD;  // Consider charging if voltage above this (near full)
 
