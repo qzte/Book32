@@ -73,6 +73,13 @@ async function fetchStatus() {
 
         batIcon.setAttribute('data-level', visualLevel);
 
+        // Update battery icon charging state
+        if (data.charging) {
+            batIcon.classList.add('charging');
+        } else {
+            batIcon.classList.remove('charging');
+        }
+
     } catch (e) {
         console.error("Failed to fetch status", e);
     }
