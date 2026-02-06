@@ -139,20 +139,22 @@ void BatteryMgr::updateCache() {
     delay(5); // Wait for stabilization
 #endif
 
-    // Read ADC - average 10 samples
+    // Read ADC - average 30 samples per Seeed wiki recommendation
     uint32_t raw = 0;
-    for(int i = 0; i < 10; i++) {
+    for(int i = 0; i < 30; i++) {
         raw += analogRead(PIN_BAT_VOLT);
         delay(1);
     }
-    raw /= 10;
+    raw /= 30;
 
 #ifdef PIN_VBAT_SWITCH
     digitalWrite(PIN_VBAT_SWITCH, !VBAT_SWITCH_LEVEL); // Turn off to save power
 #endif
 
-    // Convert to voltage (divider ratio x2)
-    float voltage = (raw / 4095.0f) * 3.3f * 2.0f;
+    // Convert to voltage per Seeed wiki: (adc / 4095) * 3.6 * 2.0 * calibration
+    // Calibration factor 0.968 compensates for voltage divider tolerances
+    const float CALIBRATION_FACTOR = 0.968f;
+    float voltage = (raw / 4095.0f) * 3.6f * 2.0f * CALIBRATION_FACTOR;
 
     // Calculate percentage (LiPo: 3.0V = 0%, 4.2V = 100%)
     int percentage = 0;
