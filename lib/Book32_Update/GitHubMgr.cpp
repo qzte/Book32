@@ -8,46 +8,46 @@
 #include "../Book32_Core/FontMgr.h"
 
 // Draw OTA progress bar on display
-static void drawOTAProgress(int progress, const char* status) {
+static void drawOTAProgress(int progress, const char* title, const char* status) {
     auto& display = DisplayMgr::getInstance().getDisplay();
     auto& fontMgr = FontMgr::getInstance();
-    
+
     int screenW = display.width();
     int screenH = display.height();
-    
+
     // Progress bar dimensions
     int barWidth = screenW - 100;
     int barHeight = 30;
     int barX = 50;
     int barY = screenH / 2;
     int fillWidth = (barWidth * progress) / 100;
-    
+
     // Clear and draw with partial refresh for faster updates
     display.setPartialWindow(0, 0, screenW, screenH);
     display.firstPage();
     do {
         display.fillScreen(GxEPD_WHITE);
-        
-        // Title
-        fontMgr.drawTextCentered(display, "Updating Firmware...", barY - 60, FONT_SIZE_TITLE, GxEPD_BLACK);
-        
+
+        // Title (e.g., "Updating Firmware (1/2)" or "Updating Filesystem (2/2)")
+        fontMgr.drawTextCentered(display, title, barY - 60, FONT_SIZE_TITLE, GxEPD_BLACK);
+
         // Status text
         fontMgr.drawTextCentered(display, status, barY - 25, FONT_SIZE_BODY, GxEPD_BLACK);
-        
+
         // Progress bar outline
         display.drawRect(barX, barY, barWidth, barHeight, GxEPD_BLACK);
         display.drawRect(barX + 1, barY + 1, barWidth - 2, barHeight - 2, GxEPD_BLACK);
-        
+
         // Progress bar fill
         if (fillWidth > 4) {
             display.fillRect(barX + 2, barY + 2, fillWidth - 4, barHeight - 4, GxEPD_BLACK);
         }
-        
+
         // Percentage text
         char percentText[16];
         snprintf(percentText, sizeof(percentText), "%d%%", progress);
         fontMgr.drawTextCentered(display, percentText, barY + barHeight + 40, FONT_SIZE_TITLE, GxEPD_BLACK);
-        
+
     } while (display.nextPage());
 }
 
@@ -162,10 +162,18 @@ UpdateInfo GitHubMgr::checkUpdate(const char* currentVersion) {
     return info;
 }
 
-bool GitHubMgr::performFirmwareUpdate(const char* url, bool restartAfter) {
+bool GitHubMgr::performFirmwareUpdate(const char* url, bool restartAfter, int step, int totalSteps) {
     if (WiFi.status() != WL_CONNECTED) return false;
 
     Serial.printf("Downloading firmware from: %s\n", url);
+
+    // Build title with step indicator if provided
+    char title[64];
+    if (totalSteps > 1) {
+        snprintf(title, sizeof(title), "Firmware (%d/%d)", step, totalSteps);
+    } else {
+        snprintf(title, sizeof(title), "Firmware Update");
+    }
 
     HTTPClient http;
     http.begin(url);
@@ -191,15 +199,15 @@ bool GitHubMgr::performFirmwareUpdate(const char* url, bool restartAfter) {
         }
 
         // Show initial progress on display
-        drawOTAProgress(0, "Downloading firmware...");
+        drawOTAProgress(0, title, "Downloading...");
 
         WiFiClient *stream = http.getStreamPtr();
-        
+
         // Use chunked download with periodic yields to prevent watchdog
         uint8_t buff[4096];
         size_t written = 0;
         int lastProgress = 0;
-        
+
         while (written < contentLength) {
             // Read chunk
             size_t available = stream->available();
@@ -207,10 +215,10 @@ bool GitHubMgr::performFirmwareUpdate(const char* url, bool restartAfter) {
                 delay(1);  // Yield to other tasks
                 continue;
             }
-            
+
             size_t toRead = min(available, sizeof(buff));
             size_t bytesRead = stream->readBytes(buff, toRead);
-            
+
             if (bytesRead > 0) {
                 size_t bytesWritten = Update.write(buff, bytesRead);
                 if (bytesWritten != bytesRead) {
@@ -220,15 +228,15 @@ bool GitHubMgr::performFirmwareUpdate(const char* url, bool restartAfter) {
                     return false;
                 }
                 written += bytesWritten;
-                
+
                 // Progress and yield every ~5%
                 int progress = (written * 100) / contentLength;
                 if (progress / 5 > lastProgress / 5) {
                     Serial.printf("Progress: %d%%\n", progress);
-                    drawOTAProgress(progress, "Downloading firmware...");
+                    drawOTAProgress(progress, title, "Downloading...");
                     lastProgress = progress;
                 }
-                
+
                 // Yield frequently to feed watchdog
                 yield();
             }
@@ -236,11 +244,11 @@ bool GitHubMgr::performFirmwareUpdate(const char* url, bool restartAfter) {
 
         if (written == contentLength) {
             Serial.println("Firmware written successfully");
-            drawOTAProgress(100, "Installing update...");
+            drawOTAProgress(100, title, "Installing...");
             if (Update.end()) {
                 Serial.println("Firmware update complete");
-                drawOTAProgress(100, "Restarting...");
-                delay(1000);  // Show completion message briefly
+                drawOTAProgress(100, title, "Complete!");
+                delay(500);
                 http.end();
                 if (restartAfter) {
                     Serial.println("Restarting...");
@@ -258,10 +266,18 @@ bool GitHubMgr::performFirmwareUpdate(const char* url, bool restartAfter) {
     return false;
 }
 
-bool GitHubMgr::performFilesystemUpdate(const char* url, bool restartAfter) {
+bool GitHubMgr::performFilesystemUpdate(const char* url, bool restartAfter, int step, int totalSteps) {
     if (WiFi.status() != WL_CONNECTED) return false;
 
     Serial.printf("Downloading filesystem from: %s\n", url);
+
+    // Build title with step indicator if provided
+    char title[64];
+    if (totalSteps > 1) {
+        snprintf(title, sizeof(title), "Web Interface (%d/%d)", step, totalSteps);
+    } else {
+        snprintf(title, sizeof(title), "Web Interface Update");
+    }
 
     HTTPClient http;
     http.begin(url);
@@ -287,23 +303,26 @@ bool GitHubMgr::performFilesystemUpdate(const char* url, bool restartAfter) {
             return false;
         }
 
+        // Show initial progress on display
+        drawOTAProgress(0, title, "Downloading...");
+
         WiFiClient *stream = http.getStreamPtr();
-        
+
         // Use chunked download with periodic yields to prevent watchdog
         uint8_t buff[4096];
         size_t written = 0;
         int lastProgress = 0;
-        
+
         while (written < contentLength) {
             size_t available = stream->available();
             if (available == 0) {
                 delay(1);
                 continue;
             }
-            
+
             size_t toRead = min(available, sizeof(buff));
             size_t bytesRead = stream->readBytes(buff, toRead);
-            
+
             if (bytesRead > 0) {
                 size_t bytesWritten = Update.write(buff, bytesRead);
                 if (bytesWritten != bytesRead) {
@@ -313,10 +332,11 @@ bool GitHubMgr::performFilesystemUpdate(const char* url, bool restartAfter) {
                     return false;
                 }
                 written += bytesWritten;
-                
+
                 int progress = (written * 100) / contentLength;
-                if (progress / 10 > lastProgress / 10) {
+                if (progress / 5 > lastProgress / 5) {
                     Serial.printf("FS Progress: %d%%\n", progress);
+                    drawOTAProgress(progress, title, "Downloading...");
                     lastProgress = progress;
                 }
                 yield();
@@ -325,8 +345,11 @@ bool GitHubMgr::performFilesystemUpdate(const char* url, bool restartAfter) {
 
         if (written == contentLength) {
             Serial.println("Filesystem written successfully");
+            drawOTAProgress(100, title, "Installing...");
             if (Update.end()) {
                 Serial.println("Filesystem update complete");
+                drawOTAProgress(100, title, "Complete!");
+                delay(500);
                 http.end();
                 if (restartAfter) {
                     Serial.println("Restarting...");
@@ -349,7 +372,7 @@ void GitHubMgr::triggerUpdate(const char* currentVersion) {
     UpdateInfo info = checkUpdate(currentVersion);
     if (info.available && info.hasFirmware) {
         Serial.printf("Update Available: %s. Starting firmware download.\n", info.version.c_str());
-        performFirmwareUpdate(info.firmwareUrl.c_str(), true);
+        performFirmwareUpdate(info.firmwareUrl.c_str(), true, 1, 1);
     } else {
         Serial.println("No firmware update available.");
     }
@@ -369,10 +392,15 @@ bool GitHubMgr::performFullUpdate(const char* currentVersion) {
     bool firmwareUpdated = false;
     bool filesystemUpdated = false;
 
+    // Calculate total steps for progress display
+    int totalSteps = (info.hasFirmware ? 1 : 0) + (info.hasFilesystem ? 1 : 0);
+    int currentStep = 0;
+
     // Update firmware first (don't restart yet)
     if (info.hasFirmware) {
+        currentStep++;
         Serial.println("Updating firmware...");
-        firmwareUpdated = performFirmwareUpdate(info.firmwareUrl.c_str(), false);
+        firmwareUpdated = performFirmwareUpdate(info.firmwareUrl.c_str(), false, currentStep, totalSteps);
         if (!firmwareUpdated) {
             Serial.println("Firmware update failed!");
             return false;
@@ -381,8 +409,9 @@ bool GitHubMgr::performFullUpdate(const char* currentVersion) {
 
     // Then update filesystem (don't restart yet)
     if (info.hasFilesystem) {
+        currentStep++;
         Serial.println("Updating filesystem...");
-        filesystemUpdated = performFilesystemUpdate(info.filesystemUrl.c_str(), false);
+        filesystemUpdated = performFilesystemUpdate(info.filesystemUrl.c_str(), false, currentStep, totalSteps);
         if (!filesystemUpdated) {
             Serial.println("Filesystem update failed!");
             // Still restart if firmware was updated
@@ -396,6 +425,9 @@ bool GitHubMgr::performFullUpdate(const char* currentVersion) {
 
     // Restart after all updates complete
     if (firmwareUpdated || filesystemUpdated) {
+        // Show restarting message
+        drawOTAProgress(100, "Update Complete!", "Restarting...");
+        delay(1000);
         Serial.println("All updates complete. Restarting...");
         ESP.restart();
         return true;

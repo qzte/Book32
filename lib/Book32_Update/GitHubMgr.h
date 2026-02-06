@@ -18,8 +18,8 @@ public:
 
     void init();
     UpdateInfo checkUpdate(const char* currentVersion);
-    bool performFirmwareUpdate(const char* url, bool restartAfter = true);
-    bool performFilesystemUpdate(const char* url, bool restartAfter = true);
+    bool performFirmwareUpdate(const char* url, bool restartAfter = true, int step = 0, int totalSteps = 0);
+    bool performFilesystemUpdate(const char* url, bool restartAfter = true, int step = 0, int totalSteps = 0);
     bool performFullUpdate(const char* currentVersion);
     void triggerUpdate(const char* currentVersion);
 
