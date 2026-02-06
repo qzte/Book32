@@ -14,7 +14,8 @@ const float BatteryMgr::HIGH_VOLTAGE_THRESHOLD = 4.1f;  // Assume charging if vo
 
 BatteryMgr::BatteryMgr() : _lastReadTime(0), _historyIndex(0), _lastHistoryUpdate(0),
                            _previousVoltage(0.0f), _sleepTimeoutMinutes(5),
-                           _sleepMessage("Press button to wake"), _lastActivityTime(0) {
+                           _sleepMessage("Press button to wake"), _lastActivityTime(0),
+                           _lastDisplayedCharging(false), _lastIndicatorUpdate(0) {
     _cachedStatus = {0.0f, 0, false};
     // Initialize history
     for (int i = 0; i < 3; i++) {
@@ -291,4 +292,71 @@ void BatteryMgr::enterIdleSleep() {
     Serial.flush();
     delay(50);
     esp_deep_sleep_start();
+}
+
+void BatteryMgr::drawStatusIndicator() {
+    // Only update if charging state changed or if periodic refresh needed
+    unsigned long now = millis();
+    bool currentCharging = _cachedStatus.charging;
+
+    // Check if state changed or 30 seconds elapsed (for periodic refresh while charging)
+    bool stateChanged = (currentCharging != _lastDisplayedCharging);
+    bool periodicRefresh = currentCharging && (now - _lastIndicatorUpdate >= 30000);
+
+    if (!stateChanged && !periodicRefresh) {
+        return;  // No update needed
+    }
+
+    // Get display reference
+    Book32Display& display = DisplayMgr::getInstance().getDisplay();
+
+    // Indicator position (top-right corner)
+    // Small 50x25 area for a battery icon with charging indicator
+    const int INDICATOR_WIDTH = 55;
+    const int INDICATOR_HEIGHT = 30;
+    const int INDICATOR_X = display.width() - INDICATOR_WIDTH - 5;
+    const int INDICATOR_Y = 5;
+
+    // Use partial window for just the indicator area
+    display.setPartialWindow(INDICATOR_X, INDICATOR_Y, INDICATOR_WIDTH, INDICATOR_HEIGHT);
+
+    display.firstPage();
+    do {
+        display.fillScreen(GxEPD_WHITE);
+
+        // Battery outline
+        int batX = INDICATOR_X + 5;
+        int batY = INDICATOR_Y + 5;
+        int batW = 40;
+        int batH = 20;
+
+        display.drawRect(batX, batY, batW, batH, GxEPD_BLACK);
+        display.fillRect(batX + batW, batY + 5, 3, 10, GxEPD_BLACK);  // Battery tip
+
+        // Battery fill based on percentage
+        int fillWidth = (_cachedStatus.percentage * (batW - 4)) / 100;
+        if (fillWidth > 0) {
+            display.fillRect(batX + 2, batY + 2, fillWidth, batH - 4, GxEPD_BLACK);
+        }
+
+        // Draw lightning bolt if charging
+        if (currentCharging) {
+            // Draw white lightning bolt on the black fill
+            int boltX = batX + batW / 2;
+            int boltY = batY + 2;
+            // Simple lightning bolt shape
+            display.drawLine(boltX, boltY, boltX - 4, batY + batH/2, GxEPD_WHITE);
+            display.drawLine(boltX - 4, batY + batH/2, boltX + 2, batY + batH/2, GxEPD_WHITE);
+            display.drawLine(boltX + 2, batY + batH/2, boltX - 2, batY + batH - 2, GxEPD_WHITE);
+        }
+
+    } while (display.nextPage());
+
+    // Update tracking
+    _lastDisplayedCharging = currentCharging;
+    _lastIndicatorUpdate = now;
+
+    if (stateChanged) {
+        Serial.printf("Battery indicator updated: %s\n", currentCharging ? "Charging" : "Discharging");
+    }
 }

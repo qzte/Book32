@@ -36,6 +36,9 @@ public:
     void resetIdleTimer();                // Call when user interacts
     void enterIdleSleep();                // Display message and sleep
 
+    // Status indicator on e-ink display (partial update)
+    void drawStatusIndicator();           // Draw charging indicator if state changed
+
 private:
     BatteryMgr();
 
@@ -64,6 +67,10 @@ private:
     int _sleepTimeoutMinutes;          // 0 = disabled
     String _sleepMessage;
     unsigned long _lastActivityTime;   // Last user interaction
+
+    // Status indicator tracking
+    bool _lastDisplayedCharging;       // Last charging state shown on display
+    unsigned long _lastIndicatorUpdate;  // Last time indicator was updated
 
     // T-Energy-S3 typical divider: Voltage * 2
     // Some boards use different dividers. We'll start with x2.
