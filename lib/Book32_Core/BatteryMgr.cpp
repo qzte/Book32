@@ -13,7 +13,7 @@ const float BatteryMgr::CRITICAL_VOLTAGE = 3.0f;   // Shutdown at 3.0V
 const float BatteryMgr::HIGH_VOLTAGE_THRESHOLD = 4.0f;  // Assume charging if voltage >= this
 
 BatteryMgr::BatteryMgr() : _lastReadTime(0), _historyIndex(0), _lastHistoryUpdate(0),
-                           _previousVoltage(0.0f), _sleepTimeoutMinutes(5),
+                           _previousVoltage(0.0f), _sleepTimeoutMinutes(0),
                            _sleepMessage("Press button to wake"), _lastActivityTime(0),
                            _lastDisplayedCharging(false), _lastIndicatorUpdate(0) {
     _cachedStatus = {0.0f, 0, false};
@@ -234,7 +234,7 @@ void BatteryMgr::loadSleepSettings() {
         if (file) {
             DynamicJsonDocument doc(512);
             if (!deserializeJson(doc, file)) {
-                _sleepTimeoutMinutes = doc["sleepTimeout"] | 5;
+                _sleepTimeoutMinutes = doc["sleepTimeout"] | 0;
                 _sleepMessage = doc["sleepMessage"] | "Press button to wake";
                 Serial.printf("Loaded sleep settings: timeout=%d min, message=%s\n",
                              _sleepTimeoutMinutes, _sleepMessage.c_str());
@@ -242,10 +242,10 @@ void BatteryMgr::loadSleepSettings() {
             file.close();
         }
     } else {
-        // Use defaults
-        _sleepTimeoutMinutes = 5;
+        // Use defaults (sleep disabled)
+        _sleepTimeoutMinutes = 0;
         _sleepMessage = "Press button to wake";
-        Serial.println("Using default sleep settings (no config file)");
+        Serial.println("Using default sleep settings (sleep disabled)");
     }
 }
 
