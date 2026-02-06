@@ -10,10 +10,11 @@
 // Static constants
 const float BatteryMgr::CHARGE_THRESHOLD = 0.02f;  // 20mV increase = charging
 const float BatteryMgr::CRITICAL_VOLTAGE = 3.0f;   // Shutdown at 3.0V
+const float BatteryMgr::HIGH_VOLTAGE_THRESHOLD = 4.1f;  // Assume charging if voltage >= this
 
 BatteryMgr::BatteryMgr() : _lastReadTime(0), _historyIndex(0), _lastHistoryUpdate(0),
-                           _sleepTimeoutMinutes(5), _sleepMessage("Press button to wake"),
-                           _lastActivityTime(0) {
+                           _previousVoltage(0.0f), _sleepTimeoutMinutes(5),
+                           _sleepMessage("Press button to wake"), _lastActivityTime(0) {
     _cachedStatus = {0.0f, 0, false};
     // Initialize history
     for (int i = 0; i < 3; i++) {
@@ -39,12 +40,19 @@ void BatteryMgr::init() {
     // Perform initial read to populate cache
     updateCache();
 
-    // Initialize voltage history with current reading
+    // Initialize voltage history and previous voltage with current reading
+    _previousVoltage = _cachedStatus.voltage;
     for (int i = 0; i < 3; i++) {
         _voltageHistory[i] = _cachedStatus.voltage;
         _historyTimes[i] = millis();
     }
     _lastHistoryUpdate = millis();
+
+    // Check for immediate charging indicators on startup
+    if (_cachedStatus.voltage >= HIGH_VOLTAGE_THRESHOLD) {
+        _cachedStatus.charging = true;
+        Serial.printf("Battery: High voltage (%.2fV) - assuming charging/plugged in\n", _cachedStatus.voltage);
+    }
 
     // Load sleep settings from EbookFS
     loadSleepSettings();
@@ -56,7 +64,17 @@ void BatteryMgr::init() {
 void BatteryMgr::update() {
     unsigned long now = millis();
 
-    // Update voltage history periodically (every 30 seconds)
+    // Quick check: if voltage is high, assume charging (battery can't stay this high unplugged)
+    // This provides immediate detection without waiting for trend analysis
+    if (_cachedStatus.voltage >= HIGH_VOLTAGE_THRESHOLD) {
+        if (!_cachedStatus.charging) {
+            _cachedStatus.charging = true;
+            Serial.printf("Battery: High voltage (%.2fV >= %.2fV) - charging detected\n",
+                         _cachedStatus.voltage, HIGH_VOLTAGE_THRESHOLD);
+        }
+    }
+
+    // Update voltage history periodically for trend analysis
     if (now - _lastHistoryUpdate >= HISTORY_INTERVAL_MS) {
         // Make sure cache is fresh
         if (now - _lastReadTime >= CACHE_DURATION_MS) {
@@ -75,18 +93,24 @@ void BatteryMgr::update() {
         float oldestVoltage = _voltageHistory[oldestIndex];
         unsigned long oldestTime = _historyTimes[oldestIndex];
 
-        // Only compare if we have enough history (at least 60 seconds)
-        if (oldestTime > 0 && (now - oldestTime) >= 60000) {
+        // Compare with oldest reading (at least 30 seconds old for faster detection)
+        if (oldestTime > 0 && (now - oldestTime) >= 30000) {
             float voltageChange = _cachedStatus.voltage - oldestVoltage;
 
             // If voltage increased by more than threshold, we're charging
-            // Also consider it charging if voltage is at/above full charge
-            if (voltageChange > CHARGE_THRESHOLD || _cachedStatus.voltage >= 4.18f) {
-                _cachedStatus.charging = true;
-                Serial.printf("Battery: Charging detected (%.3fV -> %.3fV, delta=%.3fV)\n",
-                             oldestVoltage, _cachedStatus.voltage, voltageChange);
-            } else {
-                _cachedStatus.charging = false;
+            if (voltageChange > CHARGE_THRESHOLD) {
+                if (!_cachedStatus.charging) {
+                    _cachedStatus.charging = true;
+                    Serial.printf("Battery: Charging detected via trend (%.3fV -> %.3fV, +%.3fV)\n",
+                                 oldestVoltage, _cachedStatus.voltage, voltageChange);
+                }
+            } else if (_cachedStatus.voltage < HIGH_VOLTAGE_THRESHOLD && voltageChange < -CHARGE_THRESHOLD) {
+                // Voltage is dropping and below high threshold = not charging
+                if (_cachedStatus.charging) {
+                    _cachedStatus.charging = false;
+                    Serial.printf("Battery: Discharging detected (%.3fV -> %.3fV, %.3fV)\n",
+                                 oldestVoltage, _cachedStatus.voltage, voltageChange);
+                }
             }
         }
     }
@@ -135,10 +159,28 @@ void BatteryMgr::updateCache() {
     else if (voltage <= 3.0f) percentage = 0;
     else percentage = (int)((voltage - 3.0f) / (4.2f - 3.0f) * 100.0f);
 
-    // Preserve charging state from trend analysis (don't overwrite here)
+    // Preserve charging state from trend analysis
     bool currentCharging = _cachedStatus.charging;
 
-    // Update cache (keep charging state from trend analysis)
+    // Quick charging detection: if voltage increased since last read, we're likely charging
+    if (_previousVoltage > 0 && voltage > _previousVoltage + 0.01f) {
+        // Voltage increased by >10mV since last read - likely charging
+        if (!currentCharging) {
+            currentCharging = true;
+            Serial.printf("Battery: Quick charge detect (%.3fV -> %.3fV, +%.3fV)\n",
+                         _previousVoltage, voltage, voltage - _previousVoltage);
+        }
+    }
+
+    // High voltage always means charging
+    if (voltage >= HIGH_VOLTAGE_THRESHOLD) {
+        currentCharging = true;
+    }
+
+    // Update previous voltage for next comparison
+    _previousVoltage = voltage;
+
+    // Update cache
     _cachedStatus = {voltage, percentage, currentCharging};
     _lastReadTime = millis();
 }

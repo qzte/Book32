@@ -52,8 +52,10 @@ private:
     unsigned long _historyTimes[3];    // Timestamps for each reading
     int _historyIndex;                 // Current index in circular buffer
     unsigned long _lastHistoryUpdate;  // Last time we added to history
-    static const unsigned long HISTORY_INTERVAL_MS = 30000; // Sample every 30 seconds
+    float _previousVoltage;            // Previous voltage reading for short-term trend
+    static const unsigned long HISTORY_INTERVAL_MS = 15000; // Sample every 15 seconds (faster detection)
     static const float CHARGE_THRESHOLD;  // Voltage increase threshold to detect charging
+    static const float HIGH_VOLTAGE_THRESHOLD;  // Consider charging if voltage above this (near full)
 
     // Critical battery threshold
     static const float CRITICAL_VOLTAGE;  // Shutdown below this voltage
