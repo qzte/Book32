@@ -1,5 +1,6 @@
 #include "InputMgr.h"
 #include "../../include/Config.h"
+#include "BatteryMgr.h"
 
 InputMgr::InputMgr() : btn(PIN_BUTTON, true, true) { // Active Low, Pullup
     callback = nullptr;
@@ -40,16 +41,19 @@ void InputMgr::staticLongPress(void *ptr) {
 // Handlers -> Dispatch to App
 void InputMgr::onClick() {
     Serial.println("INPUT: Click -> NEXT");
+    BatteryMgr::getInstance().resetIdleTimer();  // Reset idle timer on user interaction
     if(callback) callback(INPUT_NEXT);
 }
 
 void InputMgr::onDoubleClick() {
     // Disabled for faster single-click response
     Serial.println("INPUT: Double-Click -> PREV");
+    BatteryMgr::getInstance().resetIdleTimer();  // Reset idle timer on user interaction
     if(callback) callback(INPUT_PREV);
 }
 
 void InputMgr::onLongPress() {
     Serial.println("INPUT: Long Press -> SELECT");
+    BatteryMgr::getInstance().resetIdleTimer();  // Reset idle timer on user interaction
     if(callback) callback(INPUT_SELECT);
 }

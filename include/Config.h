@@ -1,7 +1,7 @@
 #pragma once
 
 // System Information
-#define SYSTEM_VERSION "1.3.15"
+#define SYSTEM_VERSION "1.3.16"
 #define DEVICE_NAME "Book32"
 
 // Pin Definitions for Seeed XIAO ESP32-S3 (TRMNL 7.5" OG DIY Kit)

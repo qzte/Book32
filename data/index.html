@@ -126,6 +126,23 @@
             <!-- Settings Tab -->
             <section id="settings" class="tab-content">
                 <h1>Settings</h1>
+
+                <div class="card">
+                    <h3>Sleep Settings</h3>
+                    <div class="setting-row">
+                        <label for="sleep-timeout">Idle Sleep Timeout (Minutes)</label>
+                        <input type="number" id="sleep-timeout" min="0" max="60" value="5" style="width: 60px;">
+                    </div>
+                    <p class="hint">Set to 0 to disable auto-sleep. Device sleeps after this many minutes of inactivity.</p>
+                    <div class="setting-row" style="margin-top: 15px;">
+                        <label for="sleep-message">Sleep Message</label>
+                        <input type="text" id="sleep-message" maxlength="100" placeholder="Press button to wake" style="width: 100%; margin-top: 5px;">
+                    </div>
+                    <p class="hint">Message displayed on screen when device enters sleep mode.</p>
+                    <button class="btn secondary" onclick="saveSleepSettings()">Save Sleep Settings</button>
+                    <div id="sleep-settings-status" class="status-msg"></div>
+                </div>
+
                 <div class="card setting-row">
                     <span>Bluetooth</span>
                     <label class="switch">

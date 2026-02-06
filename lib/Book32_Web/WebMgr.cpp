@@ -642,6 +642,68 @@ void WebMgr::setupEndpoints() {
     );
     server->addHandler(klipperSettingsHandler);
 
+    // API: Sleep Settings - GET
+    server->on("/api/settings/sleep", HTTP_GET, [](AsyncWebServerRequest *request) {
+        AsyncResponseStream *response = request->beginResponseStream("application/json");
+        DynamicJsonDocument doc(512);
+
+        // Try to load existing settings from EbookFS
+        if (EbookFS.exists("/sleep_config.json")) {
+            File file = EbookFS.open("/sleep_config.json", "r");
+            if (file) {
+                DynamicJsonDocument savedDoc(512);
+                if (!deserializeJson(savedDoc, file)) {
+                    doc["sleepTimeout"] = savedDoc["sleepTimeout"] | 5;
+                    doc["sleepMessage"] = savedDoc["sleepMessage"] | "Press button to wake";
+                } else {
+                    doc["sleepTimeout"] = 5;  // Default
+                    doc["sleepMessage"] = "Press button to wake";
+                }
+                file.close();
+            } else {
+                doc["sleepTimeout"] = 5;  // Default
+                doc["sleepMessage"] = "Press button to wake";
+            }
+        } else {
+            doc["sleepTimeout"] = 5;  // Default: 5 minutes
+            doc["sleepMessage"] = "Press button to wake";
+        }
+
+        serializeJson(doc, *response);
+        request->send(response);
+    });
+
+    // API: Sleep Settings - POST
+    AsyncCallbackJsonWebHandler* sleepSettingsHandler = new AsyncCallbackJsonWebHandler("/api/settings/sleep",
+        [](AsyncWebServerRequest *request, JsonVariant &json) {
+            DynamicJsonDocument doc(512);
+
+            if (json.containsKey("sleepTimeout")) {
+                doc["sleepTimeout"] = json["sleepTimeout"].as<int>();
+            }
+            if (json.containsKey("sleepMessage")) {
+                doc["sleepMessage"] = json["sleepMessage"].as<String>();
+            }
+
+            // Save to EbookFS (persists through OTA updates)
+            File file = EbookFS.open("/sleep_config.json", FILE_WRITE);
+            if (file) {
+                serializeJson(doc, file);
+                file.close();
+                Serial.printf("Saved sleep settings: timeout=%d min, message=%s\n",
+                             doc["sleepTimeout"].as<int>(), doc["sleepMessage"].as<String>().c_str());
+
+                // Notify BatteryMgr to reload settings
+                BatteryMgr::getInstance().loadSleepSettings();
+
+                request->send(200, "application/json", "{\"status\":\"ok\"}");
+            } else {
+                request->send(500, "application/json", "{\"status\":\"error\",\"message\":\"Failed to save\"}");
+            }
+        }
+    );
+    server->addHandler(sleepSettingsHandler);
+
     // API: Switch to app by name
     server->on("/api/app/switch", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!request->hasParam("name")) {

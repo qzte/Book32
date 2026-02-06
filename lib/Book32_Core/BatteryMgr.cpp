@@ -2,12 +2,18 @@
 #include "../../include/Config.h"
 #include "Config.h"
 #include <esp_sleep.h>
+#include "Book32FS.h"
+#include "DisplayMgr.h"
+#include <ArduinoJson.h>
+#include <Fonts/FreeSans18pt7b.h>
 
 // Static constants
 const float BatteryMgr::CHARGE_THRESHOLD = 0.02f;  // 20mV increase = charging
 const float BatteryMgr::CRITICAL_VOLTAGE = 3.0f;   // Shutdown at 3.0V
 
-BatteryMgr::BatteryMgr() : _lastReadTime(0), _historyIndex(0), _lastHistoryUpdate(0) {
+BatteryMgr::BatteryMgr() : _lastReadTime(0), _historyIndex(0), _lastHistoryUpdate(0),
+                           _sleepTimeoutMinutes(5), _sleepMessage("Press button to wake"),
+                           _lastActivityTime(0) {
     _cachedStatus = {0.0f, 0, false};
     // Initialize history
     for (int i = 0; i < 3; i++) {
@@ -39,6 +45,12 @@ void BatteryMgr::init() {
         _historyTimes[i] = millis();
     }
     _lastHistoryUpdate = millis();
+
+    // Load sleep settings from EbookFS
+    loadSleepSettings();
+
+    // Initialize activity timer
+    _lastActivityTime = millis();
 }
 
 void BatteryMgr::update() {
@@ -83,6 +95,16 @@ void BatteryMgr::update() {
     if (isCriticallyLow()) {
         Serial.println("CRITICAL: Battery voltage too low! Shutting down...");
         shutdownLowBattery();
+    }
+
+    // Check for idle timeout (only if enabled and not charging)
+    if (_sleepTimeoutMinutes > 0 && !_cachedStatus.charging) {
+        unsigned long idleTime = now - _lastActivityTime;
+        unsigned long timeoutMs = (unsigned long)_sleepTimeoutMinutes * 60 * 1000;
+        if (idleTime >= timeoutMs) {
+            Serial.printf("Idle timeout reached (%d minutes). Entering sleep...\n", _sleepTimeoutMinutes);
+            enterIdleSleep();
+        }
     }
 }
 
@@ -160,4 +182,71 @@ int BatteryMgr::getPercentage() {
 
 bool BatteryMgr::isCharging() {
     return getStatus().charging;
+}
+
+void BatteryMgr::loadSleepSettings() {
+    // Load from EbookFS partition
+    if (EbookFS.exists("/sleep_config.json")) {
+        File file = EbookFS.open("/sleep_config.json", "r");
+        if (file) {
+            DynamicJsonDocument doc(512);
+            if (!deserializeJson(doc, file)) {
+                _sleepTimeoutMinutes = doc["sleepTimeout"] | 5;
+                _sleepMessage = doc["sleepMessage"] | "Press button to wake";
+                Serial.printf("Loaded sleep settings: timeout=%d min, message=%s\n",
+                             _sleepTimeoutMinutes, _sleepMessage.c_str());
+            }
+            file.close();
+        }
+    } else {
+        // Use defaults
+        _sleepTimeoutMinutes = 5;
+        _sleepMessage = "Press button to wake";
+        Serial.println("Using default sleep settings (no config file)");
+    }
+}
+
+void BatteryMgr::resetIdleTimer() {
+    _lastActivityTime = millis();
+}
+
+void BatteryMgr::enterIdleSleep() {
+    Serial.println("Entering idle sleep...");
+    Serial.printf("Sleep message: %s\n", _sleepMessage.c_str());
+    Serial.flush();
+
+    // Display sleep message on e-ink
+    Book32Display& display = DisplayMgr::getInstance().getDisplay();
+    display.setFullWindow();
+    display.firstPage();
+    do {
+        display.fillScreen(GxEPD_WHITE);
+        display.setFont(&FreeSans18pt7b);
+        display.setTextColor(GxEPD_BLACK);
+
+        // Calculate text bounds for centering
+        int16_t tbx, tby;
+        uint16_t tbw, tbh;
+        display.getTextBounds(_sleepMessage.c_str(), 0, 0, &tbx, &tby, &tbw, &tbh);
+
+        // Center the text on screen
+        int16_t x = (display.width() - tbw) / 2 - tbx;
+        int16_t y = (display.height() - tbh) / 2 - tby;
+
+        display.setCursor(x, y);
+        display.print(_sleepMessage);
+    } while (display.nextPage());
+
+    // Wait for display to finish updating
+    delay(100);
+
+    // Configure wake sources
+    // Wake on button press (GPIO5 on TRMNL, active LOW)
+    esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_BUTTON, 0);  // 0 = wake on LOW
+
+    // Enter deep sleep
+    Serial.println("Going to deep sleep...");
+    Serial.flush();
+    delay(50);
+    esp_deep_sleep_start();
 }

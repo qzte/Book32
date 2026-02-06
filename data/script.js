@@ -260,6 +260,7 @@ setInterval(fetchStatus, 5000);
 fetchStatus();
 getReaderSettings();
 getKlipperSettings();
+getSleepSettings();
 
 function getReaderSettings() {
     fetch('/api/settings/reader')
@@ -337,6 +338,51 @@ function saveKlipperSettings() {
         })
         .catch(error => {
             console.error('Error saving Klipper settings:', error);
+            statusDiv.textContent = "Connection error.";
+            statusDiv.style.color = "red";
+        });
+}
+
+// === Sleep Settings ===
+function getSleepSettings() {
+    fetch('/api/settings/sleep')
+        .then(response => response.json())
+        .then(data => {
+            if (data.sleepTimeout !== undefined) {
+                document.getElementById('sleep-timeout').value = data.sleepTimeout;
+            }
+            if (data.sleepMessage !== undefined) {
+                document.getElementById('sleep-message').value = data.sleepMessage;
+            }
+        })
+        .catch(error => console.error('Error loading sleep settings:', error));
+}
+
+function saveSleepSettings() {
+    const sleepTimeout = parseInt(document.getElementById('sleep-timeout').value);
+    const sleepMessage = document.getElementById('sleep-message').value;
+    const statusDiv = document.getElementById('sleep-settings-status');
+
+    fetch('/api/settings/sleep', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ sleepTimeout: sleepTimeout, sleepMessage: sleepMessage }),
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'ok') {
+                statusDiv.textContent = "Settings saved!";
+                statusDiv.style.color = "green";
+                setTimeout(() => statusDiv.textContent = "", 3000);
+            } else {
+                statusDiv.textContent = "Error saving settings.";
+                statusDiv.style.color = "red";
+            }
+        })
+        .catch(error => {
+            console.error('Error saving sleep settings:', error);
             statusDiv.textContent = "Connection error.";
             statusDiv.style.color = "red";
         });

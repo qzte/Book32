@@ -31,6 +31,11 @@ public:
     // Safely power off the device (deep sleep)
     void shutdownLowBattery();
 
+    // Idle sleep management
+    void loadSleepSettings();             // Load from EbookFS
+    void resetIdleTimer();                // Call when user interacts
+    void enterIdleSleep();                // Display message and sleep
+
 private:
     BatteryMgr();
 
@@ -52,6 +57,11 @@ private:
 
     // Critical battery threshold
     static const float CRITICAL_VOLTAGE;  // Shutdown below this voltage
+
+    // Idle sleep settings
+    int _sleepTimeoutMinutes;          // 0 = disabled
+    String _sleepMessage;
+    unsigned long _lastActivityTime;   // Last user interaction
 
     // T-Energy-S3 typical divider: Voltage * 2
     // Some boards use different dividers. We'll start with x2.
