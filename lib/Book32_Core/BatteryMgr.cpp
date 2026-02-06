@@ -8,9 +8,9 @@
 #include <Fonts/FreeSans18pt7b.h>
 
 // Static constants
-const float BatteryMgr::CHARGE_THRESHOLD = 0.02f;  // 20mV increase = charging
+const float BatteryMgr::CHARGE_THRESHOLD = 0.01f;  // 10mV increase = charging (more sensitive)
 const float BatteryMgr::CRITICAL_VOLTAGE = 3.0f;   // Shutdown at 3.0V
-const float BatteryMgr::HIGH_VOLTAGE_THRESHOLD = 4.1f;  // Assume charging if voltage >= this
+const float BatteryMgr::HIGH_VOLTAGE_THRESHOLD = 4.0f;  // Assume charging if voltage >= this
 
 BatteryMgr::BatteryMgr() : _lastReadTime(0), _historyIndex(0), _lastHistoryUpdate(0),
                            _previousVoltage(0.0f), _sleepTimeoutMinutes(5),
@@ -164,8 +164,8 @@ void BatteryMgr::updateCache() {
     bool currentCharging = _cachedStatus.charging;
 
     // Quick charging detection: if voltage increased since last read, we're likely charging
-    if (_previousVoltage > 0 && voltage > _previousVoltage + 0.01f) {
-        // Voltage increased by >10mV since last read - likely charging
+    if (_previousVoltage > 0 && voltage > _previousVoltage + 0.005f) {
+        // Voltage increased by >5mV since last read - likely charging
         if (!currentCharging) {
             currentCharging = true;
             Serial.printf("Battery: Quick charge detect (%.3fV -> %.3fV, +%.3fV)\n",
