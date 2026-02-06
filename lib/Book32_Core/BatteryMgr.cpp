@@ -295,16 +295,12 @@ void BatteryMgr::enterIdleSleep() {
 }
 
 void BatteryMgr::drawStatusIndicator() {
-    // Only update if charging state changed or if periodic refresh needed
-    unsigned long now = millis();
+    // Only update if charging state actually changed
     bool currentCharging = _cachedStatus.charging;
 
-    // Check if state changed or 30 seconds elapsed (for periodic refresh while charging)
-    bool stateChanged = (currentCharging != _lastDisplayedCharging);
-    bool periodicRefresh = currentCharging && (now - _lastIndicatorUpdate >= 30000);
-
-    if (!stateChanged && !periodicRefresh) {
-        return;  // No update needed
+    // Only refresh display when charging state changes (plugged in or unplugged)
+    if (currentCharging == _lastDisplayedCharging) {
+        return;  // No change, no update needed
     }
 
     // Get display reference
@@ -354,9 +350,6 @@ void BatteryMgr::drawStatusIndicator() {
 
     // Update tracking
     _lastDisplayedCharging = currentCharging;
-    _lastIndicatorUpdate = now;
 
-    if (stateChanged) {
-        Serial.printf("Battery indicator updated: %s\n", currentCharging ? "Charging" : "Discharging");
-    }
+    Serial.printf("Battery indicator updated: %s\n", currentCharging ? "Charging" : "Not charging");
 }
