@@ -135,6 +135,12 @@ void AppMainMenu::draw() {
         if (bat.percentage > 0) {
             display.fillRect(batX + 2, batY + 2, fillWidth, 16, GxEPD_BLACK);
         }
+        // Draw lightning bolt if charging
+        if (bat.charging) {
+            display.drawLine(batX + 20, batY + 2, batX + 14, batY + 10, GxEPD_WHITE);
+            display.drawLine(batX + 14, batY + 10, batX + 24, batY + 10, GxEPD_WHITE);
+            display.drawLine(batX + 24, batY + 10, batX + 18, batY + 18, GxEPD_WHITE);
+        }
 
         // === App Icons Grid ===
         int colWidth = screenW / COLS;

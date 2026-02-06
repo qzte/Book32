@@ -569,8 +569,12 @@ void AppKlipper::drawPrinterList() {
 
         // Battery percentage in header
         BatteryStatus bat = BatteryMgr::getInstance().getStatus();
-        char batStr[8];
-        snprintf(batStr, sizeof(batStr), "%d%%", bat.percentage);
+        char batStr[12];
+        if (bat.charging) {
+            snprintf(batStr, sizeof(batStr), "CHG");
+        } else {
+            snprintf(batStr, sizeof(batStr), "%d%%", bat.percentage);
+        }
         fontMgr.drawTextRight(display, batStr, screenW - MARGIN - 25, y, FONT_SIZE_SMALL, GxEPD_BLACK);
         // Battery icon
         int batX = screenW - MARGIN - 20;
@@ -579,6 +583,12 @@ void AppKlipper::drawPrinterList() {
         display.fillRect(batX + 18, batY + 2, 2, 6, GxEPD_BLACK);
         int batFill = (bat.percentage * 14) / 100;
         if (batFill > 0) display.fillRect(batX + 2, batY + 2, batFill, 6, GxEPD_BLACK);
+        // Draw lightning bolt if charging
+        if (bat.charging) {
+            display.drawLine(batX + 9, batY + 1, batX + 6, batY + 5, GxEPD_WHITE);
+            display.drawLine(batX + 6, batY + 5, batX + 11, batY + 5, GxEPD_WHITE);
+            display.drawLine(batX + 11, batY + 5, batX + 8, batY + 9, GxEPD_WHITE);
+        }
 
         y += 10;
         display.drawLine(0, y, screenW, y, GxEPD_BLACK);

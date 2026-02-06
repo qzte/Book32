@@ -14,6 +14,9 @@ public:
 
     void init();
 
+    // Call periodically from main loop to update charge detection and check critical battery
+    void update();
+
     // Preferred: Get all battery info from single cached read
     BatteryStatus getStatus();
 
@@ -21,6 +24,12 @@ public:
     float getVoltage();
     int getPercentage();
     bool isCharging();
+
+    // Check if battery is critically low (should shutdown)
+    bool isCriticallyLow();
+
+    // Safely power off the device (deep sleep)
+    void shutdownLowBattery();
 
 private:
     BatteryMgr();
@@ -32,6 +41,17 @@ private:
     BatteryStatus _cachedStatus;
     unsigned long _lastReadTime;
     static const unsigned long CACHE_DURATION_MS = 5000; // Cache for 5 seconds
+
+    // Charge detection via voltage trend
+    float _voltageHistory[3];          // Store 3 readings over time
+    unsigned long _historyTimes[3];    // Timestamps for each reading
+    int _historyIndex;                 // Current index in circular buffer
+    unsigned long _lastHistoryUpdate;  // Last time we added to history
+    static const unsigned long HISTORY_INTERVAL_MS = 30000; // Sample every 30 seconds
+    static const float CHARGE_THRESHOLD;  // Voltage increase threshold to detect charging
+
+    // Critical battery threshold
+    static const float CRITICAL_VOLTAGE;  // Shutdown below this voltage
 
     // T-Energy-S3 typical divider: Voltage * 2
     // Some boards use different dividers. We'll start with x2.

@@ -1,9 +1,19 @@
 #include "BatteryMgr.h"
 #include "../../include/Config.h"
 #include "Config.h"
+#include <esp_sleep.h>
 
-BatteryMgr::BatteryMgr() : _lastReadTime(0) {
+// Static constants
+const float BatteryMgr::CHARGE_THRESHOLD = 0.02f;  // 20mV increase = charging
+const float BatteryMgr::CRITICAL_VOLTAGE = 3.0f;   // Shutdown at 3.0V
+
+BatteryMgr::BatteryMgr() : _lastReadTime(0), _historyIndex(0), _lastHistoryUpdate(0) {
     _cachedStatus = {0.0f, 0, false};
+    // Initialize history
+    for (int i = 0; i < 3; i++) {
+        _voltageHistory[i] = 0.0f;
+        _historyTimes[i] = 0;
+    }
 }
 
 BatteryMgr& BatteryMgr::getInstance() {
@@ -22,6 +32,58 @@ void BatteryMgr::init() {
 
     // Perform initial read to populate cache
     updateCache();
+
+    // Initialize voltage history with current reading
+    for (int i = 0; i < 3; i++) {
+        _voltageHistory[i] = _cachedStatus.voltage;
+        _historyTimes[i] = millis();
+    }
+    _lastHistoryUpdate = millis();
+}
+
+void BatteryMgr::update() {
+    unsigned long now = millis();
+
+    // Update voltage history periodically (every 30 seconds)
+    if (now - _lastHistoryUpdate >= HISTORY_INTERVAL_MS) {
+        // Make sure cache is fresh
+        if (now - _lastReadTime >= CACHE_DURATION_MS) {
+            updateCache();
+        }
+
+        // Add current voltage to history
+        _voltageHistory[_historyIndex] = _cachedStatus.voltage;
+        _historyTimes[_historyIndex] = now;
+        _historyIndex = (_historyIndex + 1) % 3;
+        _lastHistoryUpdate = now;
+
+        // Check if voltage is trending upward (charging)
+        // Compare oldest reading to current
+        int oldestIndex = _historyIndex;  // After increment, this points to oldest
+        float oldestVoltage = _voltageHistory[oldestIndex];
+        unsigned long oldestTime = _historyTimes[oldestIndex];
+
+        // Only compare if we have enough history (at least 60 seconds)
+        if (oldestTime > 0 && (now - oldestTime) >= 60000) {
+            float voltageChange = _cachedStatus.voltage - oldestVoltage;
+
+            // If voltage increased by more than threshold, we're charging
+            // Also consider it charging if voltage is at/above full charge
+            if (voltageChange > CHARGE_THRESHOLD || _cachedStatus.voltage >= 4.18f) {
+                _cachedStatus.charging = true;
+                Serial.printf("Battery: Charging detected (%.3fV -> %.3fV, delta=%.3fV)\n",
+                             oldestVoltage, _cachedStatus.voltage, voltageChange);
+            } else {
+                _cachedStatus.charging = false;
+            }
+        }
+    }
+
+    // Check for critical low battery
+    if (isCriticallyLow()) {
+        Serial.println("CRITICAL: Battery voltage too low! Shutting down...");
+        shutdownLowBattery();
+    }
 }
 
 void BatteryMgr::updateCache() {
@@ -51,12 +113,33 @@ void BatteryMgr::updateCache() {
     else if (voltage <= 3.0f) percentage = 0;
     else percentage = (int)((voltage - 3.0f) / (4.2f - 3.0f) * 100.0f);
 
-    // Check if charging (voltage > 4.22V indicates external power)
-    bool charging = (voltage > 4.22f);
+    // Preserve charging state from trend analysis (don't overwrite here)
+    bool currentCharging = _cachedStatus.charging;
 
-    // Update cache
-    _cachedStatus = {voltage, percentage, charging};
+    // Update cache (keep charging state from trend analysis)
+    _cachedStatus = {voltage, percentage, currentCharging};
     _lastReadTime = millis();
+}
+
+bool BatteryMgr::isCriticallyLow() {
+    // Make sure we have a fresh reading
+    if (millis() - _lastReadTime >= CACHE_DURATION_MS) {
+        updateCache();
+    }
+    return _cachedStatus.voltage <= CRITICAL_VOLTAGE && !_cachedStatus.charging;
+}
+
+void BatteryMgr::shutdownLowBattery() {
+    Serial.println("Battery critically low - entering deep sleep");
+    Serial.printf("Voltage: %.2fV\n", _cachedStatus.voltage);
+    Serial.flush();
+
+    // Small delay to let serial finish
+    delay(100);
+
+    // Enter deep sleep indefinitely (will wake on reset/power)
+    // This is the safest way to "power off" on ESP32
+    esp_deep_sleep_start();
 }
 
 BatteryStatus BatteryMgr::getStatus() {

@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git fetch:*)",
+      "Bash(git pull:*)",
+      "Bash(pio run)",
+      "Bash(python -m platformio run:*)",
+      "Bash(pio run:*)",
+      "Bash(~/.platformio/penv/Scripts/platformio.exe run -e trmnl)",
+      "Bash(~/.platformio/penv/Scripts/platformio.exe run:*)",
+      "Bash(dir:*)",
+      "Bash(find:*)",
+      "Bash(\"C:\\\\Users\\\\Ron\\\\.platformio\\\\penv\\\\Scripts\\\\pio.exe\" run -e seeed_xiao_esp32s3)",
+      "Bash(copy:*)",
+      "Bash(C:UsersRon.platformiopenvScriptspio.exe run)",
+      "Bash(/c/Users/Ron/.platformio/penv/Scripts/pio.exe run:*)",
+      "Bash(gh release create:*)",
+      "Bash(where:*)",
+      "Bash(choco install:*)",
+      "Bash(winget install:*)",
+      "Bash(powershell.exe:*)",
+      "Bash(curl:*)",
+      "Bash(msiexec:*)",
+      "Bash(cmd.exe /c \"msiexec /i C:\\\\Users\\\\Ron\\\\Downloads\\\\gh_installer.msi /qn\")",
+      "Bash(\"/c/Program Files/GitHub CLI/gh.exe\" --version)",
+      "Bash(/c/Users/Ron/Downloads/bin/gh.exe release create:*)",
+      "Bash(~/.platformio/penv/Scripts/pio run:*)",
+      "Bash(\"C:\\\\Users\\\\Ron\\\\Downloads\\\\bin\\\\gh.exe\" release create v1.3.10 --title \"v1.3.10\" --notes \"$\\(cat <<''EOF''\n## Changes\n- **Fix Klipper watchdog crash**: Move network scanning to separate FreeRTOS task to prevent watchdog timeouts\n- **Full subnet scanning**: Scan all IPs \\(1-254\\) instead of limited .100-.120 range - finds printers at any IP address\n- **Improved task management**: Use vTaskDelay\\(\\) for proper task yielding during scan operations\n- **Thread safety**: Add volatile flags for safe communication between scan task and main loop\nEOF\n\\)\" \"c:\\\\Users\\\\Ron\\\\Downloads\\\\DEV\\\\Book32-TRMNL\\\\Book32\\\\.pio\\\\build\\\\seeed_xiao_esp32s3\\\\firmware.bin\" \"c:\\\\Users\\\\Ron\\\\Downloads\\\\DEV\\\\Book32-TRMNL\\\\Book32\\\\.pio\\\\build\\\\seeed_xiao_esp32s3\\\\littlefs.bin\")",
+      "Bash(\"C:\\\\Users\\\\Ron\\\\Downloads\\\\bin\\\\gh.exe\" release create v1.3.11 --title \"v1.3.11\" --notes \"$\\(cat <<''EOF''\n## Changes\n- **Multi-port scanning**: Now checks ports 7125 \\(default Moonraker\\), 80 \\(nginx proxy\\), and 4408 \\(Creality/alternative\\)\n- Fixes discovery of printers using nginx reverse proxy \\(Mainsail/Fluidd on port 80\\)\nEOF\n\\)\" \"c:\\\\Users\\\\Ron\\\\Downloads\\\\DEV\\\\Book32-TRMNL\\\\Book32\\\\.pio\\\\build\\\\seeed_xiao_esp32s3\\\\firmware.bin\")",
+      "Bash(\"C:\\\\Users\\\\Ron\\\\Downloads\\\\bin\\\\gh.exe\" release create v1.3.12 --title \"v1.3.12\" --notes \"$\\(cat <<''EOF''\n## Changes\n- **Fix garbled display**: Draw initial scanning screen with full refresh before starting network operations\n- **Progress bar updates**: Progress bar now updates every 500ms during scanning\n- Small delay after initial draw to let e-ink complete before WiFi operations start\nEOF\n\\)\" \"c:\\\\Users\\\\Ron\\\\Downloads\\\\DEV\\\\Book32-TRMNL\\\\Book32\\\\.pio\\\\build\\\\seeed_xiao_esp32s3\\\\firmware.bin\")",
+      "Bash(unzip:*)",
+      "Bash(\"C:\\\\Users\\\\Ron\\\\Downloads\\\\bin\\\\gh.exe\" release create v1.3.13 --title \"v1.3.13\" --notes \"$\\(cat <<''EOF''\n## Changes\n- **Fix huge font on copyright pages**: The EPUB parser was detecting CSS classes containing \"title\" \\(like \"title-page-contributor\"\\) as chapter headers, causing text to render in 24pt font instead of normal 9pt\n- More specific chapter detection now requires \"chapter\", \"chap-\", \"heading\", or \"section-title\" in class names\nEOF\n\\)\" \"c:\\\\Users\\\\Ron\\\\Downloads\\\\DEV\\\\Book32-TRMNL\\\\Book32\\\\.pio\\\\build\\\\seeed_xiao_esp32s3\\\\firmware.bin\")",
+      "Bash(\"C:\\\\Users\\\\Ron\\\\Downloads\\\\bin\\\\gh.exe\" release create v1.3.14 --title \"v1.3.14\" --notes \"$\\(cat <<''EOF''\n## Changes\n- **Fix chapter body rendering as huge text**: The EPUB parser was matching CSS classes like \"heading\" and \"chapter\" on wrapper divs, causing all content inside to render as headers\n- Now only matches very specific title classes: \"chapter-title\", \"chap-title\", \"section-title\", \"part-title\"\n- Actual `<h1>`-`<h6>` header tags are handled separately and still work correctly\nEOF\n\\)\" \"c:\\\\Users\\\\Ron\\\\Downloads\\\\DEV\\\\Book32-TRMNL\\\\Book32\\\\.pio\\\\build\\\\seeed_xiao_esp32s3\\\\firmware.bin\")"
+    ]
+  }
+}

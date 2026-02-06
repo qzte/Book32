@@ -89,4 +89,5 @@ void loop() {
     AppMgr::getInstance().update();
     AppMgr::getInstance().draw();  // Trigger app rendering
     WebMgr::getInstance().update();
+    BatteryMgr::getInstance().update();  // Check charging state and critical battery
 }
