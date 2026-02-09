@@ -653,19 +653,19 @@ void WebMgr::setupEndpoints() {
             if (file) {
                 DynamicJsonDocument savedDoc(512);
                 if (!deserializeJson(savedDoc, file)) {
-                    doc["sleepTimeout"] = savedDoc["sleepTimeout"] | 5;
+                    doc["sleepTimeout"] = savedDoc.containsKey("sleepTimeout") ? savedDoc["sleepTimeout"].as<int>() : 0;
                     doc["sleepMessage"] = savedDoc["sleepMessage"] | "Press button to wake";
                 } else {
-                    doc["sleepTimeout"] = 5;  // Default
+                    doc["sleepTimeout"] = 0;  // Default (disabled)
                     doc["sleepMessage"] = "Press button to wake";
                 }
                 file.close();
             } else {
-                doc["sleepTimeout"] = 5;  // Default
+                doc["sleepTimeout"] = 0;  // Default (disabled)
                 doc["sleepMessage"] = "Press button to wake";
             }
         } else {
-            doc["sleepTimeout"] = 5;  // Default: 5 minutes
+            doc["sleepTimeout"] = 0;  // Default: disabled
             doc["sleepMessage"] = "Press button to wake";
         }
 

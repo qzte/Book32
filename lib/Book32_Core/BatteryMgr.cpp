@@ -234,7 +234,7 @@ void BatteryMgr::loadSleepSettings() {
         if (file) {
             DynamicJsonDocument doc(512);
             if (!deserializeJson(doc, file)) {
-                _sleepTimeoutMinutes = doc["sleepTimeout"] | 0;
+                _sleepTimeoutMinutes = doc.containsKey("sleepTimeout") ? doc["sleepTimeout"].as<int>() : 0;
                 _sleepMessage = doc["sleepMessage"] | "Press button to wake";
                 Serial.printf("Loaded sleep settings: timeout=%d min, message=%s\n",
                              _sleepTimeoutMinutes, _sleepMessage.c_str());
