@@ -2,7 +2,6 @@
 #include "DisplayMgr.h"
 #include "AppMgr.h"
 #include "FontMgr.h"
-#include "BatteryMgr.h"
 #include "Book32FS.h"
 #include "icon_klipper.h"
 #include <WiFi.h>
@@ -567,28 +566,7 @@ void AppKlipper::drawPrinterList() {
         y = 35;
         fontMgr.drawText(display, "Klipper Printers", MARGIN, y, FONT_SIZE_SUBTITLE, GxEPD_BLACK);
 
-        // Battery percentage in header
-        BatteryStatus bat = BatteryMgr::getInstance().getStatus();
-        char batStr[12];
-        if (bat.charging) {
-            snprintf(batStr, sizeof(batStr), "CHG");
-        } else {
-            snprintf(batStr, sizeof(batStr), "%d%%", bat.percentage);
-        }
-        fontMgr.drawTextRight(display, batStr, screenW - MARGIN - 25, y, FONT_SIZE_SMALL, GxEPD_BLACK);
-        // Battery icon
-        int batX = screenW - MARGIN - 20;
-        int batY = y - 12;
-        display.drawRect(batX, batY, 18, 10, GxEPD_BLACK);
-        display.fillRect(batX + 18, batY + 2, 2, 6, GxEPD_BLACK);
-        int batFill = (bat.percentage * 14) / 100;
-        if (batFill > 0) display.fillRect(batX + 2, batY + 2, batFill, 6, GxEPD_BLACK);
-        // Draw lightning bolt if charging
-        if (bat.charging) {
-            display.drawLine(batX + 9, batY + 1, batX + 6, batY + 5, GxEPD_WHITE);
-            display.drawLine(batX + 6, batY + 5, batX + 11, batY + 5, GxEPD_WHITE);
-            display.drawLine(batX + 11, batY + 5, batX + 8, batY + 9, GxEPD_WHITE);
-        }
+        // Battery display removed from Klipper screen
 
         y += 10;
         display.drawLine(0, y, screenW, y, GxEPD_BLACK);

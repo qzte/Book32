@@ -63,6 +63,14 @@ private:
     // Critical battery threshold
     static const float CRITICAL_VOLTAGE;  // Shutdown below this voltage
 
+    // Spike rejection and false-shutdown protection
+    float _lastValidVoltage;              // Last plausible voltage reading
+    int _criticalCount;                   // Consecutive critical readings counter
+    unsigned long _lastChargingTime;      // Last time charging was detected
+    static const int CRITICAL_CONFIRM_COUNT = 3;     // Require N consecutive critical readings
+    static const float SPIKE_REJECT_THRESHOLD;       // Max plausible V change per read (0.5V)
+    static const unsigned long CHARGING_GRACE_MS = 60000;  // 60s grace after charging detected
+
     // Idle sleep settings
     int _sleepTimeoutMinutes;          // 0 = disabled
     String _sleepMessage;

@@ -11,11 +11,13 @@
 const float BatteryMgr::CHARGE_THRESHOLD = 0.03f;  // 30mV increase = charging (avoid false positives from fluctuation)
 const float BatteryMgr::CRITICAL_VOLTAGE = 3.0f;   // Shutdown at 3.0V
 const float BatteryMgr::HIGH_VOLTAGE_THRESHOLD = 4.0f;  // Assume charging if voltage >= this
+const float BatteryMgr::SPIKE_REJECT_THRESHOLD = 0.5f;  // Reject readings that jump > 0.5V
 
 BatteryMgr::BatteryMgr() : _lastReadTime(0), _historyIndex(0), _lastHistoryUpdate(0),
                            _previousVoltage(0.0f), _sleepTimeoutMinutes(0),
                            _sleepMessage("Press button to wake"), _lastActivityTime(0),
-                           _lastDisplayedCharging(false), _lastIndicatorUpdate(0) {
+                           _lastDisplayedCharging(false), _lastIndicatorUpdate(0),
+                           _lastValidVoltage(0.0f), _criticalCount(0), _lastChargingTime(0) {
     _cachedStatus = {0.0f, 0, false};
     // Initialize history
     for (int i = 0; i < 5; i++) {
@@ -73,6 +75,7 @@ void BatteryMgr::update() {
             Serial.printf("Battery: High voltage (%.2fV >= %.2fV) - charging detected\n",
                          _cachedStatus.voltage, HIGH_VOLTAGE_THRESHOLD);
         }
+        _lastChargingTime = now;  // Track when charging was last seen
     }
 
     // Update voltage history periodically for trend analysis
@@ -105,6 +108,7 @@ void BatteryMgr::update() {
                     Serial.printf("Battery: Charging detected via trend (%.3fV -> %.3fV, +%.3fV)\n",
                                  oldestVoltage, _cachedStatus.voltage, voltageChange);
                 }
+                _lastChargingTime = now;  // Track when charging was last seen
             } else if (_cachedStatus.voltage < HIGH_VOLTAGE_THRESHOLD && voltageChange < -CHARGE_THRESHOLD) {
                 // Voltage is dropping and below high threshold = not charging
                 if (_cachedStatus.charging) {
@@ -154,6 +158,16 @@ void BatteryMgr::updateCache() {
     // Convert to voltage: (adc / 4095) * 3.3V reference * 2 (voltage divider)
     float voltage = (raw / 4095.0f) * 3.3f * 2.0f;
 
+    // Spike rejection: discard readings that jump too far from last valid reading
+    // This protects against ADC noise during heavy WiFi activity
+    if (_lastValidVoltage > 0.0f && fabsf(voltage - _lastValidVoltage) > SPIKE_REJECT_THRESHOLD) {
+        Serial.printf("Battery: SPIKE REJECTED (%.3fV -> %.3fV, delta=%.3fV) - keeping %.3fV\n",
+                     _lastValidVoltage, voltage, voltage - _lastValidVoltage, _lastValidVoltage);
+        voltage = _lastValidVoltage;  // Keep previous valid reading
+    } else {
+        _lastValidVoltage = voltage;  // Accept as valid
+    }
+
     // Calculate percentage (LiPo: 3.0V = 0%, 4.2V = 100%)
     int percentage = 0;
     if (voltage >= 4.2f) percentage = 100;
@@ -191,7 +205,29 @@ bool BatteryMgr::isCriticallyLow() {
     if (millis() - _lastReadTime >= CACHE_DURATION_MS) {
         updateCache();
     }
-    return _cachedStatus.voltage <= CRITICAL_VOLTAGE && !_cachedStatus.charging;
+
+    // Charging grace period: if charging was detected recently, don't allow critical shutdown
+    // WiFi noise can simultaneously corrupt voltage AND flip charging state
+    if (_lastChargingTime > 0 && (millis() - _lastChargingTime) < CHARGING_GRACE_MS) {
+        _criticalCount = 0;
+        return false;
+    }
+
+    // Require consecutive critical readings to prevent single-spike shutdown
+    if (_cachedStatus.voltage <= CRITICAL_VOLTAGE && !_cachedStatus.charging) {
+        _criticalCount++;
+        Serial.printf("Battery: Critical reading #%d (%.2fV)\n", _criticalCount, _cachedStatus.voltage);
+        if (_criticalCount >= CRITICAL_CONFIRM_COUNT) {
+            return true;  // Confirmed critically low
+        }
+    } else {
+        if (_criticalCount > 0) {
+            Serial.printf("Battery: Critical counter reset (voltage=%.2fV, charging=%s)\n",
+                         _cachedStatus.voltage, _cachedStatus.charging ? "yes" : "no");
+        }
+        _criticalCount = 0;  // Reset counter on any normal reading
+    }
+    return false;
 }
 
 void BatteryMgr::shutdownLowBattery() {
