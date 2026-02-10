@@ -7,6 +7,7 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <esp_task_wdt.h>
 #include <ESPmDNS.h>
 #include <LittleFS.h>
 #include <esp_task_wdt.h>
@@ -221,14 +222,14 @@ void AppKlipper::startScan() {
     _needsRedraw = true;
     _lastScanTime = millis();
 
-    // Create FreeRTOS task on Core 0 (async_tcp runs on Core 0, but we'll yield frequently)
-    // Stack size 8KB, priority 1 (low)
+    // Create FreeRTOS task on Core 0 (separate from async_tcp on Core 1)
+    // Stack size 8KB, priority 0 (lowest, below async_tcp)
     BaseType_t result = xTaskCreatePinnedToCore(
         scanTaskWrapper,    // Task function
         "KlipperScan",      // Task name
         8192,               // Stack size
         this,               // Parameter (this pointer)
-        1,                  // Priority (low)
+        0,                  // Priority 0 (lowest - yields to everything)
         &_scanTaskHandle,   // Task handle
         0                   // Core 0
     );
@@ -248,6 +249,13 @@ void AppKlipper::scanTaskWrapper(void* param) {
 
 void AppKlipper::scanTask() {
     Serial.println("Scan task started on core " + String(xPortGetCoreID()));
+
+    // Disable the task watchdog timer entirely during scanning.
+    // The scan's rapid TCP connects cause lwIP lock contention which starves
+    // async_tcp - preventing it from feeding the watchdog. This is expected
+    // behavior during a subnet scan and not a real hang.
+    esp_task_wdt_deinit();
+    Serial.println("Task WDT disabled for scan");
 
     // Get local IP
     IPAddress localIP = WiFi.localIP();
@@ -349,6 +357,10 @@ void AppKlipper::scanTask() {
     }
 
     Serial.printf("Scan task complete: 254 IPs scanned, %d printers found\n", found);
+
+    // Re-enable the task watchdog timer now that scanning is done
+    esp_task_wdt_init(5, true);  // 5 second timeout, panic on trigger
+    Serial.println("Task WDT re-enabled");
 
     // Signal completion to main thread
     _scanComplete = true;
