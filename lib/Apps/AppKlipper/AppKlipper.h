@@ -71,6 +71,7 @@ private:
     int _fullRefreshInterval;  // Minutes between full refreshes (default 5)
     unsigned long _lastFullRefreshTime;
     bool _firstDraw;
+    unsigned long _statusUpdateInterval;  // Seconds between status polls (default 30)
 
     // Settings
     void loadSettings();

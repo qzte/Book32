@@ -13,8 +13,7 @@
 
 // Scan interval (30 seconds)
 static const unsigned long SCAN_INTERVAL = 30000;
-// Status update interval (10 seconds)
-static const unsigned long UPDATE_INTERVAL = 10000;
+// Default status update interval (30 seconds)
 
 AppKlipper::AppKlipper() {
     _state = KLIPPER_SCANNING;
@@ -31,6 +30,7 @@ AppKlipper::AppKlipper() {
     _fullRefreshInterval = 5;  // Default: full refresh every 5 minutes
     _lastFullRefreshTime = 0;
     _firstDraw = true;
+    _statusUpdateInterval = 30;  // Default: 30 seconds
     loadSettings();
 }
 
@@ -42,7 +42,9 @@ void AppKlipper::loadSettings() {
             DynamicJsonDocument doc(256);
             if (!deserializeJson(doc, file)) {
                 _fullRefreshInterval = doc["fullRefreshInterval"] | 5;
-                Serial.printf("Klipper: Loaded settings - fullRefreshInterval=%d min\n", _fullRefreshInterval);
+                _statusUpdateInterval = doc["statusUpdateInterval"] | 30;
+                Serial.printf("Klipper: Loaded settings - fullRefreshInterval=%d min, statusUpdate=%lu sec\n",
+                             _fullRefreshInterval, _statusUpdateInterval);
             }
             file.close();
         }
@@ -167,7 +169,8 @@ void AppKlipper::update() {
     }
 
     // Periodic status update in list view (partial refresh)
-    if (_state == KLIPPER_LIST && !_printers.empty() && (now - _lastUpdateTime > UPDATE_INTERVAL)) {
+    unsigned long updateIntervalMs = _statusUpdateInterval * 1000UL;
+    if (_state == KLIPPER_LIST && !_printers.empty() && (now - _lastUpdateTime > updateIntervalMs)) {
         for (auto& printer : _printers) {
             fetchPrinterStatus(printer);
         }
@@ -496,8 +499,10 @@ void AppKlipper::drawScanning() {
         display.drawLine(0, 50, screenW, 50, GxEPD_BLACK);
 
         if (_scanning) {
-            // Centered "Scanning..." text
-            fontMgr.drawTextCentered(display, "Scanning...", screenH / 2 - 60, FONT_SIZE_MENU, GxEPD_BLACK);
+            // Centered "Scanning..." text with IP count
+            char scanText[48];
+            snprintf(scanText, sizeof(scanText), "Scanning... %d / %d IPs", (int)_scannedIPs, _totalIPs);
+            fontMgr.drawTextCentered(display, scanText, screenH / 2 - 60, FONT_SIZE_MENU, GxEPD_BLACK);
 
             // Progress bar - centered, clean design
             int barWidth = screenW - 80;

@@ -317,12 +317,16 @@ function getKlipperSettings() {
             if (data.fullRefreshInterval !== undefined) {
                 document.getElementById('klipper-refresh').value = data.fullRefreshInterval;
             }
+            if (data.statusUpdateInterval !== undefined) {
+                document.getElementById('klipper-update-interval').value = data.statusUpdateInterval;
+            }
         })
         .catch(error => console.error('Error loading Klipper settings:', error));
 }
 
 function saveKlipperSettings() {
     const refreshInterval = parseInt(document.getElementById('klipper-refresh').value);
+    const updateInterval = parseInt(document.getElementById('klipper-update-interval').value);
     const statusDiv = document.getElementById('klipper-settings-status');
 
     fetch('/api/settings/klipper', {
@@ -330,7 +334,7 @@ function saveKlipperSettings() {
         headers: {
             'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ fullRefreshInterval: refreshInterval }),
+        body: JSON.stringify({ fullRefreshInterval: refreshInterval, statusUpdateInterval: updateInterval }),
     })
         .then(response => response.json())
         .then(data => {

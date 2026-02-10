@@ -604,15 +604,19 @@ void WebMgr::setupEndpoints() {
                 DynamicJsonDocument savedDoc(256);
                 if (!deserializeJson(savedDoc, file)) {
                     doc["fullRefreshInterval"] = savedDoc["fullRefreshInterval"] | 5;
+                    doc["statusUpdateInterval"] = savedDoc["statusUpdateInterval"] | 30;
                 } else {
-                    doc["fullRefreshInterval"] = 5;  // Default
+                    doc["fullRefreshInterval"] = 5;
+                    doc["statusUpdateInterval"] = 30;
                 }
                 file.close();
             } else {
-                doc["fullRefreshInterval"] = 5;  // Default
+                doc["fullRefreshInterval"] = 5;
+                doc["statusUpdateInterval"] = 30;
             }
         } else {
             doc["fullRefreshInterval"] = 5;  // Default: 5 minutes
+            doc["statusUpdateInterval"] = 30;  // Default: 30 seconds
         }
 
         serializeJson(doc, *response);
@@ -627,13 +631,17 @@ void WebMgr::setupEndpoints() {
             if (json.containsKey("fullRefreshInterval")) {
                 doc["fullRefreshInterval"] = json["fullRefreshInterval"].as<int>();
             }
+            if (json.containsKey("statusUpdateInterval")) {
+                doc["statusUpdateInterval"] = json["statusUpdateInterval"].as<int>();
+            }
 
             // Save to EbookFS (persists through OTA updates)
             File file = EbookFS.open("/klipper_config.json", FILE_WRITE);
             if (file) {
                 serializeJson(doc, file);
                 file.close();
-                Serial.printf("Saved Klipper settings: fullRefreshInterval=%d min\n", doc["fullRefreshInterval"].as<int>());
+                Serial.printf("Saved Klipper settings: fullRefreshInterval=%d min, statusUpdateInterval=%d sec\n",
+                             doc["fullRefreshInterval"].as<int>(), doc["statusUpdateInterval"].as<int>());
                 request->send(200, "application/json", "{\"status\":\"ok\"}");
             } else {
                 request->send(500, "application/json", "{\"status\":\"error\",\"message\":\"Failed to save\"}");
