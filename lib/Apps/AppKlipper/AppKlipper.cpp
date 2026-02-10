@@ -274,8 +274,13 @@ void AppKlipper::scanTask() {
         _scannedIPs = i;
         _scanProgress = (i * 100) / 254;
 
-        // Yield frequently to let other tasks run (critical for watchdog)
-        vTaskDelay(pdMS_TO_TICKS(2));
+        // Yield generously to let async_tcp and other tasks run (prevents watchdog)
+        vTaskDelay(pdMS_TO_TICKS(50));
+
+        // Extra yield every 10 IPs to give async_tcp a solid window
+        if (i % 10 == 0) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
 
         // Try each common Moonraker port
         for (int p = 0; p < NUM_PORTS && found < 10; p++) {
@@ -359,18 +364,18 @@ bool AppKlipper::probeMoonraker(const String& ip, uint16_t port) {
     WiFiClient client;
 
     // Let other tasks run before and after socket operations
-    vTaskDelay(pdMS_TO_TICKS(5));
+    vTaskDelay(pdMS_TO_TICKS(20));
 
     // Try TCP connection with short timeout (100ms)
     if (!client.connect(ip.c_str(), port, 100)) {
         // Connection failed - port is closed or unreachable
-        vTaskDelay(pdMS_TO_TICKS(5));
+        vTaskDelay(pdMS_TO_TICKS(20));
         return false;
     }
 
     // Port is open, close the TCP probe
     client.stop();
-    vTaskDelay(pdMS_TO_TICKS(10));  // Let socket cleanup and other tasks run
+    vTaskDelay(pdMS_TO_TICKS(30));  // Let socket cleanup and other tasks run
 
     // Now verify it's actually Moonraker by hitting the API
     String url = "http://" + ip + ":" + String(port) + "/server/info";
@@ -385,7 +390,7 @@ bool AppKlipper::probeMoonraker(const String& ip, uint16_t port) {
     int httpCode = http.GET();
     http.end();
 
-    vTaskDelay(pdMS_TO_TICKS(5));  // Let other tasks run after HTTP
+    vTaskDelay(pdMS_TO_TICKS(50));  // Let other tasks run after HTTP
 
     if (httpCode == HTTP_CODE_OK) {
         Serial.printf("✓ Moonraker found at %s:%d\n", ip.c_str(), port);
