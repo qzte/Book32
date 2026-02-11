@@ -373,27 +373,13 @@ void AppKlipper::scanTask() {
 }
 
 bool AppKlipper::probeMoonraker(const String& ip, uint16_t port) {
-    WiFiClient client;
-
-    // Let other tasks run before and after socket operations
-    vTaskDelay(pdMS_TO_TICKS(20));
-
-    // Try TCP connection with short timeout (100ms)
-    if (!client.connect(ip.c_str(), port, 100)) {
-        // Connection failed - port is closed or unreachable
-        vTaskDelay(pdMS_TO_TICKS(20));
-        return false;
-    }
-
-    // Port is open, close the TCP probe
-    client.stop();
-    vTaskDelay(pdMS_TO_TICKS(30));  // Let socket cleanup and other tasks run
-
-    // Now verify it's actually Moonraker by hitting the API
+    // Skip the TCP probe - go straight to HTTP verification.
+    // If the port is closed, connect will fail immediately (RST).
+    // This avoids the double-connect overhead that was unreliable under load.
     String url = "http://" + ip + ":" + String(port) + "/server/info";
     HTTPClient http;
-    http.setTimeout(1000);  // 1 second timeout for HTTP
-    http.setConnectTimeout(500);  // 500ms connect timeout
+    http.setConnectTimeout(500);   // 500ms connect timeout (was 100ms TCP probe)
+    http.setTimeout(1500);         // 1.5 second read timeout
 
     if (!http.begin(url)) {
         return false;
@@ -402,7 +388,7 @@ bool AppKlipper::probeMoonraker(const String& ip, uint16_t port) {
     int httpCode = http.GET();
     http.end();
 
-    vTaskDelay(pdMS_TO_TICKS(50));  // Let other tasks run after HTTP
+    vTaskDelay(pdMS_TO_TICKS(20));  // Let other tasks run after HTTP
 
     if (httpCode == HTTP_CODE_OK) {
         Serial.printf("✓ Moonraker found at %s:%d\n", ip.c_str(), port);
