@@ -75,6 +75,15 @@ void AppKlipper::start() {
     _firstDraw = true;
     _scanTaskHandle = NULL;
 
+    // Unsubscribe async_tcp from WDT for the entire Klipper session.
+    // All HTTP requests (scan + status fetch) cause lwIP contention
+    // that prevents async_tcp from feeding its watchdog.
+    _asyncTcpTask = xTaskGetHandle("async_tcp");
+    if (_asyncTcpTask != NULL) {
+        esp_task_wdt_delete(_asyncTcpTask);
+        Serial.println("async_tcp unsubscribed from WDT (Klipper active)");
+    }
+
     // Reload settings in case they changed
     loadSettings();
 
@@ -100,6 +109,13 @@ void AppKlipper::stop() {
     _scanning = false;
     _printers.clear();
     _foundPrinters.clear();
+
+    // Re-subscribe async_tcp to WDT now that Klipper is inactive
+    if (_asyncTcpTask != NULL) {
+        esp_task_wdt_add(_asyncTcpTask);
+        Serial.println("async_tcp re-subscribed to WDT (Klipper stopped)");
+        _asyncTcpTask = NULL;
+    }
 }
 
 void AppKlipper::handleInput(InputAction action) {
@@ -250,17 +266,6 @@ void AppKlipper::scanTaskWrapper(void* param) {
 void AppKlipper::scanTask() {
     Serial.println("Scan task started on core " + String(xPortGetCoreID()));
 
-    // Unsubscribe async_tcp from the task watchdog during scanning.
-    // The scan's TCP connects cause lwIP lock contention which starves
-    // async_tcp - preventing it from feeding the watchdog.
-    TaskHandle_t asyncTcpTask = xTaskGetHandle("async_tcp");
-    if (asyncTcpTask != NULL) {
-        esp_task_wdt_delete(asyncTcpTask);
-        Serial.println("async_tcp unsubscribed from WDT for scan");
-    } else {
-        Serial.println("WARNING: async_tcp task not found");
-    }
-
     // Get local IP
     IPAddress localIP = WiFi.localIP();
     Serial.printf("Local IP: %s, scanning full subnet for Moonraker...\n", localIP.toString().c_str());
@@ -361,12 +366,6 @@ void AppKlipper::scanTask() {
     }
 
     Serial.printf("Scan task complete: 254 IPs scanned, %d printers found\n", found);
-
-    // Re-subscribe async_tcp to the task watchdog
-    if (asyncTcpTask != NULL) {
-        esp_task_wdt_add(asyncTcpTask);
-        Serial.println("async_tcp re-subscribed to WDT");
-    }
 
     // Signal completion to main thread
     _scanComplete = true;

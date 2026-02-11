@@ -58,6 +58,7 @@ private:
     unsigned long _lastScanTime;
     unsigned long _lastUpdateTime;
     TaskHandle_t _scanTaskHandle;  // FreeRTOS task handle
+    TaskHandle_t _asyncTcpTask;    // async_tcp task handle for WDT management
 
     // Scan progress
     volatile int _scanProgress;  // 0-100%
