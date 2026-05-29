@@ -9,10 +9,37 @@
 
 const uint8_t* AppTodo::getIconImage() { return icon_todo_160x160; }
 
+struct TodoDirtyRect {
+    int x;
+    int y;
+    int w;
+    int h;
+};
+
+static TodoDirtyRect todoItemRect(int index, int screenW) {
+    const int BACK_Y = 55;
+    const int BACK_HEIGHT = 50;
+    const int ITEM_HEIGHT = 70;
+    if (index < 0) {
+        return {0, BACK_Y, screenW, BACK_HEIGHT + 4};
+    }
+    return {0, BACK_Y + BACK_HEIGHT + (index * ITEM_HEIGHT), screenW, ITEM_HEIGHT + 4};
+}
+
+static TodoDirtyRect unionTodoRect(TodoDirtyRect a, TodoDirtyRect b) {
+    int x1 = min(a.x, b.x);
+    int y1 = min(a.y, b.y);
+    int x2 = max(a.x + a.w, b.x + b.w);
+    int y2 = max(a.y + a.h, b.y + b.h);
+    return {x1, y1, x2 - x1, y2 - y1};
+}
+
 void AppTodo::start() {
     _needsRedraw = true;
     _firstDraw = true;
     _selectedIndex = -1;
+    _previousSelectedIndex = -1;
+    _selectionOnlyRedraw = false;
     loadTodos();
     InputMgr::getInstance().setCallback(std::bind(&AppTodo::handleInput, this, std::placeholders::_1));
 }
@@ -78,6 +105,7 @@ void AppTodo::addTodo(const String& text) {
     item.completed = false;
     _todos.push_back(item);
     saveTodos();
+    _selectionOnlyRedraw = false;
     _needsRedraw = true;
     Serial.printf("Added todo: %s\n", text.c_str());
 }
@@ -87,6 +115,7 @@ void AppTodo::toggleTodo(int id) {
         if (item.id == id) {
             item.completed = !item.completed;
             saveTodos();
+            _selectionOnlyRedraw = false;
             _needsRedraw = true;
             Serial.printf("Toggled todo %d: %s\n", id, item.completed ? "done" : "pending");
             return;
@@ -99,6 +128,7 @@ void AppTodo::editTodo(int id, const String& text) {
         if (item.id == id) {
             item.text = text;
             saveTodos();
+            _selectionOnlyRedraw = false;
             _needsRedraw = true;
             Serial.printf("Edited todo %d: %s\n", id, text.c_str());
             return;
@@ -112,6 +142,7 @@ void AppTodo::deleteTodo(int id) {
             Serial.printf("Deleted todo %d\n", id);
             _todos.erase(it);
             saveTodos();
+            _selectionOnlyRedraw = false;
             _needsRedraw = true;
             return;
         }
@@ -124,13 +155,17 @@ void AppTodo::handleInput(InputAction action) {
     int maxIndex = (int)_todos.size() - 1;
 
     if (action == INPUT_NEXT) {
+        _previousSelectedIndex = _selectedIndex;
         _selectedIndex++;
         if (_selectedIndex > maxIndex) _selectedIndex = -1;
+        _selectionOnlyRedraw = !_firstDraw;
         _needsRedraw = true;
     }
     else if (action == INPUT_PREV) {
+        _previousSelectedIndex = _selectedIndex;
         _selectedIndex--;
         if (_selectedIndex < -1) _selectedIndex = maxIndex;
+        _selectionOnlyRedraw = !_firstDraw;
         _needsRedraw = true;
     }
     else if (action == INPUT_SELECT) {
@@ -164,9 +199,20 @@ void AppTodo::drawTodoList() {
     if (_firstDraw) {
         display.setFullWindow();
         _firstDraw = false;
+    } else if (_selectionOnlyRedraw) {
+        TodoDirtyRect dirty = unionTodoRect(todoItemRect(_previousSelectedIndex, screenW),
+                                           todoItemRect(_selectedIndex, screenW));
+        TodoDirtyRect footer = {0, screenH - 46, screenW, 46};
+        dirty = unionTodoRect(dirty, footer);
+        dirty.x = max(0, dirty.x);
+        dirty.y = max(0, dirty.y);
+        if (dirty.x + dirty.w > screenW) dirty.w = screenW - dirty.x;
+        if (dirty.y + dirty.h > screenH) dirty.h = screenH - dirty.y;
+        display.setPartialWindow(dirty.x, dirty.y, dirty.w, dirty.h);
     } else {
         display.setPartialWindow(0, 0, screenW, screenH);
     }
+    _selectionOnlyRedraw = false;
 
     const int BACK_HEIGHT = 50;
     const int ITEM_HEIGHT = 70;  // Increased for 2-line text

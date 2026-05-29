@@ -1,6 +1,8 @@
 #pragma once
 #include <Arduino.h>
 #include <OneButton.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include "Config.h"
 
 enum InputAction {
@@ -27,6 +29,18 @@ private:
     InputMgr();
     OneButton btn;
     InputCallback callback;
+    TaskHandle_t _taskHandle = nullptr;
+    bool _taskRunning = false;
+
+    static const uint8_t QUEUE_SIZE = 8;
+    volatile uint8_t _queueHead = 0;
+    volatile uint8_t _queueTail = 0;
+    InputAction _queue[QUEUE_SIZE];
+    portMUX_TYPE _queueMux = portMUX_INITIALIZER_UNLOCKED;
+
+    void enqueueAction(InputAction action);
+    bool dequeueAction(InputAction& action);
+    static void inputTask(void* parameter);
     
     // We need to route static handlers to instance
     void onClick();

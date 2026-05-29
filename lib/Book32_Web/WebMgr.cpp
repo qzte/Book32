@@ -2,157 +2,14 @@
 #include <ESPAsyncWebServer.h>
 #include <AsyncJson.h>
 #include <LittleFS.h>
-#include <JPEGDEC.h>
 #include <esp_partition.h>
 #include "../Book32_Core/Book32FS.h"
 #include "../Book32_Update/GitHubMgr.h"
 #include "../Book32_Core/BatteryMgr.h"
 #include "../Book32_Core/TimeMgr.h"
-#include "../Apps/AppReader/EpubLoader.h"
 #include "../Apps/AppTodo/AppTodo.h"
 #include "../Book32_Core/AppMgr.h"
 #include "../../include/Config.h"
-
-// Cover thumbnail dimensions
-static const int THUMB_WIDTH = 60;
-static const int THUMB_HEIGHT = 80;
-static const int THUMB_SIZE = (THUMB_WIDTH * THUMB_HEIGHT + 7) / 8;  // 600 bytes
-
-// Queue for deferred cover extraction (runs in separate task)
-static String g_pendingCoverPath = "";
-static TaskHandle_t g_coverTaskHandle = nullptr;
-
-// Globals for JPEG decoder callback
-static uint8_t* g_thumbBitmap = nullptr;
-static int g_srcWidth = 0;
-static int g_srcHeight = 0;
-
-// JPEG decoder callback - scales and dithers to 1-bit bitmap
-static int thumbDrawCallback(JPEGDRAW *pDraw) {
-    if (!g_thumbBitmap) return 0;
-
-    float scaleX = (float)THUMB_WIDTH / g_srcWidth;
-    float scaleY = (float)THUMB_HEIGHT / g_srcHeight;
-
-    for (int y = 0; y < pDraw->iHeight; y++) {
-        int srcY = pDraw->y + y;
-        int dstY = (int)(srcY * scaleY);
-        if (dstY >= THUMB_HEIGHT) continue;
-
-        for (int x = 0; x < pDraw->iWidth; x++) {
-            int srcX = pDraw->x + x;
-            int dstX = (int)(srcX * scaleX);
-            if (dstX >= THUMB_WIDTH) continue;
-
-            uint16_t pixel = pDraw->pPixels[y * pDraw->iWidth + x];
-            int r = ((pixel >> 11) & 0x1F) << 3;
-            int g = ((pixel >> 5) & 0x3F) << 2;
-            int b = (pixel & 0x1F) << 3;
-            int gray = (r * 30 + g * 59 + b * 11) / 100;
-            int threshold = 128 + ((dstX + dstY) % 2) * 32 - 16;
-            int byteIndex = (dstY * THUMB_WIDTH + dstX) / 8;
-            int bitIndex = 7 - ((dstY * THUMB_WIDTH + dstX) % 8);
-
-            if (gray < threshold) {
-                g_thumbBitmap[byteIndex] |= (1 << bitIndex);
-            }
-        }
-    }
-    return 1;
-}
-
-static void extractAndSaveCover(const String& epubPath) {
-    Serial.printf("Extracting cover from: %s\n", epubPath.c_str());
-
-    if (!EbookFS.exists("/covers")) {
-        EbookFS.mkdir("/covers");
-    }
-
-    EpubLoader loader;
-    if (!loader.open(epubPath.c_str())) {
-        Serial.println("Failed to open EPUB for cover extraction");
-        return;
-    }
-
-    size_t coverSize = 0;
-    uint8_t* coverData = loader.getCoverData(&coverSize);
-    loader.close();
-
-    if (!coverData || coverSize == 0) {
-        Serial.println("No cover found in EPUB");
-        return;
-    }
-
-    Serial.printf("Cover data: %d bytes, decoding...\n", coverSize);
-
-    g_thumbBitmap = (uint8_t*)ps_malloc(THUMB_SIZE);
-    if (!g_thumbBitmap) g_thumbBitmap = (uint8_t*)malloc(THUMB_SIZE);
-    if (!g_thumbBitmap) {
-        Serial.println("Failed to allocate thumbnail buffer");
-        free(coverData);
-        return;
-    }
-    memset(g_thumbBitmap, 0, THUMB_SIZE);
-
-    JPEGDEC jpeg;
-    if (!jpeg.openRAM(coverData, coverSize, thumbDrawCallback)) {
-        Serial.println("Failed to open JPEG");
-        free(coverData);
-        free(g_thumbBitmap);
-        g_thumbBitmap = nullptr;
-        return;
-    }
-
-    g_srcWidth = jpeg.getWidth();
-    g_srcHeight = jpeg.getHeight();
-    Serial.printf("JPEG: %dx%d -> %dx%d\n", g_srcWidth, g_srcHeight, THUMB_WIDTH, THUMB_HEIGHT);
-
-    jpeg.setPixelType(RGB565_BIG_ENDIAN);
-    jpeg.decode(0, 0, 0);
-    jpeg.close();
-    free(coverData);
-
-    String thumbPath = "/covers" + epubPath;
-    thumbPath.replace(".epub", ".thumb");
-
-    File thumbFile = EbookFS.open(thumbPath, FILE_WRITE);
-    if (thumbFile) {
-        thumbFile.write(g_thumbBitmap, THUMB_SIZE);
-        thumbFile.close();
-        Serial.printf("Thumbnail saved: %s (%d bytes)\n", thumbPath.c_str(), THUMB_SIZE);
-    } else {
-        Serial.println("Failed to save thumbnail");
-    }
-
-    free(g_thumbBitmap);
-    g_thumbBitmap = nullptr;
-}
-
-static void coverExtractionTask(void* param) {
-    String path = *((String*)param);
-    Serial.printf("Cover extraction task started for: %s\n", path.c_str());
-
-    vTaskDelay(500 / portTICK_PERIOD_MS);
-    extractAndSaveCover(path);
-
-    Serial.println("Cover extraction task completed");
-    g_coverTaskHandle = nullptr;
-    vTaskDelete(NULL);
-}
-
-static void queueCoverExtraction(const String& epubPath) {
-    g_pendingCoverPath = epubPath;
-
-    xTaskCreatePinnedToCore(
-        coverExtractionTask,
-        "CoverExtract",
-        32768,
-        &g_pendingCoverPath,
-        1,
-        &g_coverTaskHandle,
-        1
-    );
-}
 
 WebMgr::WebMgr() {
     server = new AsyncWebServer(80);
@@ -164,6 +21,7 @@ WebMgr& WebMgr::getInstance() {
 }
 
 static void listFiles(fs::FS &fs, const char * dirname, uint8_t levels) {
+#if BOOK32_VERBOSE_BOOT_LOG
     Serial.printf("Listing directory: %s\n", dirname);
     File root = fs.open(dirname);
     if(!root){
@@ -172,6 +30,7 @@ static void listFiles(fs::FS &fs, const char * dirname, uint8_t levels) {
     }
     if(!root.isDirectory()){
         Serial.println("- not a directory");
+        root.close();
         return;
     }
 
@@ -185,11 +44,19 @@ static void listFiles(fs::FS &fs, const char * dirname, uint8_t levels) {
         } else {
             Serial.printf("  FILE: %s  SIZE: %d\n", file.name(), file.size());
         }
+        file.close();
         file = root.openNextFile();
     }
+    root.close();
+#else
+    (void)fs;
+    (void)dirname;
+    (void)levels;
+#endif
 }
 
 void WebMgr::mountFilesystems() {
+#if BOOK32_VERBOSE_BOOT_LOG
     Serial.println("\n========== PARTITION TABLE DUMP ==========");
     
     // Iterate through ALL partitions on the chip
@@ -208,20 +75,25 @@ void WebMgr::mountFilesystems() {
     esp_partition_iterator_release(it);
     
     Serial.println("===========================================\n");
+#endif
     Serial.println("=== Mounting Filesystems ===");
     
     // Look for "spiffs" partition specifically
     const esp_partition_t* spiffsPart = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, "spiffs");
     if (spiffsPart) {
+#if BOOK32_VERBOSE_BOOT_LOG
         Serial.printf("Found 'spiffs' partition at 0x%06X, size %dKB\n", spiffsPart->address, spiffsPart->size/1024);
+#endif
     } else {
         Serial.println("ERROR: No partition with label 'spiffs' and subtype SPIFFS found!");
         
+#if BOOK32_VERBOSE_BOOT_LOG
         // Try to find ANY spiffs-subtype partition
         const esp_partition_t* anySpiffs = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, NULL);
         if (anySpiffs) {
             Serial.printf("Found unlabeled SPIFFS partition '%s' at 0x%06X\n", anySpiffs->label, anySpiffs->address);
         }
+#endif
     }
     
     // Mount SystemFS
@@ -236,7 +108,9 @@ void WebMgr::mountFilesystems() {
     // Look for "ebooks" partition (now uses custom subtype 0x82 to avoid uploadfs conflict)
     const esp_partition_t* ebooksPart = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "ebooks");
     if (ebooksPart) {
+#if BOOK32_VERBOSE_BOOT_LOG
         Serial.printf("Found 'ebooks' partition at 0x%06X, size %dKB\n", ebooksPart->address, ebooksPart->size/1024);
+#endif
     } else {
         Serial.println("WARNING: No partition with label 'ebooks' found!");
     }
@@ -255,9 +129,21 @@ void WebMgr::mountFilesystems() {
 }
 
 void WebMgr::init() {
-    setupEndpoints();
+    if (_initialized) return;
+    if (!_endpointsConfigured) {
+        setupEndpoints();
+        _endpointsConfigured = true;
+    }
     server->begin();
+    _initialized = true;
     Serial.println("Web Server Started");
+}
+
+void WebMgr::stop() {
+    if (!_initialized) return;
+    server->end();
+    _initialized = false;
+    Serial.println("Web Server Stopped");
 }
 
 void WebMgr::update() {
@@ -267,7 +153,7 @@ void WebMgr::update() {
         Serial.println("Scheduling OTA update in separate task...");
         
         // Stop the web server to free up async_tcp and memory
-        server->end();
+        stop();
         delay(100);  // Give time for connections to close
         
         // Create OTA task with 16KB stack (OTA needs significant stack space)
@@ -403,8 +289,10 @@ void WebMgr::setupEndpoints() {
                     book["filename"] = name;
                     book["size"] = file.size();
                 }
+                file.close();
                 file = root.openNextFile();
             }
+            root.close();
         }
 
         serializeJson(doc, *response);
@@ -475,7 +363,6 @@ void WebMgr::setupEndpoints() {
 
                     saveBookMetadata(truncatedName, origName);
 
-                    if (savedPath.endsWith(".epub")) queueCoverExtraction(savedPath);
                 }
             }
         }
@@ -498,6 +385,14 @@ void WebMgr::setupEndpoints() {
                 String thumbPath = "/covers/" + filename;
                 thumbPath.replace(".epub", ".thumb");
                 if (EbookFS.exists(thumbPath)) EbookFS.remove(thumbPath);
+                String coverPath = "/covers/" + filename;
+                coverPath.replace(".epub", ".cover");
+                coverPath.replace(".EPUB", ".cover");
+                if (EbookFS.exists(coverPath)) EbookFS.remove(coverPath);
+                String cover2Path = "/covers/" + filename;
+                cover2Path.replace(".epub", ".cover2");
+                cover2Path.replace(".EPUB", ".cover2");
+                if (EbookFS.exists(cover2Path)) EbookFS.remove(cover2Path);
                 request->send(200, "text/plain", "Deleted");
             } else {
                 request->send(500, "text/plain", "Delete failed");

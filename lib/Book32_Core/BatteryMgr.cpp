@@ -13,6 +13,14 @@ const float BatteryMgr::CRITICAL_VOLTAGE = 3.0f;   // Shutdown at 3.0V
 const float BatteryMgr::HIGH_VOLTAGE_THRESHOLD = 4.0f;  // Assume charging if voltage >= this
 const float BatteryMgr::SPIKE_REJECT_THRESHOLD = 0.5f;  // Reject readings that jump > 0.5V
 
+static int voltageToPercentage(float voltage) {
+    if (voltage >= BATTERY_FULL_VOLTAGE) return 100;
+    if (voltage <= BATTERY_EMPTY_VOLTAGE) return 0;
+
+    return (int)(((voltage - BATTERY_EMPTY_VOLTAGE) /
+                 (BATTERY_FULL_VOLTAGE - BATTERY_EMPTY_VOLTAGE)) * 100.0f + 0.5f);
+}
+
 BatteryMgr::BatteryMgr() : _lastReadTime(0), _historyIndex(0), _lastHistoryUpdate(0),
                            _previousVoltage(0.0f), _sleepTimeoutMinutes(0),
                            _sleepMessage("Press button to wake"), _lastActivityTime(0),
@@ -51,11 +59,7 @@ void BatteryMgr::init() {
     }
     _lastHistoryUpdate = millis();
 
-    // Check for immediate charging indicators on startup
-    if (_cachedStatus.voltage >= HIGH_VOLTAGE_THRESHOLD) {
-        _cachedStatus.charging = true;
-        Serial.printf("Battery: High voltage (%.2fV) - assuming charging/plugged in\n", _cachedStatus.voltage);
-    }
+    Serial.printf("Battery: Initial voltage %.2fV (%d%%)\n", _cachedStatus.voltage, _cachedStatus.percentage);
 
     // Load sleep settings from EbookFS
     loadSleepSettings();
@@ -66,17 +70,6 @@ void BatteryMgr::init() {
 
 void BatteryMgr::update() {
     unsigned long now = millis();
-
-    // Quick check: if voltage is high, assume charging (battery can't stay this high unplugged)
-    // This provides immediate detection without waiting for trend analysis
-    if (_cachedStatus.voltage >= HIGH_VOLTAGE_THRESHOLD) {
-        if (!_cachedStatus.charging) {
-            _cachedStatus.charging = true;
-            Serial.printf("Battery: High voltage (%.2fV >= %.2fV) - charging detected\n",
-                         _cachedStatus.voltage, HIGH_VOLTAGE_THRESHOLD);
-        }
-        _lastChargingTime = now;  // Track when charging was last seen
-    }
 
     // Update voltage history periodically for trend analysis
     if (now - _lastHistoryUpdate >= HISTORY_INTERVAL_MS) {
@@ -137,7 +130,7 @@ void BatteryMgr::update() {
     }
 }
 
-void BatteryMgr::updateCache() {
+void BatteryMgr::updateCache(bool clearStaleCharging) {
 #ifdef PIN_VBAT_SWITCH
     digitalWrite(PIN_VBAT_SWITCH, VBAT_SWITCH_LEVEL); // Turn on measurement
     delay(5); // Wait for stabilization
@@ -155,8 +148,13 @@ void BatteryMgr::updateCache() {
     digitalWrite(PIN_VBAT_SWITCH, !VBAT_SWITCH_LEVEL); // Turn off to save power
 #endif
 
-    // Convert to voltage: (adc / 4095) * 3.3V reference * 2 (voltage divider)
+    // Convert to battery voltage through the 2:1 divider, then apply the board
+    // calibration factor from Config.h.
     float voltage = (raw / 4095.0f) * 3.3f * 2.0f;
+    voltage *= BATTERY_VOLTAGE_CALIBRATION;
+    if (voltage > BATTERY_FULL_VOLTAGE) {
+        voltage = BATTERY_FULL_VOLTAGE;
+    }
 
     // Spike rejection: discard readings that jump too far from last valid reading
     // This protects against ADC noise during heavy WiFi activity
@@ -169,28 +167,32 @@ void BatteryMgr::updateCache() {
     }
 
     // Calculate percentage (LiPo: 3.0V = 0%, 4.2V = 100%)
-    int percentage = 0;
-    if (voltage >= 4.2f) percentage = 100;
-    else if (voltage <= 3.0f) percentage = 0;
-    else percentage = (int)((voltage - 3.0f) / (4.2f - 3.0f) * 100.0f);
+    int percentage = voltageToPercentage(voltage);
 
-    // Preserve charging state from trend analysis
+    float previousVoltage = _previousVoltage;
+
+    // Preserve charging state from trend analysis unless this is an explicit
+    // UI refresh, where a stale "charging" label is worse than showing full.
     bool currentCharging = _cachedStatus.charging;
+    if (clearStaleCharging) {
+        currentCharging = false;
+    }
 
     // Quick charging detection: if voltage increased since last read, we're likely charging
-    if (_previousVoltage > 0 && voltage > _previousVoltage + 0.02f) {
+    if (previousVoltage > 0 && voltage > previousVoltage + 0.02f) {
         // Voltage increased by >20mV since last read - likely charging
         if (!currentCharging) {
             currentCharging = true;
             Serial.printf("Battery: Quick charge detect (%.3fV -> %.3fV, +%.3fV)\n",
-                         _previousVoltage, voltage, voltage - _previousVoltage);
+                         previousVoltage, voltage, voltage - previousVoltage);
         }
+        _lastChargingTime = millis();
+    } else if (previousVoltage > 0 && voltage < previousVoltage - 0.01f) {
+        currentCharging = false;
     }
 
-    // High voltage always means charging
-    if (voltage >= HIGH_VOLTAGE_THRESHOLD) {
-        currentCharging = true;
-    }
+    // High voltage means "full", not necessarily connected to the charger. We
+    // only label it charging when voltage is actually rising.
 
     // Update previous voltage for next comparison
     _previousVoltage = voltage;
@@ -248,6 +250,11 @@ BatteryStatus BatteryMgr::getStatus() {
     if (millis() - _lastReadTime >= CACHE_DURATION_MS) {
         updateCache();
     }
+    return _cachedStatus;
+}
+
+BatteryStatus BatteryMgr::refreshNow() {
+    updateCache(true);
     return _cachedStatus;
 }
 

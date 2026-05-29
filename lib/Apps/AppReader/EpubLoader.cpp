@@ -53,6 +53,7 @@ bool EpubLoader::open(const char* path) {
 
 void EpubLoader::close() {
     if (zip) zip->closeZIP();
+    if (zipFd >= 0) { ::close(zipFd); zipFd = -1; }
     spine.clear(); manifest.clear(); fonts.clear();
 }
 
@@ -155,6 +156,7 @@ bool EpubLoader::parseOpf() {
     int manifestStart = xml.indexOf("<manifest");
     int manifestEnd = xml.indexOf("</manifest>");
     if(manifestStart == -1 || manifestEnd == -1) return false;
+
     String manifestBlock = xml.substring(manifestStart, manifestEnd);
     int pos = 0;
     while(true) {
@@ -182,7 +184,6 @@ bool EpubLoader::parseOpf() {
                 else font.style = "normal";
                 fonts.push_back(font);
             }
-            if(itemTag.indexOf("properties=\"cover-image\"") != -1) coverPath = rootDir + href;
         }
         pos = itemEnd;
     }
@@ -202,6 +203,7 @@ bool EpubLoader::parseOpf() {
         }
         pos = itemRefEnd;
     }
+
     return true;
 }
 
@@ -222,7 +224,7 @@ uint8_t* EpubLoader::getFontData(String path, size_t* outSize) {
     return buffer;
 }
 
-String EpubLoader::extractAttribute(String xml, String tag, String attr) {
+String EpubLoader::extractAttribute(const String& xml, const String& tag, const String& attr) {
     int attrStart = xml.indexOf(attr + "=\"");
     if(attrStart == -1) attrStart = xml.indexOf(attr + "='");
     if(attrStart == -1) return "";
@@ -233,7 +235,7 @@ String EpubLoader::extractAttribute(String xml, String tag, String attr) {
     return xml.substring(valStart, valEnd);
 }
 
-String EpubLoader::extractMetadata(String xml, String tag) {
+String EpubLoader::extractMetadata(const String& xml, const String& tag) {
     int tagStart = xml.indexOf("<" + tag);
     if(tagStart == -1) return "";
     int tagEnd = xml.indexOf(">", tagStart);
@@ -253,13 +255,21 @@ String EpubLoader::readFileFromZip(const char* path) {
     char szName[256];
     zip->getFileInfo(&fileInfo, szName, sizeof(szName), NULL, 0, NULL, 0);
     int size = fileInfo.uncompressed_size;
-    uint8_t *buffer = (uint8_t*)ps_malloc(size + 1);
-    if(!buffer) buffer = (uint8_t*)malloc(size + 1);
-    if(!buffer) { zip->closeCurrentFile(); return ""; }
-    zip->readCurrentFile(buffer, size);
-    buffer[size] = 0;
-    String str = String((char*)buffer);
-    free(buffer);
+
+    String str;
+    str.reserve(size + 1);
+    char buffer[513];
+    int remaining = size;
+    while (remaining > 0) {
+        int toRead = remaining > 512 ? 512 : remaining;
+        int bytesRead = zip->readCurrentFile((uint8_t*)buffer, toRead);
+        if (bytesRead <= 0) break;
+        buffer[bytesRead] = '\0';
+        str += buffer;
+        remaining -= bytesRead;
+        yield();
+    }
+
     zip->closeCurrentFile();
     return str;
 }
@@ -270,24 +280,6 @@ String EpubLoader::getLanguage() { return bookLanguage; }
 String EpubLoader::getPublicationDate() { return bookPubDate; }
 String EpubLoader::getISBN() { return bookISBN; }
 std::vector<FontInfo> EpubLoader::getFonts() { return fonts; }
-String EpubLoader::getCoverPath() { return coverPath; }
-
-uint8_t* EpubLoader::getCoverData(size_t* outSize) {
-    if(coverPath.length() == 0) return nullptr;
-    if (zip->locateFile(coverPath.c_str()) != 0) return nullptr;
-    if (zip->openCurrentFile() != 0) return nullptr;
-    unz_file_info fileInfo;
-    char szName[256];
-    zip->getFileInfo(&fileInfo, szName, sizeof(szName), NULL, 0, NULL, 0);
-    size_t size = fileInfo.uncompressed_size;
-    uint8_t* buffer = (uint8_t*)ps_malloc(size);
-    if(!buffer) buffer = (uint8_t*)malloc(size);
-    if(!buffer) { zip->closeCurrentFile(); return nullptr; }
-    zip->readCurrentFile(buffer, size);
-    zip->closeCurrentFile();
-    *outSize = size;
-    return buffer;
-}
 
 TextStyle EpubLoader::getStyleFromTag(String tag) {
     tag.toLowerCase();
@@ -308,7 +300,7 @@ TextAlign EpubLoader::getAlignFromStyle(String styleAttr) {
     return ALIGN_LEFT;
 }
 
-Table EpubLoader::parseTable(String tableHtml) {
+Table EpubLoader::parseTable(const String& tableHtml) {
     Table table;
     int trPos = 0;
     while(true) {
@@ -379,7 +371,7 @@ int extractIndentFromStyle(String styleAttr) {
     return 0;
 }
 
-std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(String html) {
+std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(const String& html) {
     std::vector<ContentNode> nodes;
     std::vector<TextStyle> styleStack;
     styleStack.push_back(STYLE_NORMAL);

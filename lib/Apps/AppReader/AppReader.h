@@ -16,10 +16,6 @@ enum ReaderState {
 struct BookEntry {
     String path;  // Full path to file
     String title; // Display title
-    bool hasCover;  // Whether cover was found
-    uint8_t* coverBitmap;  // Dithered 1-bit bitmap for e-ink (60x80 pixels = 600 bytes)
-    int coverWidth;
-    int coverHeight;
 };
 
 class AppReader : public App {
@@ -47,10 +43,11 @@ private:
     int _selectedBookIndex;
     int _scrollOffset; // For list scrolling
     bool _booksScanned;
+    bool _librarySelectionOnlyRedraw;
+    int _previousBookIndex;
     void scanBooks();
     void drawLibrary();
-    bool loadBookCover(BookEntry& book);  // Load and decode cover for a book
-    void drawCover(Book32Display& display, BookEntry& book, int x, int y, int w, int h, bool inverted);
+    void drawBookTile(Book32Display& display, int x, int y, int w, int h, bool selected);
     
     // Global Pagination
     int _totalBookPages;
@@ -76,6 +73,8 @@ private:
     std::vector<ContentNode> _currentRichContent;
     PagePointer _currentPagePointer;
     std::vector<PagePointer> _pageHistory; // Stores start of each page for current chapter
+    RenderResult _currentPageRender;
+    bool _currentPageRenderValid;
     
     void openBook(const String& path);
     void closeBook();

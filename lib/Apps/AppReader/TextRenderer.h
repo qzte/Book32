@@ -23,6 +23,8 @@ struct RenderResult {
     int nodesConsumed;
     int charsConsumedInLastNode;
     bool pageFull;
+    int nextNodeIndex;
+    int nextCharOffset;
 };
 
 struct RenderedLine {
@@ -44,7 +46,7 @@ public:
     RenderResult renderRichPageDynamic(Book32Display& display, const std::vector<ContentNode>& content, 
                                      int startNode, int startOffset, int pageNum, int pageNumForDisplay, bool draw = true);
 
-    void clearCache() { _lineCache.clear(); }
+    void clearCache();
 
     // Keep legacy for now to avoid breaking AppReader during transition
     std::vector<String> paginate(const String& text);
@@ -64,6 +66,8 @@ private:
     bool _fontLoaded = true; // GFX fonts are always "loaded"
     std::vector<RenderedLine> _lineCache;
     int _cachedPage = -1;
+    RenderResult _cachedResult = {0, 0, false, 0, 0};
+    bool _hasCachedResult = false;
     
     // Fast character width cache
     uint8_t _gfxCharWidths[128];

@@ -5,55 +5,96 @@
 #include "AppMgr.h"
 #include "icon_reader.h"
 #include "Book32FS.h"
+#include "WebMgr.h"
+#include <WiFi.h>
 #include <LittleFS.h>
 #include <ArduinoJson.h>
-#include <JPEGDEC.h>
+#include <Fonts/FreeSans9pt7b.h>
+#include <Fonts/FreeSans12pt7b.h>
+#include <Fonts/FreeSansBold12pt7b.h>
+#include <map>
 
-static uint8_t* g_coverBitmap = nullptr;
-static int g_coverWidth = 0;
-static int g_coverHeight = 0;
-static int g_targetWidth = 0;
-static int g_targetHeight = 0;
+static String normalizedBookName(const String& path) {
+    String name = path;
+    int slash = name.lastIndexOf('/');
+    if (slash >= 0) name = name.substring(slash + 1);
+    slash = name.lastIndexOf('\\');
+    if (slash >= 0) name = name.substring(slash + 1);
+    return name;
+}
 
-int jpegDrawCallback(JPEGDRAW *pDraw) {
-    if (!g_coverBitmap) return 0;
-    static int16_t* errorBuffer = nullptr;
-    if (pDraw->y == 0 && pDraw->x == 0) {
-        if (errorBuffer) free(errorBuffer);
-        errorBuffer = (int16_t*)calloc(g_targetWidth * g_targetHeight, sizeof(int16_t));
+static int textWidthForFont(Book32Display& display, const char* text, const GFXfont* font) {
+    int16_t x1, y1;
+    uint16_t w, h;
+    display.setFont(font);
+    display.setTextSize(1);
+    display.getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
+    return w;
+}
+
+static void drawTextWithFont(Book32Display& display, const char* text, int x, int y, const GFXfont* font, uint16_t color) {
+    display.setFont(font);
+    display.setTextColor(color);
+    display.setTextSize(1);
+    display.setCursor(x, y);
+    display.print(text);
+}
+
+static String titleFromFilename(String name) {
+    name = normalizedBookName(name);
+    int dot = name.lastIndexOf('.');
+    if (dot > 0) name = name.substring(0, dot);
+    name.replace('_', ' ');
+    name.trim();
+    return name;
+}
+
+static void loadBookMetadata(std::map<String, String>& metadata) {
+    metadata.clear();
+
+    File file;
+    if (SystemFS.exists("/books_meta.json")) {
+        file = SystemFS.open("/books_meta.json", "r");
+    } else if (EbookFS.exists("/books_meta.json")) {
+        file = EbookFS.open("/books_meta.json", "r");
     }
-    float scaleX = (float)g_targetWidth / g_coverWidth;
-    float scaleY = (float)g_targetHeight / g_coverHeight;
-    for (int y = 0; y < pDraw->iHeight; y++) {
-        int srcY = pDraw->y + y;
-        int dstY = (int)(srcY * scaleY);
-        if (dstY >= g_targetHeight) continue;
-        for (int x = 0; x < pDraw->iWidth; x++) {
-            int srcX = pDraw->x + x;
-            int dstX = (int)(srcX * scaleX);
-            if (dstX >= g_targetWidth) continue;
-            uint16_t pixel = pDraw->pPixels[y * pDraw->iWidth + x];
-            int r = ((pixel >> 11) & 0x1F) << 3;
-            int g = ((pixel >> 5) & 0x3F) << 2;
-            int b = (pixel & 0x1F) << 3;
-            int gray = (r * 30 + g * 59 + b * 11) / 100;
-            int currentError = errorBuffer ? errorBuffer[dstY * g_targetWidth + dstX] : 0;
-            int correctedGray = gray + currentError;
-            int finalPixel = (correctedGray < 128) ? 0 : 255;
-            int error = correctedGray - finalPixel;
-            int byteIndex = (dstY * g_targetWidth + dstX) / 8;
-            int bitIndex = 7 - ((dstY * g_targetWidth + dstX) % 8);
-            if (finalPixel == 0) g_coverBitmap[byteIndex] |= (1 << bitIndex);
-            auto addError = [&](int dx, int dy, int weight) {
-                int tx = dstX + dx;
-                int ty = dstY + dy;
-                if (tx >= 0 && tx < g_targetWidth && ty >= 0 && ty < g_targetHeight && errorBuffer) errorBuffer[ty * g_targetWidth + tx] += (error * weight) >> 3;
-            };
-            addError(1, 0, 1); addError(2, 0, 1); addError(-1, 1, 1); addError(0, 1, 1); addError(1, 1, 1); addError(0, 2, 1);
-        }
+
+    if (!file) return;
+
+    DynamicJsonDocument doc(4096);
+    DeserializationError error = deserializeJson(doc, file);
+    file.close();
+    if (error || !doc.is<JsonObject>()) return;
+
+    JsonObject obj = doc.as<JsonObject>();
+    for (JsonPair pair : obj) {
+        metadata[String(pair.key().c_str())] = pair.value().as<String>();
     }
-    if (pDraw->y + pDraw->iHeight >= g_coverHeight && errorBuffer) { free(errorBuffer); errorBuffer = nullptr; }
-    return 1;
+}
+
+struct LibraryDirtyRect {
+    int x;
+    int y;
+    int w;
+    int h;
+};
+
+static LibraryDirtyRect libraryItemRect(int index, int screenW) {
+    const int HEADER_H = 76;
+    const int BACK_ITEM_HEIGHT = 48;
+    const int ITEM_HEIGHT = 110;
+    if (index < 0) {
+        return {14, HEADER_H, screenW - 28, BACK_ITEM_HEIGHT + 4};
+    }
+    return {14, HEADER_H + BACK_ITEM_HEIGHT + (index * ITEM_HEIGHT), screenW - 28, ITEM_HEIGHT + 4};
+}
+
+static LibraryDirtyRect unionLibraryRect(LibraryDirtyRect a, LibraryDirtyRect b) {
+    int x1 = min(a.x, b.x);
+    int y1 = min(a.y, b.y);
+    int x2 = max(a.x + a.w, b.x + b.w);
+    int y2 = max(a.y + a.h, b.y + b.h);
+    return {x1, y1, x2 - x1, y2 - y1};
 }
 
 AppReader::AppReader() {
@@ -61,11 +102,15 @@ AppReader::AppReader() {
     _selectedBookIndex = 0;
     _scrollOffset = 0;
     _booksScanned = false;
+    _librarySelectionOnlyRedraw = false;
+    _previousBookIndex = 0;
     _epubLoader = nullptr;
     _textRenderer = nullptr;
     _currentChapter = 0;
     _currentPage = 0;
     _needsRedraw = true;
+    _currentPageRender = {0, 0, false, 0, 0};
+    _currentPageRenderValid = false;
     _pageTurnsSinceRefresh = 0;
     _totalBookPages = 0;
     _refreshEveryNPages = 10; // Default to full refresh every 10 pages
@@ -98,7 +143,17 @@ AppReader::~AppReader() {
 }
 
 void AppReader::start() {
+    if (WiFi.getMode() != WIFI_OFF) {
+        WebMgr::getInstance().stop();
+        delay(50);
+        WiFi.disconnect(false);
+        WiFi.mode(WIFI_OFF);
+        Serial.println("AppReader: WiFi powered down");
+    }
+
     _state = VIEW_LIBRARY;
+    _booksScanned = false;
+    _librarySelectionOnlyRedraw = false;
     _needsRedraw = true;
     InputMgr::getInstance().setCallback(std::bind(&AppReader::handleInput, this, std::placeholders::_1));
 }
@@ -112,98 +167,45 @@ const uint8_t* AppReader::getIconImage() { return icon_reader_160x160; }
 
 void AppReader::scanBooks() {
     _books.clear();
+    std::map<String, String> metadata;
+    loadBookMetadata(metadata);
+
     File root = EbookFS.open("/");
     if(!root || !root.isDirectory()) return;
     File file = root.openNextFile();
     while(file){
-        String fileName = file.name();
-        if(fileName.endsWith(".epub")) {
+        String fileName = normalizedBookName(file.name());
+        String fileNameLower = fileName;
+        fileNameLower.toLowerCase();
+        if(fileNameLower.endsWith(".epub")) {
             BookEntry entry;
             entry.path = "/" + fileName;
-            EpubLoader tempLoader;
-            if(tempLoader.open(("/ebooks" + entry.path).c_str())) {
-                entry.title = tempLoader.getTitle();
-                tempLoader.close();
-            } else {
-                String title = fileName;
-                if(title.startsWith("/")) title = title.substring(1);
-                if(title.endsWith(".epub")) title = title.substring(0, title.length()-5);
-                entry.title = title;
-            }
-            entry.hasCover = false;
-            entry.coverBitmap = nullptr;
-            entry.coverWidth = 60;
-            entry.coverHeight = 80;
-            String thumbPath = "/covers/" + fileName;
-            thumbPath.replace(".epub", ".thumb");
-            if(EbookFS.exists(thumbPath)) {
-                File thumbFile = EbookFS.open(thumbPath, "r");
-                if(thumbFile) {
-                    size_t thumbSize = thumbFile.size();
-                    if(thumbSize == 600) {
-                        entry.coverBitmap = (uint8_t*)ps_malloc(thumbSize);
-                        if(!entry.coverBitmap) entry.coverBitmap = (uint8_t*)malloc(thumbSize);
-                        if(entry.coverBitmap) { thumbFile.read(entry.coverBitmap, thumbSize); entry.hasCover = true; }
-                    }
-                    thumbFile.close();
-                }
-            }
+            auto meta = metadata.find(fileName);
+            entry.title = titleFromFilename(meta != metadata.end() ? meta->second : fileName);
             _books.push_back(entry);
         }
+        file.close();
         file = root.openNextFile();
     }
+    root.close();
 }
 
-bool AppReader::loadBookCover(BookEntry& book) {
-    if (book.coverBitmap) return true;
-    EpubLoader tempLoader;
-    String fullPath = "/ebooks" + book.path;
-    if (!tempLoader.open(fullPath.c_str())) return false;
-    size_t coverSize = 0;
-    uint8_t* coverData = tempLoader.getCoverData(&coverSize);
-    tempLoader.close();
-    if (!coverData || coverSize == 0) return false;
-    JPEGDEC jpeg;
-    if (!jpeg.openRAM(coverData, coverSize, jpegDrawCallback)) { free(coverData); return false; }
-    g_coverWidth = jpeg.getWidth();
-    g_coverHeight = jpeg.getHeight();
-    g_targetWidth = 60;
-    g_targetHeight = 80;
-    int bitmapSize = (g_targetWidth * g_targetHeight + 7) / 8;
-    g_coverBitmap = (uint8_t*)ps_malloc(bitmapSize);
-    if (!g_coverBitmap) g_coverBitmap = (uint8_t*)malloc(bitmapSize);
-    if (!g_coverBitmap) { jpeg.close(); free(coverData); return false; }
-    memset(g_coverBitmap, 0, bitmapSize);
-    jpeg.setPixelType(RGB565_BIG_ENDIAN);
-    jpeg.decode(0, 0, 0);
-    jpeg.close();
-    free(coverData);
-    book.coverBitmap = g_coverBitmap;
-    book.coverWidth = g_targetWidth;
-    book.coverHeight = g_targetHeight;
-    book.hasCover = true;
-    g_coverBitmap = nullptr;
-    return true;
-}
+void AppReader::drawBookTile(Book32Display& display, int x, int y, int w, int h, bool selected) {
+    display.fillRect(x, y, w, h, GxEPD_WHITE);
+    display.drawRoundRect(x, y, w, h, 5, GxEPD_BLACK);
+    display.drawRoundRect(x + 3, y + 3, w - 6, h - 6, 3, GxEPD_BLACK);
+    display.fillRect(x + 6, y + 6, 5, h - 12, GxEPD_BLACK);
 
-void AppReader::drawCover(Book32Display& display, BookEntry& book, int x, int y, int w, int h, bool inverted) {
-    if (!book.hasCover || !book.coverBitmap) {
-        if (inverted) display.fillRect(x, y, w, h, GxEPD_WHITE);
-        else display.drawRect(x, y, w, h, GxEPD_BLACK);
-        display.setTextColor(inverted ? GxEPD_BLACK : GxEPD_BLACK);
-        display.setTextSize(1);
-        display.setCursor(x + w/2 - 12, y + h/2 - 4);
-        display.print("EPUB");
-        return;
-    }
-    // Use drawBitmap for ~50x faster rendering vs pixel-by-pixel
-    // Bitmap format: 1 = black pixel, stored MSB-first (matches Adafruit GFX expectation)
-    if (inverted) {
-        // Inverted: white where bit=1, black where bit=0
-        display.drawBitmap(x, y, book.coverBitmap, book.coverWidth, book.coverHeight, GxEPD_WHITE, GxEPD_BLACK);
-    } else {
-        // Normal: black where bit=1, white where bit=0
-        display.drawBitmap(x, y, book.coverBitmap, book.coverWidth, book.coverHeight, GxEPD_BLACK, GxEPD_WHITE);
+    int pageX = x + 17;
+    int pageY = y + 14;
+    int pageW = w - 27;
+    display.drawFastHLine(pageX, pageY, pageW, GxEPD_BLACK);
+    display.drawFastHLine(pageX, pageY + 12, pageW - 7, GxEPD_BLACK);
+    display.drawFastHLine(pageX, pageY + 24, pageW, GxEPD_BLACK);
+    display.drawFastHLine(pageX, pageY + 36, pageW - 11, GxEPD_BLACK);
+
+    if (selected) {
+        display.fillRect(x + w - 9, y + 8, 4, h - 16, GxEPD_BLACK);
     }
 }
 
@@ -213,12 +215,16 @@ void AppReader::handleInput(InputAction action) {
         // Index -1 = "Back to Menu", 0+ = books
         int maxIndex = (int)_books.size() - 1;
         if (action == INPUT_NEXT) {
+            _previousBookIndex = _selectedBookIndex;
             _selectedBookIndex++;
             if (_selectedBookIndex > maxIndex) _selectedBookIndex = -1;  // Wrap to Back option
+            _librarySelectionOnlyRedraw = _booksScanned;
             _needsRedraw = true;
         } else if (action == INPUT_PREV) {
+            _previousBookIndex = _selectedBookIndex;
             _selectedBookIndex--;
             if (_selectedBookIndex < -1) _selectedBookIndex = maxIndex;  // Wrap to last book
+            _librarySelectionOnlyRedraw = _booksScanned;
             _needsRedraw = true;
         } else if (action == INPUT_SELECT) {
             if (_selectedBookIndex == -1) {
@@ -231,7 +237,7 @@ void AppReader::handleInput(InputAction action) {
     } else if (_state == VIEW_READING) {
         if (action == INPUT_NEXT) nextPage();
         else if (action == INPUT_PREV) prevPage();
-        else if (action == INPUT_SELECT) { closeBook(); _state = VIEW_LIBRARY; _needsRedraw = true; }
+        else if (action == INPUT_SELECT) { closeBook(); _state = VIEW_LIBRARY; _librarySelectionOnlyRedraw = false; _needsRedraw = true; }
     }
 }
 
@@ -276,6 +282,7 @@ void AppReader::openBook(const String& path) {
     // calculateTotalPages(); // DISABLING: This takes forever on large books
     _totalBookPages = 0; // Show simplified pagination for now
     _globalPageNumber = 1; // Start at page 1
+    _currentPageRenderValid = false;
     
     loadChapter(0);
     _state = VIEW_READING;
@@ -286,6 +293,7 @@ void AppReader::closeBook() {
     if (_epubLoader) { _epubLoader->close(); delete _epubLoader; _epubLoader = nullptr; }
     if (_textRenderer) { delete _textRenderer; _textRenderer = nullptr; }
     _pageHistory.clear(); _chapterPageCounts.clear(); _totalBookPages = 0;
+    _currentPageRenderValid = false;
 }
 
 void AppReader::loadChapter(int chapterIndex) {
@@ -297,6 +305,7 @@ void AppReader::loadChapter(int chapterIndex) {
         _currentChapter = chapterIndex;
         _pageHistory.clear();
         _currentPagePointer = {0, 0};
+        _currentPageRenderValid = false;
         
         _currentRichContent = _epubLoader->getChapterContentRich(chapterIndex);
         if (_currentRichContent.size() > 0) {
@@ -307,34 +316,39 @@ void AppReader::loadChapter(int chapterIndex) {
         chapterIndex++;
     }
     _currentChapter = originalIndex;
+    _currentPageRenderValid = false;
     if (_textRenderer) _textRenderer->clearCache();
     _needsRedraw = true;
 }
 
 void AppReader::nextPage() {
-    DisplayMgr& dispMgr = DisplayMgr::getInstance();
-    Book32Display& display = dispMgr.getDisplay();
-    
-    // Calculate what the CURRENT page contains (this fills the cache for drawing)
-    int currentPageNum = _pageHistory.size(); // 0-indexed current page within chapter
-    RenderResult result = _textRenderer->renderRichPageDynamic(display, _currentRichContent, 
-                                                            _currentPagePointer.nodeIndex, 
-                                                            _currentPagePointer.charOffset, 
-                                                            currentPageNum, 0, false); // 0 for pageNumForDisplay - not used
+    if (!_textRenderer) return;
+
+    RenderResult result = _currentPageRender;
+    if (!_currentPageRenderValid) {
+        DisplayMgr& dispMgr = DisplayMgr::getInstance();
+        Book32Display& display = dispMgr.getDisplay();
+        int currentPageNum = _pageHistory.size();
+        result = _textRenderer->renderRichPageDynamic(display, _currentRichContent,
+                                                      _currentPagePointer.nodeIndex,
+                                                      _currentPagePointer.charOffset,
+                                                      currentPageNum, 0, false);
+    }
     
     if (result.pageFull) {
         // Save current position to history before advancing
         _pageHistory.push_back(_currentPagePointer);
         
-        // Calculate next page start position
-        _currentPagePointer.nodeIndex += result.nodesConsumed;
-        _currentPagePointer.charOffset = result.charsConsumedInLastNode;
+        // Continue from the exact node/character where rendering stopped.
+        _currentPagePointer.nodeIndex = result.nextNodeIndex;
+        _currentPagePointer.charOffset = result.nextCharOffset;
         
         // Increment global page counter
         _globalPageNumber++;
         
         // Clear cache since we're moving to a new page
         _textRenderer->clearCache();
+        _currentPageRenderValid = false;
         _needsRedraw = true;
     } else {
         // End of chapter - advance to next
@@ -354,6 +368,7 @@ void AppReader::prevPage() {
         _pageHistory.pop_back();
         if (_globalPageNumber > 1) _globalPageNumber--; // Decrement global page counter
         if (_textRenderer) _textRenderer->clearCache();
+        _currentPageRenderValid = false;
         _needsRedraw = true;
     } else {
         // Go to previous chapter
@@ -362,6 +377,7 @@ void AppReader::prevPage() {
             // because we don't know where it starts without rendering it.
             // For now, we go to the start of the previous chapter.
             if (_globalPageNumber > 1) _globalPageNumber--; // Decrement for prev chapter
+            _currentPageRenderValid = false;
             prevChapter();
         }
     }
@@ -397,64 +413,91 @@ void AppReader::drawLibrary() {
     Book32Display& display = dispMgr.getDisplay();
     FontMgr& fontMgr = FontMgr::getInstance();
 
-    const int BACK_ITEM_HEIGHT = 50;
+    const int HEADER_H = 76;
+    const int BACK_ITEM_HEIGHT = 48;
     const int COVER_WIDTH = 60;
     const int COVER_HEIGHT = 80;
-    const int ITEM_HEIGHT = 100;
-    const int ITEM_PADDING = 20;
-    const int TEXT_X = COVER_WIDTH + 40;
+    const int ITEM_HEIGHT = 110;
+    const int ITEM_PADDING = 24;
 
     // Use Partial Refresh for Library interactions
-    display.setPartialWindow(0, 0, display.width(), display.height());
+    if (_librarySelectionOnlyRedraw) {
+        LibraryDirtyRect dirty = unionLibraryRect(libraryItemRect(_previousBookIndex, display.width()),
+                                                 libraryItemRect(_selectedBookIndex, display.width()));
+        LibraryDirtyRect footer = {18, display.height() - 48, display.width() - 36, 46};
+        dirty = unionLibraryRect(dirty, footer);
+        dirty.x = max(0, dirty.x);
+        dirty.y = max(0, dirty.y);
+        if (dirty.x + dirty.w > display.width()) dirty.w = display.width() - dirty.x;
+        if (dirty.y + dirty.h > display.height()) dirty.h = display.height() - dirty.y;
+        display.setPartialWindow(dirty.x, dirty.y, dirty.w, dirty.h);
+    } else {
+        display.setPartialWindow(0, 0, display.width(), display.height());
+    }
+    _librarySelectionOnlyRedraw = false;
 
     display.firstPage();
     do {
         display.fillScreen(GxEPD_WHITE);
 
-        // Header "Library" (24px)
-        fontMgr.drawText(display, "Library", 15, 35, FONT_SIZE_SUBTITLE, GxEPD_BLACK);
-        display.drawLine(0, 50, display.width(), 50, GxEPD_BLACK);
+        drawTextWithFont(display, "Library", 20, 40, &FreeSansBold12pt7b, GxEPD_BLACK);
+        char countText[24];
+        snprintf(countText, sizeof(countText), "%d books", (int)_books.size());
+        fontMgr.drawTextRight(display, countText, display.width() - 20, 38, FONT_SIZE_SMALL, GxEPD_BLACK);
+        display.drawFastHLine(20, 56, display.width() - 40, GxEPD_BLACK);
+        display.drawFastHLine(20, 58, 72, GxEPD_BLACK);
 
-        int y = 55;
+        int y = HEADER_H;
 
         // === "Back to Menu" option (index -1) ===
         bool backSelected = (_selectedBookIndex == -1);
         if (backSelected) {
-            display.fillRect(0, y, display.width(), BACK_ITEM_HEIGHT, GxEPD_BLACK);
+            display.fillRect(20, y + 6, 5, BACK_ITEM_HEIGHT - 12, GxEPD_BLACK);
+            display.drawRoundRect(16, y + 2, display.width() - 32, BACK_ITEM_HEIGHT - 4, 6, GxEPD_BLACK);
         }
-        // Draw back arrow and text
-        uint16_t backColor = backSelected ? GxEPD_WHITE : GxEPD_BLACK;
-        fontMgr.drawText(display, "<  Back to Menu", ITEM_PADDING, y + 32, FONT_SIZE_MENU, backColor);
-        if (!backSelected) {
-            display.drawLine(ITEM_PADDING, y + BACK_ITEM_HEIGHT - 2, display.width() - ITEM_PADDING, y + BACK_ITEM_HEIGHT - 2, GxEPD_BLACK);
-        }
+        drawTextWithFont(display, "<  Back to Menu", ITEM_PADDING + 14, y + 32,
+                         backSelected ? &FreeSansBold12pt7b : &FreeSans12pt7b, GxEPD_BLACK);
+        display.drawFastHLine(ITEM_PADDING, y + BACK_ITEM_HEIGHT - 1, display.width() - (ITEM_PADDING * 2), GxEPD_BLACK);
         y += BACK_ITEM_HEIGHT;
 
         // === Book list ===
         if (_books.empty()) {
-            fontMgr.drawText(display, "No books found.", 20, y + 30, FONT_SIZE_BODY, GxEPD_BLACK);
-            fontMgr.drawText(display, "Upload EPUBs via web.", 20, y + 60, FONT_SIZE_BODY, GxEPD_BLACK);
+            drawTextWithFont(display, "No books found.", 28, y + 54, &FreeSansBold12pt7b, GxEPD_BLACK);
+            fontMgr.drawText(display, "Upload EPUBs via web.", 28, y + 88, FONT_SIZE_BODY, GxEPD_BLACK);
         } else {
             int idx = 0;
             for (const auto& book : _books) {
-                if (y > display.height() - 60) break;
+                if (y > display.height() - 70) break;
 
                 bool isSelected = (idx == _selectedBookIndex);
-                if (isSelected) display.fillRect(0, y, display.width(), ITEM_HEIGHT, GxEPD_BLACK);
+                if (isSelected) {
+                    display.fillRect(20, y + 12, 5, ITEM_HEIGHT - 24, GxEPD_BLACK);
+                    display.drawRoundRect(16, y + 4, display.width() - 32, ITEM_HEIGHT - 8, 6, GxEPD_BLACK);
+                } else {
+                    display.drawFastHLine(ITEM_PADDING, y + ITEM_HEIGHT - 1, display.width() - (ITEM_PADDING * 2), GxEPD_BLACK);
+                }
 
-                int coverX = ITEM_PADDING;
-                int coverY = y + 10;
-                BookEntry& bookRef = _books[idx];
-                drawCover(display, bookRef, coverX, coverY, COVER_WIDTH, COVER_HEIGHT, isSelected);
+                int coverW = COVER_WIDTH;
+                int coverH = COVER_HEIGHT;
+                int coverX = ITEM_PADDING + 12;
+                int coverY = y + (ITEM_HEIGHT - coverH) / 2;
+                drawBookTile(display, coverX, coverY, coverW, coverH, isSelected);
+                if (isSelected) {
+                    display.drawRect(coverX - 3, coverY - 3, coverW + 6, coverH + 6, GxEPD_BLACK);
+                    display.drawRect(coverX - 2, coverY - 2, coverW + 4, coverH + 4, GxEPD_BLACK);
+                }
 
-                uint16_t textColor = isSelected ? GxEPD_WHITE : GxEPD_BLACK;
+                uint16_t textColor = GxEPD_BLACK;
 
                 // Draw book title with word wrapping
                 String title = book.title;
-                int textY = y + 28;
+                const GFXfont* titleFont = isSelected ? &FreeSansBold12pt7b : &FreeSans12pt7b;
+                int textX = ITEM_PADDING + COVER_WIDTH + 44;
+                int textY = y + (isSelected ? 36 : 34);
                 int lineCount = 0;
-                const int MAX_LINES = 3;
-                const int MAX_WIDTH = display.width() - TEXT_X - 20;
+                const int MAX_LINES = isSelected ? 3 : 2;
+                const int LINE_HEIGHT = isSelected ? 27 : 25;
+                const int MAX_WIDTH = display.width() - textX - 28;
 
                 int pos = 0;
                 while (pos < (int)title.length() && lineCount < MAX_LINES) {
@@ -464,19 +507,18 @@ void AppReader::drawLibrary() {
                         if (nextSpace == -1) nextSpace = title.length();
                         String word = title.substring(pos, nextSpace);
                         String testLine = line.length() > 0 ? line + " " + word : word;
-                        if (fontMgr.getTextWidth(testLine.c_str(), FONT_SIZE_MENU) > MAX_WIDTH && line.length() > 0) break;
+                        if (textWidthForFont(display, testLine.c_str(), titleFont) > MAX_WIDTH && line.length() > 0) break;
                         line = testLine;
                         pos = nextSpace + 1;
                     }
-                    if (lineCount == MAX_LINES - 1 && pos < (int)title.length()) {
+                    if (lineCount == MAX_LINES - 1 && pos < (int)title.length() && line.length() > 3) {
                         line = line.substring(0, line.length() - 3) + "...";
                     }
-                    fontMgr.drawText(display, line.c_str(), TEXT_X, textY, FONT_SIZE_MENU, textColor);
-                    textY += 24;
+                    drawTextWithFont(display, line.c_str(), textX, textY, titleFont, textColor);
+                    textY += LINE_HEIGHT;
                     lineCount++;
                 }
 
-                if (!isSelected) display.drawLine(ITEM_PADDING, y + ITEM_HEIGHT - 2, display.width() - ITEM_PADDING, y + ITEM_HEIGHT - 2, GxEPD_BLACK);
                 y += ITEM_HEIGHT;
                 idx++;
             }
@@ -489,7 +531,9 @@ void AppReader::drawLibrary() {
         } else {
             snprintf(pageStr, sizeof(pageStr), "%d/%d", _selectedBookIndex + 1, (int)_books.size());
         }
-        fontMgr.drawTextRight(display, pageStr, display.width() - 10, display.height() - 20, FONT_SIZE_SMALL, GxEPD_BLACK);
+        display.drawFastHLine(20, display.height() - 42, display.width() - 40, GxEPD_BLACK);
+        fontMgr.drawText(display, "Next: Move  |  Hold: Open", 22, display.height() - 18, FONT_SIZE_SMALL, GxEPD_BLACK);
+        fontMgr.drawTextRight(display, pageStr, display.width() - 20, display.height() - 18, FONT_SIZE_SMALL, GxEPD_BLACK);
 
     } while (display.nextPage());
 }
@@ -518,10 +562,11 @@ void AppReader::drawReading() {
     display.firstPage();
     do {
         display.fillScreen(GxEPD_WHITE);
-        _textRenderer->renderRichPageDynamic(display, _currentRichContent, 
-                                           _currentPagePointer.nodeIndex, 
-                                           _currentPagePointer.charOffset, 
-                                           currentPageNum, _globalPageNumber, true);
+        _currentPageRender = _textRenderer->renderRichPageDynamic(display, _currentRichContent,
+                                                                _currentPagePointer.nodeIndex,
+                                                                _currentPagePointer.charOffset,
+                                                                currentPageNum, _globalPageNumber, true);
+        _currentPageRenderValid = true;
         // Draw page number directly here for consistent display
         display.setFont(NULL);
         display.setTextColor(GxEPD_BLACK);
@@ -530,4 +575,6 @@ void AppReader::drawReading() {
     } while (display.nextPage());
 }
 
-void AppReader::update() {}
+void AppReader::update() {
+    // Library rendering is static unless input changes selection.
+}

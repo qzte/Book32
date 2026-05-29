@@ -19,8 +19,10 @@ public:
     
     void clear();
     void fullRefresh();
+    void showBootScreen(uint8_t progress, const char* status);
 
 private:
     DisplayMgr();
     Book32Display display;
+    bool _bootScreenActive = false;
 };

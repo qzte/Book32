@@ -36,6 +36,8 @@ private:
     int _scrollOffset = 0;
     bool _needsRedraw = false;
     bool _firstDraw = true;
+    bool _selectionOnlyRedraw = false;
+    int _previousSelectedIndex = -1;
     int _nextId = 1;
 
     void loadTodos();

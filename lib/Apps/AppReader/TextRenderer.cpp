@@ -20,6 +20,12 @@ void TextRenderer::calculateDimensions() {
     _linesPerPage = (_height - 70) / _lineHeight;
 }
 
+void TextRenderer::clearCache() {
+    _lineCache.clear();
+    _cachedPage = -1;
+    _hasCachedResult = false;
+}
+
 const GFXfont* TextRenderer::getGFXFont(TextStyle style, int& lineHeight) {
     if (style == STYLE_HEADER1) { lineHeight = 48; return &FreeSansBold24pt7b; } // Chapter titles - biggest
     if (style == STYLE_HEADER2) { lineHeight = 40; return &FreeSansBold18pt7b; }
@@ -37,7 +43,7 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
         display.setTextColor(GxEPD_BLACK);
     }
 
-    if (draw && _cachedPage == pageNum && !_lineCache.empty()) {
+    if (draw && _cachedPage == pageNum && !_lineCache.empty() && _hasCachedResult) {
         for (const auto& line : _lineCache) {
             int unused;
             display.setFont(getGFXFont((TextStyle)line.fontSize, unused)); 
@@ -45,7 +51,7 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
             display.print(line.text);
         }
         // Page number drawing moved to AppReader for consistency
-        return {0, 0, true};
+        return _cachedResult;
     }
 
     _lineCache.clear();
@@ -53,7 +59,7 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
 
     int y = 40; 
     int maxY = _height - 40;
-    RenderResult result = {0, 0, false};
+    RenderResult result = {0, 0, false, startNode, startOffset};
     int currentNode = startNode;
     int currentOffset = startOffset;
     
@@ -130,8 +136,22 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
                     if (currentX + line_width + segment_width + spaceWidth + wordWidth > usableWidth && (line_width + segment_width) > 0) {
                         // Word doesn't fit on this line
                         if (y + nodeLineHeight > maxY) {
+                            if (strlen(lineBuf) > 0) {
+                                int drawX = currentX + line_width;
+                                if (node.textNode.style == STYLE_HEADER1 || node.textNode.style == STYLE_HEADER2) {
+                                    drawX = (_width - segment_width) / 2;
+                                }
+                                _lineCache.push_back({drawX, y, (int)node.textNode.style, false, String(lineBuf)});
+                                if (draw) { display.setCursor(drawX, y); display.print(lineBuf); }
+                            }
+
+                            int nextOffset = pos + line_chars;
                             result.pageFull = true;
-                            result.charsConsumedInLastNode = pos;
+                            result.charsConsumedInLastNode = nextOffset;
+                            result.nextNodeIndex = currentNode;
+                            result.nextCharOffset = nextOffset;
+                            _cachedResult = result;
+                            _hasCachedResult = true;
                             return result;
                         }
                         
@@ -186,7 +206,11 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
                 // Page full but this node has more text - return position in this node
                 result.pageFull = true;
                 result.charsConsumedInLastNode = pos;
+                result.nextNodeIndex = currentNode;
+                result.nextCharOffset = pos;
                 // nodesConsumed is the count of COMPLETED nodes before this one
+                _cachedResult = result;
+                _hasCachedResult = true;
                 return result;
             }
             
@@ -205,6 +229,8 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
         currentNode++;
         currentOffset = 0;
         result.nodesConsumed++;
+        result.nextNodeIndex = currentNode;
+        result.nextCharOffset = currentOffset;
     }
 
     // CRITICAL: Check if we stopped because the page is full but there's more content
@@ -213,11 +239,15 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
         // There's still more content to display
         result.pageFull = true;
         result.charsConsumedInLastNode = currentOffset; // Position in current node
+        result.nextNodeIndex = currentNode;
+        result.nextCharOffset = currentOffset;
         // nodesConsumed already reflects completed nodes
     }
     // If currentNode >= content.size(), all content was displayed -> pageFull stays false (true end of chapter)
 
     // Page number drawing moved to AppReader for consistency
+    _cachedResult = result;
+    _hasCachedResult = true;
     return result;
 }
 

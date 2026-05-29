@@ -133,18 +133,7 @@ void AppKlipper::handleInput(InputAction action) {
         }
     }
     else if (action == INPUT_SELECT) {
-        // Long press: scan/refresh or rescan
-        if (_state == KLIPPER_LIST) {
-            // Rescan for printers
-            _printers.clear();
-            _state = KLIPPER_SCANNING;
-            startScan();
-        } else {
-            startScan();
-        }
-    }
-    else if (action == INPUT_BACK) {
-        // Double-press or back: return to main menu
+        // Long press consistently returns to the main menu across apps.
         AppMgr::getInstance().switchTo(0);
     }
 }
@@ -169,6 +158,7 @@ void AppKlipper::update() {
         // Transition to list view if we found printers
         if (!_printers.empty()) {
             _state = KLIPPER_LIST;
+            _firstDraw = true;
             // Fetch initial status for all printers
             for (auto& printer : _printers) {
                 fetchPrinterStatus(printer);
@@ -489,7 +479,7 @@ void AppKlipper::drawScanning() {
         _lastFullRefreshTime = millis();
         _firstDraw = false;
     } else {
-        display.setPartialWindow(0, 0, screenW, screenH);
+        display.setPartialWindow(30, screenH / 2 - 95, screenW - 60, 150);
     }
 
     display.firstPage();
@@ -525,7 +515,7 @@ void AppKlipper::drawScanning() {
         }
 
         // Footer
-        fontMgr.drawTextCentered(display, "HOLD: Scan | Double-press: Menu", screenH - 30, FONT_SIZE_SMALL, GxEPD_BLACK);
+        fontMgr.drawTextCentered(display, "Press: Scan  |  Hold: Menu", screenH - 30, FONT_SIZE_SMALL, GxEPD_BLACK);
 
     } while (display.nextPage());
 }
@@ -558,7 +548,7 @@ void AppKlipper::drawPrinterList() {
         _lastFullRefreshTime = now;
         _firstDraw = false;
     } else {
-        display.setPartialWindow(0, 0, screenW, screenH);
+        display.setPartialWindow(0, 50, screenW, screenH - 100);
     }
 
     display.firstPage();
@@ -652,7 +642,7 @@ void AppKlipper::drawPrinterList() {
         }
 
         // === Footer ===
-        fontMgr.drawTextCentered(display, "NEXT: Navigate | HOLD: Scan/Refresh", screenH - 30, FONT_SIZE_SMALL, GxEPD_BLACK);
+        fontMgr.drawTextCentered(display, "Press: Refresh  |  Hold: Menu", screenH - 30, FONT_SIZE_SMALL, GxEPD_BLACK);
 
     } while (display.nextPage());
 }

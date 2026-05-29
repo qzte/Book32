@@ -12,13 +12,17 @@ public:
     
     void mountFilesystems();  // Call early, before WiFi
     void init();              // Call after WiFi connected
+    void stop();              // Stop web services before powering WiFi down
     void update(); // Handle any main loop needs (including pending OTA)
+    bool isInitialized() const { return _initialized; }
     
     volatile bool _otaPending = false;  // Flag to trigger OTA from main loop
     
 private:
     WebMgr();
     AsyncWebServer* server; // Pointer instead of object
+    bool _initialized = false;
+    bool _endpointsConfigured = false;
     
     void setupEndpoints();
     // Handlers need full type in cpp, so keeping signature here implies we need *AsyncWebServerRequest in cpp

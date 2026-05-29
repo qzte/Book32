@@ -104,10 +104,6 @@ public:
     std::vector<FontInfo> getFonts();
     uint8_t* getFontData(String path, size_t* outSize);
 
-    // Cover image support
-    String getCoverPath();  // Returns path to cover image inside EPUB
-    uint8_t* getCoverData(size_t* outSize);  // Returns raw image bytes (caller must free)
-
 private:
     // Metadata
     String bookTitle;
@@ -118,7 +114,6 @@ private:
     String bookISBN;
     
     // Paths
-    String coverPath;  // Path to cover image inside EPUB
     String epubPath;
     String opfPath;
     String rootDir; // Directory of the OPF file
@@ -138,18 +133,18 @@ private:
     UNZIP* zip;
 
     // Helper to parse XML for specific attribute
-    String extractAttribute(String xml, String tag, String attr);
+    String extractAttribute(const String& xml, const String& tag, const String& attr);
     // Helper to get text content of tag
-    String extractTagContent(String xml, String tag);
+    String extractTagContent(const String& xml, const String& tag);
     // Helper to extract metadata from OPF
-    String extractMetadata(String xml, String tag);
+    String extractMetadata(const String& xml, const String& tag);
 
     // Helper to read file from zip
     String readFileFromZip(const char* path);
     
     // Rich content parsing
-    std::vector<ContentNode> parseHtmlToRichContent(String html);
-    Table parseTable(String tableHtml);
+    std::vector<ContentNode> parseHtmlToRichContent(const String& html);
+    Table parseTable(const String& tableHtml);
     TextStyle getStyleFromTag(String tag);
     TextAlign getAlignFromStyle(String styleAttr);
 

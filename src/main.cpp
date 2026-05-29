@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include "Config.h"
+#include "NetworkState.h"
 #include "Secrets.h"
 
 #include "DisplayMgr.h"
@@ -18,9 +19,60 @@
 #include "../Apps/AppTodo/AppTodo.h"
 #include <WiFiManager.h>
 
+volatile bool gNetworkStartupInProgress = false;
+static WiFiManager* gWifiManager = nullptr;
+
+static void networkStartupTask(void* parameter) {
+    (void)parameter;
+
+    Serial.println("Network startup task started");
+    if (!gWifiManager) {
+        gWifiManager = new WiFiManager();
+    }
+    bool connected = gWifiManager->autoConnect("Book32-Setup");
+
+    if (!connected) {
+        Serial.println("WiFi setup did not connect; continuing offline");
+        gNetworkStartupInProgress = false;
+        vTaskDelete(nullptr);
+        return;
+    }
+
+    Serial.println("WiFi connected");
+    Serial.println(WiFi.localIP());
+
+    App* currentApp = AppMgr::getInstance().getCurrentApp();
+    if (currentApp && strcmp(currentApp->getName(), "eReader") == 0) {
+        Serial.println("Network startup skipped services; eReader is active");
+        WebMgr::getInstance().stop();
+        WiFi.disconnect(false);
+        WiFi.mode(WIFI_OFF);
+        gNetworkStartupInProgress = false;
+        vTaskDelete(nullptr);
+        return;
+    }
+
+    // WiFiManager releases its config portal before returning, but a short yield
+    // gives the networking stack a clean handoff before starting our server.
+    vTaskDelay(pdMS_TO_TICKS(250));
+
+    WebMgr::getInstance().init();
+    TimeMgr::getInstance().init();
+
+    Serial.println("Network services ready");
+    gNetworkStartupInProgress = false;
+    vTaskDelete(nullptr);
+}
+
 void setup() {
     Serial.begin(115200);
-    delay(2000);
+    delay(250);
+
+    // Bring the E-ink panel up before the slower startup work begins.
+    DisplayMgr& displayMgr = DisplayMgr::getInstance();
+    displayMgr.init();
+    displayMgr.showBootScreen(8, "Display ready");
+
     Serial.println("\n\n");
     Serial.println("╔═══════════════════════════════════════╗");
     Serial.println("║         Book32 OS Starting...         ║");
@@ -28,46 +80,22 @@ void setup() {
     Serial.println("╚═══════════════════════════════════════╝");
 
     // Get singleton instances (must be done after Arduino init, not at global scope)
-    DisplayMgr& displayMgr = DisplayMgr::getInstance();
     InputMgr& inputMgr = InputMgr::getInstance();
     AppMgr& appMgr = AppMgr::getInstance();
     WebMgr& webMgr = WebMgr::getInstance();
     GitHubMgr& gitHubMgr = GitHubMgr::getInstance();
     TimeMgr& timeMgr = TimeMgr::getInstance();
 
-    // 1. Display Init
-    displayMgr.init();
-
     // 2. Mount Filesystems EARLY (before WiFi, prevents race conditions)
+    displayMgr.showBootScreen(28, "Mounting storage");
     webMgr.mountFilesystems();
     
     // 2.5. Initialize Font Manager (after filesystems, before UI)
     FontMgr::getInstance().init();
 
-    // 3. WiFi Init (using WiFiManager)
-    WiFiManager wm;
-    bool res = wm.autoConnect("Book32-Setup");
-
-    if(!res) {
-        Serial.println("Failed to connect");
-    }
-    else {
-        Serial.println("connected...yeey :)");
-        Serial.println(WiFi.localIP());
-    }
-
-    // Wait for WiFiManager's server to fully release port 80
-    delay(1500);
-
-    // 4. Web Server Init (after WiFi connected)
-    webMgr.init();
-
-    // 5. Time Init (Sync NTP - after WiFi)
-    if(res) {
-        timeMgr.init();
-    }
-
-    // 3.5 Battery Init
+    // 3. Battery/Input/App Init. Network services start in the background so
+    // the menu is usable while WiFi, web, and NTP finish coming up.
+    displayMgr.showBootScreen(72, "Preparing controls");
     BatteryMgr::getInstance().init();
 
     // 4. Input Init
@@ -79,6 +107,23 @@ void setup() {
     appMgr.registerApp(new AppTodo());
     appMgr.registerApp(new AppKlipper());
 
+    displayMgr.showBootScreen(90, "Starting network");
+    gNetworkStartupInProgress = true;
+    BaseType_t networkTaskStarted = xTaskCreatePinnedToCore(
+        networkStartupTask,
+        "NetworkStart",
+        12288,
+        nullptr,
+        1,
+        nullptr,
+        0
+    );
+    if (networkTaskStarted != pdPASS) {
+        gNetworkStartupInProgress = false;
+        Serial.println("Failed to start network task; continuing offline");
+    }
+
+    displayMgr.showBootScreen(100, "Opening menu");
     appMgr.switchTo(0);
 
     Serial.println("Setup Complete");

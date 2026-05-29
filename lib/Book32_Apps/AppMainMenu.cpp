@@ -4,10 +4,47 @@
 #include "../Book32_Core/BatteryMgr.h"
 #include "../Book32_Core/InputMgr.h"
 #include "../Book32_Core/FontMgr.h"
+#include "../Book32_Core/TimeMgr.h"
+#include "../Book32_Web/WebMgr.h"
 #include "../../include/Config.h"
+#include "../../include/NetworkState.h"
 #include <WiFi.h>
 #include "icon_update.h"
 #include "../Book32_Update/GitHubMgr.h"
+
+struct MenuDirtyRect {
+    int x;
+    int y;
+    int w;
+    int h;
+};
+
+static MenuDirtyRect menuItemRect(int index, int screenW) {
+    const int ICON_SIZE = 160;
+    const int COLS = 2;
+    const int ROW_HEIGHT = 240;
+    const int START_Y = 180;
+    int colWidth = screenW / COLS;
+    int idx = index - 1;
+    int col = idx % COLS;
+    int row = idx / COLS;
+    int x = col * colWidth + (colWidth - ICON_SIZE) / 2;
+    int y = START_Y + row * ROW_HEIGHT;
+    return {x - 14, y - 14, ICON_SIZE + 28, ICON_SIZE + 70};
+}
+
+static MenuDirtyRect unionRect(MenuDirtyRect a, MenuDirtyRect b) {
+    int x1 = min(a.x, b.x);
+    int y1 = min(a.y, b.y);
+    int x2 = max(a.x + a.w, b.x + b.w);
+    int y2 = max(a.y + a.h, b.y + b.h);
+    return {x1, y1, x2 - x1, y2 - y1};
+}
+
+static bool isReaderActive() {
+    App* current = AppMgr::getInstance().getCurrentApp();
+    return current && strcmp(current->getName(), "eReader") == 0;
+}
 
 void AppMainMenu::updateCheckTask(void* parameter) {
     AppMainMenu* self = (AppMainMenu*)parameter;
@@ -32,11 +69,83 @@ void AppMainMenu::updateCheckTask(void* parameter) {
     vTaskDelete(NULL);
 }
 
+void AppMainMenu::wifiWakeTask(void* parameter) {
+    AppMainMenu* self = (AppMainMenu*)parameter;
+    Serial.println("Main menu WiFi wake task started");
+
+    if (isReaderActive()) {
+        self->_wifiStarting = false;
+        self->_wifiTaskHandle = nullptr;
+        vTaskDelete(NULL);
+        return;
+    }
+
+    WiFi.mode(WIFI_STA);
+    WiFi.begin();
+
+    int attempts = 0;
+    while (WiFi.status() != WL_CONNECTED && attempts < 40) {
+        if (isReaderActive()) {
+            WebMgr::getInstance().stop();
+            WiFi.disconnect(false);
+            WiFi.mode(WIFI_OFF);
+            self->_wifiStarting = false;
+            self->_needsRedraw = true;
+            self->_wifiTaskHandle = nullptr;
+            Serial.println("Main menu WiFi wake cancelled; eReader is active");
+            vTaskDelete(NULL);
+            return;
+        }
+        vTaskDelay(pdMS_TO_TICKS(250));
+        attempts++;
+    }
+
+    if (WiFi.status() == WL_CONNECTED && !isReaderActive()) {
+        Serial.println("Main menu WiFi connected");
+        Serial.println(WiFi.localIP());
+        WebMgr::getInstance().init();
+        TimeMgr::getInstance().init();
+    } else {
+        Serial.println("Main menu WiFi wake did not connect");
+    }
+
+    self->_wifiStarting = false;
+    self->_needsRedraw = true;
+    self->_wifiTaskHandle = nullptr;
+    vTaskDelete(NULL);
+}
+
+void AppMainMenu::ensureWifiAwake() {
+    if (WiFi.status() == WL_CONNECTED) {
+        WebMgr::getInstance().init();
+        _wifiStarting = false;
+        return;
+    }
+
+    if (gNetworkStartupInProgress) {
+        _wifiStarting = true;
+        return;
+    }
+
+    if (!_wifiTaskHandle) {
+        _wifiStarting = true;
+        xTaskCreatePinnedToCore(wifiWakeTask, "WiFiWake", 6144, this, 1, &_wifiTaskHandle, 0);
+    }
+}
+
 void AppMainMenu::start() {
     selectedIndex = 1; // Start with first app (skip main menu itself)
     _needsRedraw = true;
     _firstDraw = true;  // Force full refresh on first draw
+    _selectionOnlyRedraw = false;
+    _batteryOnlyRedraw = false;
+    _previousSelectedIndex = selectedIndex;
+    _lastWifiConnected = WiFi.status() == WL_CONNECTED;
+    _lastIp = WiFi.localIP().toString();
+    _lastBatteryPoll = millis();
+    _lastBatteryStatus = BatteryMgr::getInstance().refreshNow();
     InputMgr::getInstance().setCallback(std::bind(&AppMainMenu::handleInput, this, std::placeholders::_1));
+    ensureWifiAwake();
     
     // Spawn update check task if not already found
     if (!_updateTaskHandle && !_updateAvailable) {
@@ -56,9 +165,11 @@ void AppMainMenu::handleInput(InputAction action) {
     int maxSelectable = apps.size() - 1 + (_updateAvailable ? 1 : 0);
 
     if (action == INPUT_NEXT) {
+        _previousSelectedIndex = selectedIndex;
         selectedIndex++;
         if (selectedIndex > maxSelectable) selectedIndex = 1;
         if (selectedIndex == 0) selectedIndex = 1; // Should not happen but safety
+        _selectionOnlyRedraw = !_firstDraw;
         _needsRedraw = true;
     }
     else if (action == INPUT_SELECT) {
@@ -72,7 +183,42 @@ void AppMainMenu::handleInput(InputAction action) {
     }
 }
 
-void AppMainMenu::update() {}
+void AppMainMenu::update() {
+    unsigned long now = millis();
+
+    if (now - _lastNetworkPoll >= 1000) {
+        _lastNetworkPoll = now;
+
+        bool connected = WiFi.status() == WL_CONNECTED;
+        String ip = connected ? WiFi.localIP().toString() : "";
+        if (connected) {
+            _wifiStarting = false;
+        } else if (!gNetworkStartupInProgress && !_wifiTaskHandle) {
+            _wifiStarting = false;
+        }
+        if (connected != _lastWifiConnected || ip != _lastIp) {
+            _lastWifiConnected = connected;
+            _lastIp = ip;
+            _selectionOnlyRedraw = false;
+            _batteryOnlyRedraw = false;
+            _needsRedraw = true;
+        }
+    }
+
+    if (now - _lastBatteryPoll >= 10000) {
+        _lastBatteryPoll = now;
+        BatteryStatus status = BatteryMgr::getInstance().refreshNow();
+        bool changed = status.charging != _lastBatteryStatus.charging ||
+                       status.percentage != _lastBatteryStatus.percentage ||
+                       fabsf(status.voltage - _lastBatteryStatus.voltage) >= 0.03f;
+        if (changed) {
+            _lastBatteryStatus = status;
+            _selectionOnlyRedraw = false;
+            _batteryOnlyRedraw = !_firstDraw;
+            _needsRedraw = true;
+        }
+    }
+}
 
 void AppMainMenu::draw() {
     if (!_needsRedraw) return;
@@ -97,9 +243,21 @@ void AppMainMenu::draw() {
     if (_firstDraw) {
         display.setFullWindow();
         _firstDraw = false;
+    } else if (_selectionOnlyRedraw) {
+        MenuDirtyRect dirty = unionRect(menuItemRect(_previousSelectedIndex, screenW),
+                                       menuItemRect(selectedIndex, screenW));
+        dirty.x = max(0, dirty.x);
+        dirty.y = max(0, dirty.y);
+        if (dirty.x + dirty.w > screenW) dirty.w = screenW - dirty.x;
+        if (dirty.y + dirty.h > screenH) dirty.h = screenH - dirty.y;
+        display.setPartialWindow(dirty.x, dirty.y, dirty.w, dirty.h);
+    } else if (_batteryOnlyRedraw) {
+        display.setPartialWindow(screenW - 150, 0, 150, 42);
     } else {
         display.setPartialWindow(0, 0, screenW, screenH);
     }
+    _selectionOnlyRedraw = false;
+    _batteryOnlyRedraw = false;
 
     display.firstPage();
     do {
@@ -117,14 +275,6 @@ void AppMainMenu::draw() {
         BatteryStatus bat = BatteryMgr::getInstance().getStatus();
         int batX = screenW - 60;
         int batY = 10;
-
-        char batText[16];
-        if (bat.charging) {
-            snprintf(batText, sizeof(batText), "CHG");
-        } else {
-            snprintf(batText, sizeof(batText), "%.2fV", bat.voltage);
-        }
-        fontMgr.drawTextRight(display, batText, batX - 5, batY + 14, FONT_SIZE_SMALL, GxEPD_BLACK);
 
         display.drawRect(batX, batY, 40, 20, GxEPD_BLACK);
         display.fillRect(batX + 40, batY + 5, 3, 10, GxEPD_BLACK);
@@ -200,7 +350,7 @@ void AppMainMenu::draw() {
 
         // === Footer ===
         fontMgr.drawTextCentered(display, "Press: Next  |  Hold: Select", screenH - 45, FONT_SIZE_SMALL, GxEPD_BLACK);
-        String ipStr = WiFi.localIP().toString();
+        String ipStr = WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : (_wifiStarting ? "WiFi starting" : "WiFi offline");
         fontMgr.drawTextCentered(display, ipStr.c_str(), screenH - 20, FONT_SIZE_SMALL, GxEPD_BLACK);
 
     } while (display.nextPage());

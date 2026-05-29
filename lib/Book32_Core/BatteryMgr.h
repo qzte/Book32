@@ -19,6 +19,7 @@ public:
 
     // Preferred: Get all battery info from single cached read
     BatteryStatus getStatus();
+    BatteryStatus refreshNow();
 
     // Legacy methods (still work, but use getStatus() to avoid multiple reads)
     float getVoltage();
@@ -43,7 +44,7 @@ private:
     BatteryMgr();
 
     // Internal: performs actual ADC read and updates cache
-    void updateCache();
+    void updateCache(bool clearStaleCharging = false);
 
     // Cached values
     BatteryStatus _cachedStatus;
