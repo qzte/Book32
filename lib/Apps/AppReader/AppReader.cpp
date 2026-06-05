@@ -14,6 +14,8 @@
 #include <Fonts/FreeSansBold12pt7b.h>
 #include <map>
 
+static const char* READER_PROGRESS_PATH = "/reader_progress.json";
+
 static String normalizedBookName(const String& path) {
     String name = path;
     int slash = name.lastIndexOf('/');
@@ -103,6 +105,7 @@ AppReader::AppReader() {
     _scrollOffset = 0;
     _booksScanned = false;
     _librarySelectionOnlyRedraw = false;
+    _resumeSavedBookOnStart = false;
     _previousBookIndex = 0;
     _epubLoader = nullptr;
     _textRenderer = nullptr;
@@ -137,9 +140,29 @@ void AppReader::loadSettings() {
 }
 
 AppReader::~AppReader() {
-    closeBook();
+    closeBook(false);
     if (_epubLoader) delete _epubLoader;
     if (_textRenderer) delete _textRenderer;
+}
+
+bool AppReader::hasBootResume() {
+    if (!EbookFS.exists(READER_PROGRESS_PATH)) return false;
+
+    File file = EbookFS.open(READER_PROGRESS_PATH, "r");
+    if (!file) return false;
+
+    DynamicJsonDocument doc(2048);
+    DeserializationError error = deserializeJson(doc, file);
+    file.close();
+    if (error) return false;
+
+    String lastBook = doc["lastBook"] | "";
+    if (lastBook.length() == 0 || !doc["resumeOnBoot"]) return false;
+    return EbookFS.exists(lastBook);
+}
+
+void AppReader::resumeSavedBookOnStart() {
+    _resumeSavedBookOnStart = true;
 }
 
 void AppReader::start() {
@@ -156,6 +179,13 @@ void AppReader::start() {
     _librarySelectionOnlyRedraw = false;
     _needsRedraw = true;
     InputMgr::getInstance().setCallback(std::bind(&AppReader::handleInput, this, std::placeholders::_1));
+
+    if (_resumeSavedBookOnStart) {
+        _resumeSavedBookOnStart = false;
+        if (!openSavedProgress()) {
+            markProgressInactive();
+        }
+    }
 }
 
 void AppReader::stop() {
@@ -229,6 +259,7 @@ void AppReader::handleInput(InputAction action) {
         } else if (action == INPUT_SELECT) {
             if (_selectedBookIndex == -1) {
                 // Back to main menu
+                markProgressInactive();
                 AppMgr::getInstance().switchTo(0);
             } else if (!_books.empty() && _selectedBookIndex >= 0) {
                 openBook(_books[_selectedBookIndex].path.c_str());
@@ -262,11 +293,11 @@ int AppReader::getGlobalPageNumber() {
     return page + _pageHistory.size() + 1;
 }
 
-void AppReader::openBook(const String& path) {
+bool AppReader::openBook(const String& path, bool restoreProgress) {
     String fullPath = "/ebooks" + path;
-    closeBook();
+    closeBook(false);
     _epubLoader = new EpubLoader();
-    if (!_epubLoader->open(fullPath.c_str())) { delete _epubLoader; _epubLoader = nullptr; return; }
+    if (!_epubLoader->open(fullPath.c_str())) { delete _epubLoader; _epubLoader = nullptr; return false; }
     _currentBookPath = path;
     if (!_textRenderer) {
         DisplayMgr& dispMgr = DisplayMgr::getInstance();
@@ -284,12 +315,120 @@ void AppReader::openBook(const String& path) {
     _globalPageNumber = 1; // Start at page 1
     _currentPageRenderValid = false;
     
-    loadChapter(0);
+    int restoreChapter = 0;
+    PagePointer restorePointer = {0, 0};
+    int restorePage = 1;
+    bool restored = restoreProgress && loadBookProgress(path, restoreChapter, restorePointer, restorePage);
+
+    loadChapter(restored ? restoreChapter : 0);
+    if (restored && restoreChapter == _currentChapter) {
+        int maxNode = (int)_currentRichContent.size();
+        if (restorePointer.nodeIndex >= 0 && restorePointer.nodeIndex <= maxNode && restorePointer.charOffset >= 0) {
+            _currentPagePointer = restorePointer;
+            _globalPageNumber = max(1, restorePage);
+            _currentPageRenderValid = false;
+        }
+    }
+
     _state = VIEW_READING;
+    saveReadingProgress(true);
     _needsRedraw = true;
+    return true;
 }
 
-void AppReader::closeBook() {
+bool AppReader::openSavedProgress() {
+    if (!EbookFS.exists(READER_PROGRESS_PATH)) return false;
+
+    File file = EbookFS.open(READER_PROGRESS_PATH, "r");
+    if (!file) return false;
+
+    DynamicJsonDocument doc(2048);
+    DeserializationError error = deserializeJson(doc, file);
+    file.close();
+    if (error) return false;
+
+    String lastBook = doc["lastBook"] | "";
+    if (lastBook.length() == 0 || !EbookFS.exists(lastBook)) return false;
+
+    return openBook(lastBook, true);
+}
+
+bool AppReader::loadBookProgress(const String& path, int& chapter, PagePointer& pointer, int& globalPage) {
+    if (!EbookFS.exists(READER_PROGRESS_PATH)) return false;
+
+    File file = EbookFS.open(READER_PROGRESS_PATH, "r");
+    if (!file) return false;
+
+    DynamicJsonDocument doc(4096);
+    DeserializationError error = deserializeJson(doc, file);
+    file.close();
+    if (error) return false;
+
+    JsonObject books = doc["books"].as<JsonObject>();
+    if (books.isNull() || !books.containsKey(path)) return false;
+
+    JsonObject saved = books[path];
+    chapter = saved["chapter"] | 0;
+    pointer.nodeIndex = saved["nodeIndex"] | 0;
+    pointer.charOffset = saved["charOffset"] | 0;
+    globalPage = saved["globalPage"] | 1;
+    return true;
+}
+
+void AppReader::saveReadingProgress(bool resumeOnBoot) {
+    if (_currentBookPath.length() == 0 || _state != VIEW_READING) return;
+
+    DynamicJsonDocument doc(4096);
+    if (EbookFS.exists(READER_PROGRESS_PATH)) {
+        File existing = EbookFS.open(READER_PROGRESS_PATH, "r");
+        if (existing) {
+            deserializeJson(doc, existing);
+            existing.close();
+        }
+    }
+
+    doc["lastBook"] = _currentBookPath;
+    doc["resumeOnBoot"] = resumeOnBoot;
+    JsonObject books = doc["books"].is<JsonObject>() ? doc["books"].as<JsonObject>() : doc.createNestedObject("books");
+    JsonObject saved = books[_currentBookPath].is<JsonObject>() ? books[_currentBookPath].as<JsonObject>() : books.createNestedObject(_currentBookPath);
+    saved["chapter"] = _currentChapter;
+    saved["nodeIndex"] = _currentPagePointer.nodeIndex;
+    saved["charOffset"] = _currentPagePointer.charOffset;
+    saved["globalPage"] = _globalPageNumber;
+    saved["updatedAt"] = millis();
+
+    File file = EbookFS.open(READER_PROGRESS_PATH, FILE_WRITE);
+    if (file) {
+        serializeJson(doc, file);
+        file.close();
+    } else {
+        Serial.println("AppReader: Failed to save reading progress");
+    }
+}
+
+void AppReader::markProgressInactive() {
+    if (!EbookFS.exists(READER_PROGRESS_PATH)) return;
+
+    File file = EbookFS.open(READER_PROGRESS_PATH, "r");
+    if (!file) return;
+
+    DynamicJsonDocument doc(4096);
+    DeserializationError error = deserializeJson(doc, file);
+    file.close();
+    if (error) return;
+
+    doc["resumeOnBoot"] = false;
+    File out = EbookFS.open(READER_PROGRESS_PATH, FILE_WRITE);
+    if (out) {
+        serializeJson(doc, out);
+        out.close();
+    }
+}
+
+void AppReader::closeBook(bool markInactive) {
+    if (markInactive && _state == VIEW_READING) {
+        saveReadingProgress(false);
+    }
     if (_epubLoader) { _epubLoader->close(); delete _epubLoader; _epubLoader = nullptr; }
     if (_textRenderer) { delete _textRenderer; _textRenderer = nullptr; }
     _pageHistory.clear(); _chapterPageCounts.clear(); _totalBookPages = 0;
@@ -349,6 +488,7 @@ void AppReader::nextPage() {
         // Clear cache since we're moving to a new page
         _textRenderer->clearCache();
         _currentPageRenderValid = false;
+        saveReadingProgress(true);
         _needsRedraw = true;
     } else {
         // End of chapter - advance to next
@@ -357,6 +497,7 @@ void AppReader::nextPage() {
             _pageHistory.push_back(_currentPagePointer);
             _globalPageNumber++; // Next page in next chapter
             loadChapter(_currentChapter + 1);
+            saveReadingProgress(true);
         }
         // If at end of book, do nothing
     }
@@ -369,6 +510,7 @@ void AppReader::prevPage() {
         if (_globalPageNumber > 1) _globalPageNumber--; // Decrement global page counter
         if (_textRenderer) _textRenderer->clearCache();
         _currentPageRenderValid = false;
+        saveReadingProgress(true);
         _needsRedraw = true;
     } else {
         // Go to previous chapter
@@ -379,6 +521,7 @@ void AppReader::prevPage() {
             if (_globalPageNumber > 1) _globalPageNumber--; // Decrement for prev chapter
             _currentPageRenderValid = false;
             prevChapter();
+            saveReadingProgress(true);
         }
     }
 }

@@ -9,7 +9,7 @@ function showTab(tabId) {
     // Load data when switching tabs
     if (tabId === 'ereader') {
         fetchBooks();
-        switchDeviceApp('Reader');
+        getReaderProgress();
     } else if (tabId === 'klipper') {
         switchDeviceApp('Klipper');
     } else if (tabId === 'todo') {
@@ -266,6 +266,7 @@ async function deleteBook(filename, displayName) {
 setInterval(fetchStatus, 5000);
 fetchStatus();
 getReaderSettings();
+getReaderProgress();
 getKlipperSettings();
 getSleepSettings();
 
@@ -306,6 +307,48 @@ function saveReaderSettings() {
             console.error('Error saving settings:', error);
             statusDiv.textContent = "Connection error.";
             statusDiv.style.color = "red";
+        });
+}
+
+function getReaderProgress() {
+    fetch('/api/reader/progress')
+        .then(response => response.json())
+        .then(data => {
+            const status = document.getElementById('reader-progress-status');
+            if (!status) return;
+
+            if (data.exists) {
+                const name = data.displayName || data.lastBook || 'Saved book';
+                const page = data.page || 1;
+                status.textContent = `${name} - page ${page}${data.resumeOnBoot ? ' (will resume on boot)' : ''}`;
+            } else {
+                status.textContent = 'No saved reading position.';
+            }
+        })
+        .catch(error => console.error('Error loading reader progress:', error));
+}
+
+function resetReaderProgress() {
+    if (!confirm('Reset saved reading progress? This will not delete any books.')) return;
+
+    const statusDiv = document.getElementById('reader-progress-reset-status');
+    fetch('/api/reader/progress', { method: 'DELETE' })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'ok') {
+                statusDiv.textContent = 'Reading progress reset.';
+                statusDiv.style.color = 'green';
+                getReaderProgress();
+                setTimeout(() => statusDiv.textContent = '', 3000);
+            } else {
+                statusDiv.textContent = 'Error resetting progress.';
+                statusDiv.style.color = 'red';
+            }
+        })
+        .catch(error => {
+            console.error('Error resetting reader progress:', error);
+            statusDiv.textContent = 'Connection error.';
+            statusDiv.style.color = 'red';
         });
 }
 

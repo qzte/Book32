@@ -89,9 +89,10 @@ void AppMainMenu::wifiWakeTask(void* parameter) {
             WebMgr::getInstance().stop();
             WiFi.disconnect(false);
             WiFi.mode(WIFI_OFF);
-            self->_wifiStarting = false;
-            self->_needsRedraw = true;
-            self->_wifiTaskHandle = nullptr;
+        self->_wifiStarting = false;
+        self->_footerOnlyRedraw = true;
+        self->_needsRedraw = true;
+        self->_wifiTaskHandle = nullptr;
             Serial.println("Main menu WiFi wake cancelled; eReader is active");
             vTaskDelete(NULL);
             return;
@@ -110,9 +111,20 @@ void AppMainMenu::wifiWakeTask(void* parameter) {
     }
 
     self->_wifiStarting = false;
+    self->_footerOnlyRedraw = true;
     self->_needsRedraw = true;
     self->_wifiTaskHandle = nullptr;
     vTaskDelete(NULL);
+}
+
+String AppMainMenu::getWifiFooterText() const {
+    if (WiFi.status() == WL_CONNECTED) {
+        IPAddress ip = WiFi.localIP();
+        if (ip != INADDR_NONE) {
+            return ip.toString();
+        }
+    }
+    return _wifiStarting ? "WiFi starting" : "WiFi offline";
 }
 
 void AppMainMenu::ensureWifiAwake() {
@@ -141,7 +153,8 @@ void AppMainMenu::start() {
     _batteryOnlyRedraw = false;
     _previousSelectedIndex = selectedIndex;
     _lastWifiConnected = WiFi.status() == WL_CONNECTED;
-    _lastIp = WiFi.localIP().toString();
+    _lastIp = _lastWifiConnected ? WiFi.localIP().toString() : "";
+    _lastWifiFooterText = "";
     _lastBatteryPoll = millis();
     _lastBatteryStatus = BatteryMgr::getInstance().refreshNow();
     InputMgr::getInstance().setCallback(std::bind(&AppMainMenu::handleInput, this, std::placeholders::_1));
@@ -196,11 +209,14 @@ void AppMainMenu::update() {
         } else if (!gNetworkStartupInProgress && !_wifiTaskHandle) {
             _wifiStarting = false;
         }
-        if (connected != _lastWifiConnected || ip != _lastIp) {
+
+        String footerText = getWifiFooterText();
+        if (connected != _lastWifiConnected || ip != _lastIp || footerText != _lastWifiFooterText) {
             _lastWifiConnected = connected;
             _lastIp = ip;
             _selectionOnlyRedraw = false;
             _batteryOnlyRedraw = false;
+            _footerOnlyRedraw = !_firstDraw;
             _needsRedraw = true;
         }
     }
@@ -253,11 +269,14 @@ void AppMainMenu::draw() {
         display.setPartialWindow(dirty.x, dirty.y, dirty.w, dirty.h);
     } else if (_batteryOnlyRedraw) {
         display.setPartialWindow(screenW - 150, 0, 150, 42);
+    } else if (_footerOnlyRedraw) {
+        display.setPartialWindow(0, screenH - 70, screenW, 70);
     } else {
         display.setPartialWindow(0, 0, screenW, screenH);
     }
     _selectionOnlyRedraw = false;
     _batteryOnlyRedraw = false;
+    _footerOnlyRedraw = false;
 
     display.firstPage();
     do {
@@ -350,8 +369,9 @@ void AppMainMenu::draw() {
 
         // === Footer ===
         fontMgr.drawTextCentered(display, "Press: Next  |  Hold: Select", screenH - 45, FONT_SIZE_SMALL, GxEPD_BLACK);
-        String ipStr = WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : (_wifiStarting ? "WiFi starting" : "WiFi offline");
+        String ipStr = getWifiFooterText();
         fontMgr.drawTextCentered(display, ipStr.c_str(), screenH - 20, FONT_SIZE_SMALL, GxEPD_BLACK);
+        _lastWifiFooterText = ipStr;
 
     } while (display.nextPage());
 }

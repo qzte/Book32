@@ -103,7 +103,8 @@ void setup() {
 
     // 5. App Init
     appMgr.registerApp(new AppMainMenu());
-    appMgr.registerApp(new AppReader());
+    AppReader* readerApp = new AppReader();
+    appMgr.registerApp(readerApp);
     appMgr.registerApp(new AppTodo());
     appMgr.registerApp(new AppKlipper());
 
@@ -123,8 +124,14 @@ void setup() {
         Serial.println("Failed to start network task; continuing offline");
     }
 
-    displayMgr.showBootScreen(100, "Opening menu");
-    appMgr.switchTo(0);
+    if (readerApp->hasBootResume()) {
+        displayMgr.showBootScreen(100, "Opening reader");
+        readerApp->resumeSavedBookOnStart();
+        appMgr.switchTo(1);
+    } else {
+        displayMgr.showBootScreen(100, "Opening menu");
+        appMgr.switchTo(0);
+    }
 
     Serial.println("Setup Complete");
 }

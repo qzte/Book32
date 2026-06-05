@@ -33,6 +33,8 @@ public:
     const uint8_t* getIconImage() override; 
     const char* getName() override { return "eReader"; }
 
+    bool hasBootResume();
+    void resumeSavedBookOnStart();
     void handleInput(InputAction action);
 
 private:
@@ -44,6 +46,7 @@ private:
     int _scrollOffset; // For list scrolling
     bool _booksScanned;
     bool _librarySelectionOnlyRedraw;
+    bool _resumeSavedBookOnStart;
     int _previousBookIndex;
     void scanBooks();
     void drawLibrary();
@@ -76,8 +79,12 @@ private:
     RenderResult _currentPageRender;
     bool _currentPageRenderValid;
     
-    void openBook(const String& path);
-    void closeBook();
+    bool openBook(const String& path, bool restoreProgress = true);
+    bool openSavedProgress();
+    bool loadBookProgress(const String& path, int& chapter, PagePointer& pointer, int& globalPage);
+    void saveReadingProgress(bool resumeOnBoot);
+    void markProgressInactive();
+    void closeBook(bool markInactive = true);
     void loadChapter(int chapterIndex);
     void nextPage();
     void prevPage();

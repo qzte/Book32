@@ -69,6 +69,13 @@
                 </div>
 
                 <div class="card">
+                    <h3>Reading Progress</h3>
+                    <p id="reader-progress-status" class="hint">Loading saved position...</p>
+                    <button class="btn secondary" onclick="resetReaderProgress()">Reset Reading Progress</button>
+                    <div id="reader-progress-reset-status" class="status-msg"></div>
+                </div>
+
+                <div class="card">
                     <h3>Upload Book</h3>
                     <p class="hint">Upload EPUB books directly</p>
                     <input type="file" id="book-file" accept=".epub,.ttf">

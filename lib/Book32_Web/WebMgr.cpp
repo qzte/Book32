@@ -11,6 +11,8 @@
 #include "../Book32_Core/AppMgr.h"
 #include "../../include/Config.h"
 
+static const char* READER_PROGRESS_PATH = "/reader_progress.json";
+
 WebMgr::WebMgr() {
     server = new AsyncWebServer(80);
 }
@@ -240,6 +242,36 @@ void removeBookMetadata(const String& truncatedName) {
     }
 }
 
+void removeBookProgress(const String& filename) {
+    if (!EbookFS.exists(READER_PROGRESS_PATH)) return;
+
+    File file = EbookFS.open(READER_PROGRESS_PATH, "r");
+    if (!file) return;
+
+    DynamicJsonDocument doc(4096);
+    DeserializationError error = deserializeJson(doc, file);
+    file.close();
+    if (error) return;
+
+    String path = "/" + filename;
+    JsonObject books = doc["books"].as<JsonObject>();
+    if (!books.isNull()) {
+        books.remove(path);
+    }
+
+    String lastBook = doc["lastBook"] | "";
+    if (lastBook == path) {
+        doc["lastBook"] = "";
+        doc["resumeOnBoot"] = false;
+    }
+
+    File out = EbookFS.open(READER_PROGRESS_PATH, FILE_WRITE);
+    if (out) {
+        serializeJson(doc, out);
+        out.close();
+    }
+}
+
 void WebMgr::setupEndpoints() {
     // API: Status
     server->on("/api/status", HTTP_GET, [this](AsyncWebServerRequest *request) {
@@ -382,6 +414,7 @@ void WebMgr::setupEndpoints() {
             if (EbookFS.remove(path)) {
                 Serial.printf("Deleted: %s\n", path.c_str());
                 removeBookMetadata(filename);
+                removeBookProgress(filename);
                 String thumbPath = "/covers/" + filename;
                 thumbPath.replace(".epub", ".thumb");
                 if (EbookFS.exists(thumbPath)) EbookFS.remove(thumbPath);
@@ -486,6 +519,53 @@ void WebMgr::setupEndpoints() {
         }
     );
     server->addHandler(readerSettingsHandler);
+
+    // API: Reader Progress - GET
+    server->on("/api/reader/progress", HTTP_GET, [](AsyncWebServerRequest *request) {
+        AsyncResponseStream *response = request->beginResponseStream("application/json");
+        DynamicJsonDocument doc(1024);
+
+        doc["exists"] = false;
+        doc["resumeOnBoot"] = false;
+
+        if (EbookFS.exists(READER_PROGRESS_PATH)) {
+            File file = EbookFS.open(READER_PROGRESS_PATH, "r");
+            if (file) {
+                DynamicJsonDocument savedDoc(4096);
+                DeserializationError error = deserializeJson(savedDoc, file);
+                file.close();
+
+                if (!error) {
+                    String lastBook = savedDoc["lastBook"] | "";
+                    doc["exists"] = lastBook.length() > 0;
+                    doc["lastBook"] = lastBook;
+                    doc["displayName"] = lastBook.length() > 1 ? getOriginalFilename(lastBook.substring(1)) : "";
+                    doc["resumeOnBoot"] = savedDoc["resumeOnBoot"] | false;
+
+                    JsonObject books = savedDoc["books"].as<JsonObject>();
+                    if (!books.isNull() && books.containsKey(lastBook)) {
+                        JsonObject progress = books[lastBook];
+                        doc["chapter"] = progress["chapter"] | 0;
+                        doc["page"] = progress["globalPage"] | 1;
+                    }
+                }
+            }
+        }
+
+        serializeJson(doc, *response);
+        request->send(response);
+    });
+
+    // API: Reader Progress - DELETE
+    server->on("/api/reader/progress", HTTP_DELETE, [](AsyncWebServerRequest *request) {
+        if (EbookFS.exists(READER_PROGRESS_PATH)) {
+            if (!EbookFS.remove(READER_PROGRESS_PATH)) {
+                request->send(500, "application/json", "{\"status\":\"error\",\"message\":\"Failed to reset progress\"}");
+                return;
+            }
+        }
+        request->send(200, "application/json", "{\"status\":\"ok\"}");
+    });
 
     // API: Klipper Settings - GET
     server->on("/api/settings/klipper", HTTP_GET, [](AsyncWebServerRequest *request) {

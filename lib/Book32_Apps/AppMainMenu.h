@@ -19,10 +19,12 @@ private:
     bool _firstDraw = true;
     bool _selectionOnlyRedraw = false;
     bool _batteryOnlyRedraw = false;
+    bool _footerOnlyRedraw = false;
     int _previousSelectedIndex = 1;
     bool _lastWifiConnected = false;
     bool _wifiStarting = false;
     String _lastIp = "";
+    String _lastWifiFooterText = "";
     unsigned long _lastNetworkPoll = 0;
     unsigned long _lastBatteryPoll = 0;
     BatteryStatus _lastBatteryStatus = {0.0f, -1, false};
@@ -35,4 +37,5 @@ private:
     static void updateCheckTask(void* parameter);
     static void wifiWakeTask(void* parameter);
     void ensureWifiAwake();
+    String getWifiFooterText() const;
 };
