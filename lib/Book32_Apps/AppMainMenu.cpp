@@ -4,7 +4,6 @@
 #include "../Book32_Core/BatteryMgr.h"
 #include "../Book32_Core/InputMgr.h"
 #include "../Book32_Core/FontMgr.h"
-#include "../Book32_Core/TimeMgr.h"
 #include "../Book32_Web/WebMgr.h"
 #include "../../include/Config.h"
 #include "../../include/NetworkState.h"
@@ -105,9 +104,15 @@ void AppMainMenu::wifiWakeTask(void* parameter) {
         Serial.println("Main menu WiFi connected");
         Serial.println(WiFi.localIP());
         WebMgr::getInstance().init();
-        TimeMgr::getInstance().init();
     } else {
-        Serial.println("Main menu WiFi wake did not connect");
+        Serial.println("Main menu WiFi wake did not connect; bringing up hotspot");
+        self->_wifiTaskHandle = nullptr;  // Clear before starting the hotspot
+        if (!isReaderActive()) self->startHotspot();
+        self->_wifiStarting = false;
+        self->_footerOnlyRedraw = true;
+        self->_needsRedraw = true;
+        vTaskDelete(NULL);
+        return;
     }
 
     self->_wifiStarting = false;
@@ -124,7 +129,40 @@ String AppMainMenu::getWifiFooterText() const {
             return ip.toString();
         }
     }
+    if (_hotspotActive) {
+        return String("Wi-Fi: ") + AP_SSID + "  ->  192.168.4.1";
+    }
     return _wifiStarting ? "WiFi starting" : "WiFi offline";
+}
+
+void AppMainMenu::startHotspot() {
+    if (_hotspotActive) return;
+    if (isReaderActive()) return;
+
+    Serial.println("Main menu: starting Book32 management hotspot (offline)");
+    WiFi.mode(WIFI_AP_STA);  // AP serves the web UI; STA stays available for joining a network
+    WiFi.softAP(AP_SSID);
+    delay(100);  // Let the AP interface come up before binding the server
+    WebMgr::getInstance().init();
+    _hotspotActive = true;
+
+    Serial.print("Hotspot ready at ");
+    Serial.println(WiFi.softAPIP());
+
+    _selectionOnlyRedraw = false;
+    _batteryOnlyRedraw = false;
+    _footerOnlyRedraw = !_firstDraw;
+    _needsRedraw = true;
+}
+
+void AppMainMenu::stopHotspot() {
+    if (!_hotspotActive) return;
+
+    Serial.println("Main menu: stopping management hotspot");
+    WiFi.softAPdisconnect(true);
+    // Drop back to station-only; preserves an active connection if one exists.
+    WiFi.mode(WIFI_STA);
+    _hotspotActive = false;
 }
 
 void AppMainMenu::ensureWifiAwake() {
@@ -164,6 +202,21 @@ void AppMainMenu::start() {
     if (!_updateTaskHandle && !_updateAvailable) {
         xTaskCreatePinnedToCore(updateCheckTask, "UpdateCheck", 8192, this, 1, &_updateTaskHandle, 0);
     }
+}
+
+void AppMainMenu::stop() {
+    // Hotspot is a main-menu-only convenience. Leaving the menu tears it down so
+    // it doesn't keep the radio (and battery) busy inside other apps. Normal
+    // station connections are left untouched (Klipper still needs WiFi).
+    stopHotspot();
+}
+
+void AppMainMenu::forceRedraw() {
+    _firstDraw = true;  // Full-frame repaint at the new orientation
+    _selectionOnlyRedraw = false;
+    _batteryOnlyRedraw = false;
+    _footerOnlyRedraw = false;
+    _needsRedraw = true;
 }
 
 void AppMainMenu::handleInput(InputAction action) {
@@ -208,6 +261,11 @@ void AppMainMenu::update() {
             _wifiStarting = false;
         } else if (!gNetworkStartupInProgress && !_wifiTaskHandle) {
             _wifiStarting = false;
+            // Offline and idle: bring up the management hotspot so a phone can
+            // still reach the web interface without a router.
+            if (!_hotspotActive && !isReaderActive()) {
+                startHotspot();
+            }
         }
 
         String footerText = getWifiFooterText();

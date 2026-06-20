@@ -3,7 +3,6 @@
 #include <HTTPClient.h>
 #include <Update.h>
 #include "../../include/Config.h"
-#include "../../include/Secrets.h"
 #include "../Book32_Core/DisplayMgr.h"
 #include "../Book32_Core/FontMgr.h"
 
@@ -63,12 +62,6 @@ void GitHubMgr::init() {
     // any init?
 }
 
-// Check if a real token is configured (not placeholder)
-static bool hasValidToken() {
-    String token = GITHUB_TOKEN;
-    return token.length() > 10 && !token.startsWith("your_");
-}
-
 UpdateInfo GitHubMgr::checkUpdate(const char* currentVersion) {
     UpdateInfo info = {false, "", "", "", "", false, false};
 
@@ -86,13 +79,7 @@ UpdateInfo GitHubMgr::checkUpdate(const char* currentVersion) {
     http.setUserAgent("Book32-ESP32");
     http.setTimeout(10000);  // 10 second timeout
 
-    // Only add auth header if we have a valid token
-    if (hasValidToken()) {
-        http.addHeader("Authorization", String("token ") + GITHUB_TOKEN);
-        Serial.println("Using authenticated request");
-    } else {
-        Serial.println("Using unauthenticated request (public repo)");
-    }
+    Serial.println("Using public GitHub release API");
 
     int httpCode = http.GET();
     Serial.printf("HTTP Response: %d\n", httpCode);
@@ -128,14 +115,7 @@ UpdateInfo GitHubMgr::checkUpdate(const char* currentVersion) {
             for (JsonObject asset : assets) {
                 String name = asset["name"].as<String>();
 
-                // Use browser_download_url for public repos (no auth needed)
-                // Use url (API endpoint) for private repos (needs auth)
-                String url;
-                if (hasValidToken()) {
-                    url = asset["url"].as<String>();
-                } else {
-                    url = asset["browser_download_url"].as<String>();
-                }
+                String url = asset["browser_download_url"].as<String>();
 
                 if (name == "firmware.bin" || name.endsWith("_firmware.bin")) {
                     info.firmwareUrl = url;
@@ -181,10 +161,6 @@ bool GitHubMgr::performFirmwareUpdate(const char* url, bool restartAfter, int st
     http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
     http.setTimeout(30000);  // 30 second timeout for large downloads
 
-    // Only add auth for API URLs (private repos)
-    if (hasValidToken()) {
-        http.addHeader("Authorization", String("token ") + GITHUB_TOKEN);
-    }
     http.addHeader("Accept", "application/octet-stream");
 
     int httpCode = http.GET();
@@ -285,10 +261,6 @@ bool GitHubMgr::performFilesystemUpdate(const char* url, bool restartAfter, int 
     http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
     http.setTimeout(30000);  // 30 second timeout for large downloads
 
-    // Only add auth for API URLs (private repos)
-    if (hasValidToken()) {
-        http.addHeader("Authorization", String("token ") + GITHUB_TOKEN);
-    }
     http.addHeader("Accept", "application/octet-stream");
 
     int httpCode = http.GET();

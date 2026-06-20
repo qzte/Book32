@@ -36,6 +36,11 @@ public:
     bool hasBootResume();
     void resumeSavedBookOnStart();
     void handleInput(InputAction action);
+    void forceRedraw() override;
+
+    // Apply a new reading font size (9/12/18pt) live. Safe to call from the
+    // main loop; re-paginates the current page from the saved position.
+    void applyFontSize(int pt) override;
 
 private:
     ReaderState _state;
@@ -61,6 +66,8 @@ private:
     // Settings
     int _refreshEveryNPages;
     int _pageTurnsSinceRefresh;
+    int _fontSizePt;          // Reading body font size in points (9/12/18)
+    bool _readingFirstDraw;   // Forces a full refresh on the next reading draw
     void loadSettings();
     
     // Reading

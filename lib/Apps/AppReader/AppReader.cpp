@@ -117,6 +117,8 @@ AppReader::AppReader() {
     _pageTurnsSinceRefresh = 0;
     _totalBookPages = 0;
     _refreshEveryNPages = 10; // Default to full refresh every 10 pages
+    _fontSizePt = 9;          // Default body size (small)
+    _readingFirstDraw = true;
     loadSettings();
 }
 
@@ -128,11 +130,15 @@ void AppReader::loadSettings() {
     } else if (SystemFS.exists("/reader_config.json")) {
         file = SystemFS.open("/reader_config.json", "r");
     }
-    
+
     if (file) {
         DynamicJsonDocument doc(512);
         if (!deserializeJson(doc, file)) {
             if (doc.containsKey("refreshFrequency")) _refreshEveryNPages = doc["refreshFrequency"];
+            if (doc.containsKey("fontSize")) {
+                int pt = doc["fontSize"];
+                _fontSizePt = (pt >= 18) ? 18 : (pt >= 12 ? 12 : 9);
+            }
         }
         file.close();
     }
@@ -173,6 +179,11 @@ void AppReader::start() {
         WiFi.mode(WIFI_OFF);
         Serial.println("AppReader: WiFi powered down");
     }
+
+    // Pick up any settings (font size, refresh interval) changed via the web UI
+    // while we were away.
+    loadSettings();
+    if (_textRenderer) _textRenderer->setFontSize(_fontSizePt);
 
     _state = VIEW_LIBRARY;
     _booksScanned = false;
@@ -302,9 +313,10 @@ bool AppReader::openBook(const String& path, bool restoreProgress) {
     if (!_textRenderer) {
         DisplayMgr& dispMgr = DisplayMgr::getInstance();
         Book32Display& display = dispMgr.getDisplay();
-        _textRenderer = new TextRenderer(display.width(), display.height(), 18);  // 18px base for reading
+        _textRenderer = new TextRenderer(display.width(), display.height(), _fontSizePt);
     }
-    
+    _textRenderer->setFontSize(_fontSizePt);  // Honor the current reading size
+
     // Using Adafruit GFX FreeSans bitmap fonts (same as main menu and all apps)
     Serial.println("TextRenderer: Using Adafruit GFX FreeSans fonts");
 
@@ -686,12 +698,11 @@ void AppReader::drawReading() {
     Book32Display& display = dispMgr.getDisplay();
     
     // Check if we need a full refresh
-    static bool firstDraw = true;
-    if (firstDraw || _pageTurnsSinceRefresh >= _refreshEveryNPages) { 
+    if (_readingFirstDraw || _pageTurnsSinceRefresh >= _refreshEveryNPages) {
         Serial.println("AppReader: Full Refresh Cycle");
-        display.setFullWindow(); 
-        _pageTurnsSinceRefresh = 0; 
-        firstDraw = false;
+        display.setFullWindow();
+        _pageTurnsSinceRefresh = 0;
+        _readingFirstDraw = false;
     }
     else { 
         Serial.printf("AppReader: Partial Refresh (%d/%d)\n", _pageTurnsSinceRefresh + 1, _refreshEveryNPages);
@@ -720,4 +731,26 @@ void AppReader::drawReading() {
 
 void AppReader::update() {
     // Library rendering is static unless input changes selection.
+}
+
+void AppReader::applyFontSize(int pt) {
+    int normalized = (pt >= 18) ? 18 : (pt >= 12 ? 12 : 9);
+    _fontSizePt = normalized;
+    if (_textRenderer) _textRenderer->setFontSize(normalized);
+
+    // Re-render the current page from its saved start pointer at the new size.
+    // The pointer is a content position (node + char offset), so it's font-size
+    // independent; the renderer recomputes where this page ends and the next
+    // begins, keeping word-wrap and page breaks consistent.
+    _currentPageRenderValid = false;
+    _readingFirstDraw = true;     // Full refresh to clear the old layout cleanly
+    _pageTurnsSinceRefresh = 0;
+    _needsRedraw = true;
+}
+
+void AppReader::forceRedraw() {
+    _librarySelectionOnlyRedraw = false;  // Repaint the whole library view
+    _currentPageRenderValid = false;
+    _readingFirstDraw = true;             // Repaint the whole reading view
+    _needsRedraw = true;
 }

@@ -1,59 +1,162 @@
-# Book32 OS (TRMNL Edition)
+# Book32
 
-A custom E-Ink Application OS designed for the **Seeed Studio TRMNL** (7.5" OG DIY Kit).
+Book32 is a custom E-Ink application OS for the Seeed Studio XIAO ESP32-S3
+TRMNL 7.5 inch OG DIY kit. It includes an EPUB reader, a Todo app, a Klipper
+printer monitor, and a local web interface for books, settings, and OTA updates.
 
-## Hardware Specs
-- **MCU:** Seeed Studio XIAO ESP32-S3 (8MB Flash)
-- **Display:** 7.5-inch E-Ink Module (800x480 resolution)
-- **Driver:** GxEPD2 (`GxEPD2_750_T7`)
-- **Interaction:** Single-button navigation (Click: Next, Double-Click: Prev, Long-Press: Select)
+## Hardware
 
-## Hardware Wiring
+- MCU: Seeed Studio XIAO ESP32-S3
+- Display: 7.5 inch E-Ink panel, 800 x 480
+- Storage layout: separate firmware, web UI, and ebook partitions
+- Input: single button navigation
+- Battery: LiPo voltage monitoring
 
-Connect the **7.5" E-Ink Module** to the **Seeed XIAO ESP32-S3** as follows:
+## Controls
 
-| E-Ink Pin | Function | XIAO S3 Pin (Config.h) |
-| :--- | :--- | :--- |
-| **VCC** | 3.3V Power | **3V3** |
-| **GND** | Ground | **GND** |
-| **DIN** | MOSI | **GPIO 9** |
-| **CLK** | SCK | **GPIO 7** |
-| **CS** | Chip Select | **GPIO 44** |
-| **DC** | Data/Command | **GPIO 10** |
-| **RST** | Reset | **GPIO 38** |
-| **BUSY** | Busy Signal | **GPIO 4** |
+- Click: move to the next item or page
+- Long press: select, open, or go back depending on the app
 
-**Button:**
-- Pin: **GPIO 5** (Silkscreened "KEY3" on TRMNL board)
-- Ground: Connect to GND
+## Wiring
 
-**Battery Voltage:**
-- ADC Pin: **GPIO 1**
-- Measurement Switch: **GPIO 6** (Active HIGH)
+| E-Ink Pin | Function | XIAO ESP32-S3 Pin |
+| --- | --- | --- |
+| VCC | 3.3V | 3V3 |
+| GND | Ground | GND |
+| DIN | MOSI | GPIO 9 |
+| CLK | SCK | GPIO 7 |
+| CS | Chip select | GPIO 44 |
+| DC | Data/command | GPIO 10 |
+| RST | Reset | GPIO 38 |
+| BUSY | Busy | GPIO 4 |
 
-## Legacy Support
-The original LilyGo T-Energy-S3 version of this project is archived in the **`lilygo-t-energy`** branch.
+Button:
 
-## Setup Instructions
+- Signal: GPIO 5
+- Other side: GND
 
-1.  **WiFi Setup**:
-    - Power on the device.
-    - Connect to the WiFi Hotspot named **`Book32-Setup`**.
-    - A portal should open (or go to `192.168.4.1`).
-    - Select your WiFi network and enter the password.
+Battery sense:
 
-2.  **Web Interface**:
-    - Once connected, find the IP address displayed on the device's main menu.
-    - Open `http://<DEVICE_IP>/` in your browser to manage books and apps.
+- Voltage ADC: GPIO 1
+- Measurement switch: GPIO 6, active high
 
-3.  **Updates**:
-    - The device checks for OTA updates from `https://github.com/rolohaun/Book32`.
-    - Create an `include/Secrets.h` file on your build machine with a GitHub Personal Access Token:
-      ```cpp
-      #define GITHUB_TOKEN "your_token_here"
-      ```
+## Install PlatformIO
+
+The easiest path is Visual Studio Code plus the PlatformIO extension.
+
+1. Install Visual Studio Code.
+2. Install the PlatformIO IDE extension.
+3. Install Git if it is not already installed.
+4. Clone this repo:
+
+```powershell
+git clone https://github.com/rolohaun/Book32.git
+cd Book32
+```
+
+You can also use PlatformIO from the command line:
+
+```powershell
+python -m pip install platformio
+```
+
+## Flash Book32 To The TRMNL Kit
+
+Connect the XIAO ESP32-S3 to your computer over USB. From the repo folder, flash
+the firmware:
+
+```powershell
+python -m platformio run --target upload
+```
+
+Then flash the web interface filesystem:
+
+```powershell
+python -m platformio run --target uploadfs
+```
+
+The ebook storage partition is separate. These commands update firmware and the
+web UI, but they do not erase uploaded ebooks.
+
+To watch boot logs:
+
+```powershell
+python -m platformio device monitor
+```
+
+If upload fails because the board is not in bootloader mode, hold BOOT, tap
+RESET, then run the upload command again.
+
+## First Boot
+
+1. Power on Book32.
+2. If WiFi is not configured, connect to the `Book32-Setup` access point.
+3. Open `192.168.4.1` if the setup portal does not open automatically.
+4. Choose your WiFi network and enter the password.
+5. After connection, Book32 shows its IP address on the main menu.
+6. Open `http://<BOOK32_IP>/` in a browser to manage books and settings.
+
+## OTA Updates
+
+Book32 now uses the public GitHub release feed:
+
+```text
+https://github.com/rolohaun/Book32/releases/latest
+```
+
+No GitHub personal access token is required. Releases should include:
+
+- `firmware.bin`
+- `littlefs.bin`
+
+The device downloads those public release assets directly when you run an update
+from the web interface or the device menu.
+
+## Useful PlatformIO Commands
+
+Build firmware:
+
+```powershell
+python -m platformio run
+```
+
+Build the web UI filesystem image:
+
+```powershell
+python -m platformio run --target buildfs
+```
+
+Flash firmware:
+
+```powershell
+python -m platformio run --target upload
+```
+
+Flash web UI:
+
+```powershell
+python -m platformio run --target uploadfs
+```
+
+Open serial monitor:
+
+```powershell
+python -m platformio device monitor
+```
 
 ## Features
-- **EPUB Reader:** High-fidelity reading with Atkinson dithering for cover art.
-- **Klipper Monitor:** Subnet scanning and real-time status for Moonraker-based 3D printers.
-- **Web Management:** Easy book uploads and system configuration via local network.
+
+- Polished boot screen with E-Ink progress feedback
+- EPUB reader with saved reading progress and boot resume
+- Library menu optimized for E-Ink
+- Local web interface for uploading and deleting books
+- Todo app
+- Klipper printer monitor
+- Battery indicator and charging status
+- Public GitHub OTA firmware and web UI updates
+
+## Partition Notes
+
+Book32 uses a custom partition table. The ebook partition is mounted separately
+from the firmware and web UI filesystem, so normal firmware and `uploadfs`
+updates do not overwrite user ebook storage.

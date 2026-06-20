@@ -3,7 +3,10 @@
 TextRenderer::TextRenderer(int width, int height, int fontSize) {
     _width = width;
     _height = height;
-    _fontSize = fontSize;
+    // Normalize to a supported body size (9/12/18); default to small.
+    if (fontSize >= 18) _fontSize = 18;
+    else if (fontSize >= 12) _fontSize = 12;
+    else _fontSize = 9;
     _fontLoaded = true;
     _cachedPage = -1;
     _lastGFXFont = nullptr;
@@ -12,11 +15,23 @@ TextRenderer::TextRenderer(int width, int height, int fontSize) {
 }
 
 bool TextRenderer::loadFont(const uint8_t* data, size_t size) {
-    return true; 
+    return true;
+}
+
+void TextRenderer::setFontSize(int size) {
+    int normalized = (size >= 18) ? 18 : (size >= 12 ? 12 : 9);
+    if (normalized == _fontSize) return;
+    _fontSize = normalized;
+    // Force width cache + pagination to be recomputed for the new font.
+    _lastGFXFont = nullptr;
+    clearCache();
+    calculateDimensions();
 }
 
 void TextRenderer::calculateDimensions() {
-    _lineHeight = 24; 
+    int lh = 0;
+    getGFXFont(STYLE_NORMAL, lh);
+    _lineHeight = lh > 0 ? lh : 24;
     _linesPerPage = (_height - 70) / _lineHeight;
 }
 
@@ -27,14 +42,46 @@ void TextRenderer::clearCache() {
 }
 
 const GFXfont* TextRenderer::getGFXFont(TextStyle style, int& lineHeight) {
-    if (style == STYLE_HEADER1) { lineHeight = 48; return &FreeSansBold24pt7b; } // Chapter titles - biggest
-    if (style == STYLE_HEADER2) { lineHeight = 40; return &FreeSansBold18pt7b; }
-    if (style == STYLE_HEADER3) { lineHeight = 32; return &FreeSansBold12pt7b; }
-    if (style == STYLE_HEADER4) { lineHeight = 28; return &FreeSansBold9pt7b; }
-    if (style == STYLE_BOLD)    { lineHeight = 24; return &FreeSansBold9pt7b; }
-    
-    lineHeight = 24; 
-    return &FreeSans9pt7b;
+    // Body font follows the user-selected size. Headers step up from the body
+    // size (and are always >= body) so the hierarchy holds at every size.
+    const GFXfont* normal;
+    const GFXfont* bold;
+    const GFXfont* h4; const GFXfont* h3; const GFXfont* h2; const GFXfont* h1;
+
+    switch (_fontSize) {
+        case 18:  // Large
+            normal = &FreeSans18pt7b;       bold = &FreeSansBold18pt7b;
+            h4 = &FreeSansBold18pt7b;        h3 = &FreeSansBold18pt7b;
+            h2 = &FreeSansBold24pt7b;        h1 = &FreeSansBold24pt7b;
+            break;
+        case 12:  // Medium
+            normal = &FreeSans12pt7b;       bold = &FreeSansBold12pt7b;
+            h4 = &FreeSansBold12pt7b;        h3 = &FreeSansBold18pt7b;
+            h2 = &FreeSansBold18pt7b;        h1 = &FreeSansBold24pt7b;
+            break;
+        case 9:   // Small (default)
+        default:
+            normal = &FreeSans9pt7b;        bold = &FreeSansBold9pt7b;
+            h4 = &FreeSansBold9pt7b;         h3 = &FreeSansBold12pt7b;
+            h2 = &FreeSansBold18pt7b;        h1 = &FreeSansBold24pt7b;
+            break;
+    }
+
+    const GFXfont* font;
+    switch (style) {
+        case STYLE_HEADER1: font = h1;   break;
+        case STYLE_HEADER2: font = h2;   break;
+        case STYLE_HEADER3: font = h3;   break;
+        case STYLE_HEADER4: font = h4;   break;
+        case STYLE_BOLD:    font = bold; break;
+        default:            font = normal; break;
+    }
+
+    // Line height = the font's own advance plus a little leading. Deriving it
+    // from the font keeps vertical spacing, word-wrap and page breaks correct
+    // for any size instead of relying on hand-tuned constants.
+    lineHeight = font->yAdvance + 2;
+    return font;
 }
 
 RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const std::vector<ContentNode>& content, 

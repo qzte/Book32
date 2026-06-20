@@ -10,8 +10,15 @@ public:
     void start() override;
     void update() override;
     void draw() override;
-    
+    void stop() override;
+    void forceRedraw() override;
+
     void handleInput(InputAction action);
+
+    // Offline management hotspot (SoftAP). Public so the WiFi wake task can
+    // trigger it when a station connection can't be established.
+    void startHotspot();
+    void stopHotspot();
     
 private:
     int selectedIndex = 0;
@@ -25,6 +32,7 @@ private:
     bool _wifiStarting = false;
     String _lastIp = "";
     String _lastWifiFooterText = "";
+    bool _hotspotActive = false;
     unsigned long _lastNetworkPoll = 0;
     unsigned long _lastBatteryPoll = 0;
     BatteryStatus _lastBatteryStatus = {0.0f, -1, false};

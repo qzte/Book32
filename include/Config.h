@@ -4,6 +4,11 @@
 #define SYSTEM_VERSION "1.0"
 #define DEVICE_NAME "Book32"
 
+// Offline management hotspot (SoftAP). When the device can't reach a known
+// WiFi network, the main menu broadcasts this network so a phone can connect
+// directly and reach the web interface at 192.168.4.1 (no router needed).
+#define AP_SSID "Book32"
+
 // Pin Definitions for Seeed XIAO ESP32-S3 (TRMNL 7.5" OG DIY Kit)
 #define PIN_BAT_VOLT 1  
 #define PIN_VBAT_SWITCH 6
@@ -39,7 +44,3 @@
 // GitHub OTA Config
 #define GITHUB_REPO "rolohaun/Book32"
 #define GITHUB_USER "rolohaun"
-
-// NTP Config
-#define NTP_SERVER "pool.ntp.org"
-#define TIMEZONE "MST7MDT,M3.2.0,M11.1.0" // Mountain Time with DST

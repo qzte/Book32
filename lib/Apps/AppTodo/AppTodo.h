@@ -19,6 +19,7 @@ public:
     void stop() override;
     void update() override;
     void draw() override;
+    void forceRedraw() override;
 
     void handleInput(InputAction action);
 

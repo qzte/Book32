@@ -16,7 +16,16 @@ public:
     
     // Called when app is being switched away from
     virtual void stop() {}
-    
+
+    // Called when the display changed underneath the app (e.g. rotation flip)
+    // and the current screen must be fully repainted without losing state.
+    virtual void forceRedraw() {}
+
+    // Apply a new reading font size (points). Only the reader acts on this;
+    // other apps ignore it. Lets the web layer drive it through the App*
+    // interface without depending on reader internals.
+    virtual void applyFontSize(int pt) {}
+
     // Metadata
     virtual const char* getName() = 0;
     // Returns font icon char (if using font) or empty

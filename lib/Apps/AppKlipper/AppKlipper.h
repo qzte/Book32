@@ -37,6 +37,7 @@ public:
     void stop() override;
     void update() override;
     void draw() override;
+    void forceRedraw() override;
 
     // Icon
     const uint8_t* getIconImage() override;

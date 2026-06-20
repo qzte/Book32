@@ -15,6 +15,9 @@ function showTab(tabId) {
     } else if (tabId === 'todo') {
         fetchTodos();
         switchDeviceApp('Todo');
+    } else if (tabId === 'settings') {
+        getWifiStatus();
+        getDisplaySettings();
     }
 }
 
@@ -44,10 +47,6 @@ async function fetchStatus() {
         const freeKB = Math.round(data.freeSpace / 1024);
         const totalKB = Math.round(data.totalSpace / 1024);
         document.getElementById('freespace-val').innerText = freeKB + ' / ' + totalKB + ' KB';
-
-        if (data.time) {
-            document.getElementById('time-val').innerText = data.time;
-        }
 
         // Update Header
         let voltageText = data.voltage.toFixed(2) + 'V';
@@ -269,6 +268,8 @@ getReaderSettings();
 getReaderProgress();
 getKlipperSettings();
 getSleepSettings();
+getWifiStatus();
+getDisplaySettings();
 
 function getReaderSettings() {
     fetch('/api/settings/reader')
@@ -277,12 +278,16 @@ function getReaderSettings() {
             if (data.refreshFrequency) {
                 document.getElementById('refresh-rate').value = data.refreshFrequency;
             }
+            if (data.fontSize) {
+                document.getElementById('font-size').value = data.fontSize;
+            }
         })
         .catch(error => console.error('Error loading reader settings:', error));
 }
 
 function saveReaderSettings() {
     const refreshRate = parseInt(document.getElementById('refresh-rate').value);
+    const fontSize = parseInt(document.getElementById('font-size').value);
     const statusDiv = document.getElementById('reader-settings-status');
 
     fetch('/api/settings/reader', {
@@ -290,7 +295,7 @@ function saveReaderSettings() {
         headers: {
             'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ refreshFrequency: refreshRate }),
+        body: JSON.stringify({ refreshFrequency: refreshRate, fontSize: fontSize }),
     })
         .then(response => response.json())
         .then(data => {
@@ -439,6 +444,147 @@ function saveSleepSettings() {
             console.error('Error saving sleep settings:', error);
             statusDiv.textContent = "Connection error.";
             statusDiv.style.color = "red";
+        });
+}
+
+// === Display Orientation ===
+function getDisplaySettings() {
+    fetch('/api/settings/display')
+        .then(response => response.json())
+        .then(data => {
+            if (data.rotation !== undefined) {
+                document.getElementById('display-rotation').value = data.rotation;
+            }
+        })
+        .catch(error => console.error('Error loading display settings:', error));
+}
+
+function saveDisplaySettings() {
+    const rotation = parseInt(document.getElementById('display-rotation').value);
+    const statusDiv = document.getElementById('display-settings-status');
+
+    fetch('/api/settings/display', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rotation: rotation }),
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'ok') {
+                statusDiv.textContent = "Orientation applied.";
+                statusDiv.style.color = "green";
+                setTimeout(() => statusDiv.textContent = "", 3000);
+            } else {
+                statusDiv.textContent = "Error applying orientation.";
+                statusDiv.style.color = "red";
+            }
+        })
+        .catch(error => {
+            console.error('Error saving display settings:', error);
+            statusDiv.textContent = "Connection error.";
+            statusDiv.style.color = "red";
+        });
+}
+
+// === Wi-Fi / Hotspot ===
+function getWifiStatus() {
+    fetch('/api/wifi/status')
+        .then(response => response.json())
+        .then(data => {
+            const el = document.getElementById('wifi-status');
+            if (!el) return;
+            if (data.sta_connected) {
+                el.textContent = `Connected to "${data.sta_ssid}" (${data.sta_ip}), signal ${data.rssi} dBm.`;
+            } else if (data.ap_active) {
+                el.textContent = `Hotspot mode — network "${data.ap_ssid}" at ${data.ap_ip}. Join a Wi-Fi network below to get online.`;
+            } else {
+                el.textContent = 'Not connected.';
+            }
+        })
+        .catch(error => console.error('Error loading Wi-Fi status:', error));
+}
+
+function scanWifi() {
+    const sel = document.getElementById('wifi-ssid');
+    const status = document.getElementById('wifi-connect-status');
+    status.style.color = 'var(--accent)';
+    status.textContent = 'Scanning…';
+
+    let tries = 0;
+    const poll = () => {
+        fetch('/api/wifi/scan')
+            .then(response => response.status === 202 ? null : response.json())
+            .then(data => {
+                if (!data) {
+                    if (tries++ < 10) { setTimeout(poll, 1000); return; }
+                    status.textContent = 'Scan timed out. Try again.';
+                    status.style.color = 'var(--danger)';
+                    return;
+                }
+                const nets = (data.networks || []).filter(n => n.ssid);
+                if (nets.length === 0) {
+                    status.textContent = 'No networks found.';
+                    status.style.color = 'var(--text-secondary)';
+                    return;
+                }
+                sel.innerHTML = nets.map(n =>
+                    `<option value="${escapeHtml(n.ssid)}">${escapeHtml(n.ssid)} (${n.rssi} dBm)${n.secure ? ' 🔒' : ''}</option>`
+                ).join('');
+                status.textContent = `Found ${nets.length} network(s).`;
+                status.style.color = 'var(--success)';
+            })
+            .catch(error => {
+                console.error('Wi-Fi scan failed:', error);
+                status.textContent = 'Scan error.';
+                status.style.color = 'var(--danger)';
+            });
+    };
+    poll();
+}
+
+function connectWifi() {
+    const ssid = document.getElementById('wifi-ssid').value;
+    const password = document.getElementById('wifi-pass').value;
+    const status = document.getElementById('wifi-connect-status');
+
+    if (!ssid) {
+        status.textContent = 'Select a network first (tap Scan).';
+        status.style.color = 'var(--danger)';
+        return;
+    }
+
+    status.textContent = `Connecting to "${ssid}"…`;
+    status.style.color = 'var(--accent)';
+
+    fetch('/api/wifi/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ssid: ssid, password: password })
+    })
+        .then(response => response.json())
+        .then(() => {
+            let tries = 0;
+            const poll = () => fetch('/api/wifi/status')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.sta_connected) {
+                        status.textContent = `Connected! Book32 is online at ${data.sta_ip}. You can rejoin your home Wi-Fi on your phone.`;
+                        status.style.color = 'var(--success)';
+                        getWifiStatus();
+                    } else if (tries++ < 15) {
+                        setTimeout(poll, 1000);
+                    } else {
+                        status.textContent = 'Could not connect — check the password and try again.';
+                        status.style.color = 'var(--danger)';
+                    }
+                })
+                .catch(() => { if (tries++ < 15) setTimeout(poll, 1000); });
+            poll();
+        })
+        .catch(error => {
+            console.error('Wi-Fi connect failed:', error);
+            status.textContent = 'Connection request failed.';
+            status.style.color = 'var(--danger)';
         });
 }
 

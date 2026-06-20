@@ -2,7 +2,6 @@
 #include <WiFi.h>
 #include "Config.h"
 #include "NetworkState.h"
-#include "Secrets.h"
 
 #include "DisplayMgr.h"
 #include "InputMgr.h"
@@ -10,7 +9,6 @@
 #include "WebMgr.h"
 #include "GitHubMgr.h"
 #include "BatteryMgr.h"
-#include "TimeMgr.h"
 #include "FontMgr.h"
 
 #include "../Book32_Apps/AppMainMenu.h"
@@ -29,6 +27,10 @@ static void networkStartupTask(void* parameter) {
     if (!gWifiManager) {
         gWifiManager = new WiFiManager();
     }
+    // Don't let the setup portal block forever when no known network is in
+    // range. On timeout autoConnect returns false and the main menu brings up
+    // the Book32 management hotspot instead.
+    gWifiManager->setConfigPortalTimeout(120);
     bool connected = gWifiManager->autoConnect("Book32-Setup");
 
     if (!connected) {
@@ -57,7 +59,6 @@ static void networkStartupTask(void* parameter) {
     vTaskDelay(pdMS_TO_TICKS(250));
 
     WebMgr::getInstance().init();
-    TimeMgr::getInstance().init();
 
     Serial.println("Network services ready");
     gNetworkStartupInProgress = false;
@@ -84,7 +85,6 @@ void setup() {
     AppMgr& appMgr = AppMgr::getInstance();
     WebMgr& webMgr = WebMgr::getInstance();
     GitHubMgr& gitHubMgr = GitHubMgr::getInstance();
-    TimeMgr& timeMgr = TimeMgr::getInstance();
 
     // 2. Mount Filesystems EARLY (before WiFi, prevents race conditions)
     displayMgr.showBootScreen(28, "Mounting storage");
@@ -93,8 +93,12 @@ void setup() {
     // 2.5. Initialize Font Manager (after filesystems, before UI)
     FontMgr::getInstance().init();
 
+    // Apply the saved display orientation now that the filesystem is mounted
+    // (the boot screen briefly showed in the default orientation before this).
+    displayMgr.loadDisplaySettings();
+
     // 3. Battery/Input/App Init. Network services start in the background so
-    // the menu is usable while WiFi, web, and NTP finish coming up.
+    // the menu is usable while WiFi and the web server finish coming up.
     displayMgr.showBootScreen(72, "Preparing controls");
     BatteryMgr::getInstance().init();
 

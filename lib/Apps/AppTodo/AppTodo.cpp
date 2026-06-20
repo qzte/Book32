@@ -181,6 +181,12 @@ void AppTodo::handleInput(InputAction action) {
 
 void AppTodo::update() {}
 
+void AppTodo::forceRedraw() {
+    _firstDraw = true;  // Full repaint at the new orientation
+    _selectionOnlyRedraw = false;
+    _needsRedraw = true;
+}
+
 void AppTodo::draw() {
     if (!_needsRedraw) return;
     _needsRedraw = false;

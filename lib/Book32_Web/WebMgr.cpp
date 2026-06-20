@@ -1,14 +1,15 @@
 #include "WebMgr.h"
 #include <ESPAsyncWebServer.h>
 #include <AsyncJson.h>
+#include <WiFi.h>
 #include <LittleFS.h>
 #include <esp_partition.h>
 #include "../Book32_Core/Book32FS.h"
 #include "../Book32_Update/GitHubMgr.h"
 #include "../Book32_Core/BatteryMgr.h"
-#include "../Book32_Core/TimeMgr.h"
 #include "../Apps/AppTodo/AppTodo.h"
 #include "../Book32_Core/AppMgr.h"
+#include "../Book32_Core/DisplayMgr.h"
 #include "../../include/Config.h"
 
 static const char* READER_PROGRESS_PATH = "/reader_progress.json";
@@ -149,6 +150,28 @@ void WebMgr::stop() {
 }
 
 void WebMgr::update() {
+    // Apply a pending display rotation from the main loop (never draw on the
+    // async server task). Repaints whatever app is currently on screen.
+    if (_pendingRotation != 0) {
+        int rot = _pendingRotation;
+        _pendingRotation = 0;
+        DisplayMgr::getInstance().setRotation(rot);
+        App* current = AppMgr::getInstance().getCurrentApp();
+        if (current) current->forceRedraw();
+    }
+
+    // Apply a pending reading font-size change from the main loop.
+    if (_pendingReaderFontSize != 0) {
+        int pt = _pendingReaderFontSize;
+        _pendingReaderFontSize = 0;
+        for (auto* app : AppMgr::getInstance().getApps()) {
+            if (strcmp(app->getName(), "eReader") == 0) {
+                app->applyFontSize(pt);
+                break;
+            }
+        }
+    }
+
     // Check if OTA was requested from web UI
     if (_otaPending) {
         _otaPending = false;
@@ -292,7 +315,6 @@ void WebMgr::setupEndpoints() {
         doc["voltage"] = BatteryMgr::getInstance().getVoltage();
         doc["charging"] = BatteryMgr::getInstance().isCharging();
         doc["version"] = SYSTEM_VERSION;
-        doc["time"] = TimeMgr::getInstance().getFormattedTime();
 
         doc["freeSpace"] = EbookFS.totalBytes() - EbookFS.usedBytes();
         doc["totalSpace"] = EbookFS.totalBytes();
@@ -485,12 +507,15 @@ void WebMgr::setupEndpoints() {
             DynamicJsonDocument savedDoc(256);
             if (!deserializeJson(savedDoc, file)) {
                 doc["refreshFrequency"] = savedDoc["refreshFrequency"] | 10;
+                doc["fontSize"] = savedDoc["fontSize"] | 9;
             } else {
                 doc["refreshFrequency"] = 10;  // Default
+                doc["fontSize"] = 9;           // Default (small)
             }
             file.close();
         } else {
             doc["refreshFrequency"] = 10;  // Default
+            doc["fontSize"] = 9;           // Default (small)
         }
 
         serializeJson(doc, *response);
@@ -500,10 +525,31 @@ void WebMgr::setupEndpoints() {
     // API: Reader Settings - POST
     AsyncCallbackJsonWebHandler* readerSettingsHandler = new AsyncCallbackJsonWebHandler("/api/settings/reader",
         [](AsyncWebServerRequest *request, JsonVariant &json) {
+            // Merge into the existing config so one setting doesn't wipe the other.
             DynamicJsonDocument doc(256);
+            doc["refreshFrequency"] = 10;
+            doc["fontSize"] = 9;
+            if (EbookFS.exists("/reader_config.json")) {
+                File existing = EbookFS.open("/reader_config.json", "r");
+                if (existing) {
+                    DynamicJsonDocument savedDoc(256);
+                    if (!deserializeJson(savedDoc, existing)) {
+                        doc["refreshFrequency"] = savedDoc["refreshFrequency"] | 10;
+                        doc["fontSize"] = savedDoc["fontSize"] | 9;
+                    }
+                    existing.close();
+                }
+            }
 
             if (json.containsKey("refreshFrequency")) {
                 doc["refreshFrequency"] = json["refreshFrequency"].as<int>();
+            }
+            if (json.containsKey("fontSize")) {
+                int pt = json["fontSize"].as<int>();
+                pt = (pt >= 18) ? 18 : (pt >= 12 ? 12 : 9);  // Clamp to supported sizes
+                doc["fontSize"] = pt;
+                // Apply live from the main loop if a book is open.
+                WebMgr::getInstance()._pendingReaderFontSize = pt;
             }
 
             // Save to EbookFS (primary storage - persists through OTA)
@@ -511,7 +557,8 @@ void WebMgr::setupEndpoints() {
             if (file) {
                 serializeJson(doc, file);
                 file.close();
-                Serial.printf("Saved reader settings: refreshFrequency=%d\n", doc["refreshFrequency"].as<int>());
+                Serial.printf("Saved reader settings: refreshFrequency=%d, fontSize=%d\n",
+                             doc["refreshFrequency"].as<int>(), doc["fontSize"].as<int>());
                 request->send(200, "application/json", "{\"status\":\"ok\"}");
             } else {
                 request->send(500, "application/json", "{\"status\":\"error\",\"message\":\"Failed to save\"}");
@@ -519,6 +566,53 @@ void WebMgr::setupEndpoints() {
         }
     );
     server->addHandler(readerSettingsHandler);
+
+    // API: Display Settings (orientation) - GET
+    server->on("/api/settings/display", HTTP_GET, [](AsyncWebServerRequest *request) {
+        AsyncResponseStream *response = request->beginResponseStream("application/json");
+        DynamicJsonDocument doc(128);
+
+        int rotation = 3;  // Default: button on the left
+        if (EbookFS.exists("/display_config.json")) {
+            File file = EbookFS.open("/display_config.json", "r");
+            if (file) {
+                DynamicJsonDocument savedDoc(128);
+                if (!deserializeJson(savedDoc, file)) {
+                    rotation = savedDoc["rotation"] | 3;
+                }
+                file.close();
+            }
+        }
+        doc["rotation"] = rotation;
+
+        serializeJson(doc, *response);
+        request->send(response);
+    });
+
+    // API: Display Settings (orientation) - POST. Applies OS-wide; persisted on
+    // EbookFS so it survives OTA updates.
+    AsyncCallbackJsonWebHandler* displaySettingsHandler = new AsyncCallbackJsonWebHandler("/api/settings/display",
+        [](AsyncWebServerRequest *request, JsonVariant &json) {
+            int rotation = json["rotation"] | 3;
+            if (rotation != 1 && rotation != 3) rotation = 3;  // Portrait orientations only
+
+            DynamicJsonDocument doc(128);
+            doc["rotation"] = rotation;
+
+            File file = EbookFS.open("/display_config.json", FILE_WRITE);
+            if (file) {
+                serializeJson(doc, file);
+                file.close();
+                // Apply from the main loop (never rotate/draw on the async task).
+                WebMgr::getInstance()._pendingRotation = rotation;
+                Serial.printf("Saved display settings: rotation=%d\n", rotation);
+                request->send(200, "application/json", "{\"status\":\"ok\"}");
+            } else {
+                request->send(500, "application/json", "{\"status\":\"error\",\"message\":\"Failed to save\"}");
+            }
+        }
+    );
+    server->addHandler(displaySettingsHandler);
 
     // API: Reader Progress - GET
     server->on("/api/reader/progress", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -832,6 +926,84 @@ void WebMgr::setupEndpoints() {
         todoApp->deleteTodo(id);
         request->send(200, "application/json", "{\"status\":\"ok\"}");
     });
+
+    // === WIFI / HOTSPOT API ENDPOINTS ===
+
+    // API: WiFi status - station connection + hotspot (AP) state
+    server->on("/api/wifi/status", HTTP_GET, [](AsyncWebServerRequest *request) {
+        AsyncResponseStream *response = request->beginResponseStream("application/json");
+        DynamicJsonDocument doc(512);
+
+        bool sta = WiFi.status() == WL_CONNECTED;
+        doc["sta_connected"] = sta;
+        doc["sta_ssid"] = sta ? WiFi.SSID() : String("");
+        doc["sta_ip"] = sta ? WiFi.localIP().toString() : String("");
+        doc["rssi"] = sta ? WiFi.RSSI() : 0;
+
+        wifi_mode_t mode = WiFi.getMode();
+        bool ap = (mode == WIFI_AP || mode == WIFI_AP_STA);
+        doc["ap_active"] = ap;
+        doc["ap_ssid"] = ap ? WiFi.softAPSSID() : String("");
+        doc["ap_ip"] = ap ? WiFi.softAPIP().toString() : String("");
+
+        serializeJson(doc, *response);
+        request->send(response);
+    });
+
+    // API: WiFi scan - async so async_tcp keeps running. First call kicks off a
+    // scan and returns 202; the client polls until results are ready.
+    server->on("/api/wifi/scan", HTTP_GET, [](AsyncWebServerRequest *request) {
+        int n = WiFi.scanComplete();
+        if (n == WIFI_SCAN_RUNNING) {
+            request->send(202, "application/json", "{\"status\":\"scanning\"}");
+            return;
+        }
+        if (n == WIFI_SCAN_FAILED) {
+            WiFi.scanNetworks(true);  // start async scan
+            request->send(202, "application/json", "{\"status\":\"scanning\"}");
+            return;
+        }
+
+        // n >= 0: results available
+        AsyncResponseStream *response = request->beginResponseStream("application/json");
+        DynamicJsonDocument doc(4096);
+        JsonArray arr = doc.createNestedArray("networks");
+        for (int i = 0; i < n && i < 20; i++) {
+            JsonObject net = arr.createNestedObject();
+            net["ssid"] = WiFi.SSID(i);
+            net["rssi"] = WiFi.RSSI(i);
+            net["secure"] = WiFi.encryptionType(i) != WIFI_AUTH_OPEN;
+        }
+        serializeJson(doc, *response);
+        request->send(response);
+        WiFi.scanDelete();
+    });
+
+    // API: WiFi connect - join a network. Credentials persist to NVS so the
+    // device reconnects automatically on the next boot.
+    AsyncCallbackJsonWebHandler* wifiConnectHandler = new AsyncCallbackJsonWebHandler("/api/wifi/connect",
+        [](AsyncWebServerRequest *request, JsonVariant &json) {
+            String ssid = json["ssid"].as<String>();
+            String password = json["password"] | "";
+
+            if (ssid.length() == 0) {
+                request->send(400, "application/json", "{\"error\":\"SSID is required\"}");
+                return;
+            }
+
+            // Keep the AP up (AP_STA) so the phone stays connected to the page
+            // while the station connection is attempted.
+            wifi_mode_t mode = WiFi.getMode();
+            if (mode == WIFI_AP) WiFi.mode(WIFI_AP_STA);
+            else if (mode == WIFI_OFF) WiFi.mode(WIFI_STA);
+
+            Serial.printf("WiFi connect requested via web: %s\n", ssid.c_str());
+            WiFi.begin(ssid.c_str(), password.c_str());
+
+            request->send(200, "application/json", "{\"status\":\"connecting\"}");
+        }
+    );
+    server->addHandler(wifiConnectHandler);
 
     // Static Files - serve from SystemFS first (where OTA filesystem updates go)
     // Fall back to EbookFS if not found

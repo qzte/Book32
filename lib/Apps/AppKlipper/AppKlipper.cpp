@@ -204,6 +204,11 @@ const uint8_t* AppKlipper::getIconImage() {
     return icon_klipper_160x160;
 }
 
+void AppKlipper::forceRedraw() {
+    _firstDraw = true;  // Full repaint at the new orientation
+    _needsRedraw = true;
+}
+
 void AppKlipper::startScan() {
     // Don't start a new scan if one is already running
     if (_scanning || _scanTaskHandle != NULL) {

@@ -1,5 +1,7 @@
 #include "DisplayMgr.h"
 #include "../../include/Config.h"
+#include "Book32FS.h"
+#include <ArduinoJson.h>
 #include <Fonts/FreeSans9pt7b.h>
 #include <Fonts/FreeSans12pt7b.h>
 #include <Fonts/FreeSansBold18pt7b.h>
@@ -52,13 +54,42 @@ void DisplayMgr::init() {
     // For ESP32-S3 we must initialize SPI with custom pins before display.init
     SPI.begin(EPD_SCK, EPD_MISO, EPD_MOSI, EPD_CS); 
     
-    display.init(115200, true, 10, false); 
-    
-    display.setRotation(3); // Portrait mode (480x800)
+    display.init(115200, true, 10, false);
+
+    display.setRotation(_rotation); // Portrait mode (480x800); _rotation = 1 or 3
     display.setTextColor(GxEPD_BLACK);
     display.setFont(NULL);
-    
-    Serial.printf("Display initialized: %dx%d (rotation %d)\n", display.width(), display.height(), 3);
+
+    Serial.printf("Display initialized: %dx%d (rotation %d)\n", display.width(), display.height(), _rotation);
+}
+
+void DisplayMgr::setRotation(int rotation) {
+    // Constrain to the two portrait orientations so layouts never break.
+    if (rotation != 1 && rotation != 3) rotation = 3;
+    bool changed = (rotation != _rotation);
+    _rotation = rotation;
+    display.setRotation(_rotation);
+    // Only invalidate the boot screen when the orientation actually changes, so
+    // a no-op load at boot doesn't trigger a full refresh mid-sequence. Live
+    // (post-boot) rotation changes repaint via the active app's forceRedraw().
+    if (changed) _bootScreenActive = false;
+    Serial.printf("Display rotation set to %d (changed=%d)\n", _rotation, changed);
+}
+
+void DisplayMgr::loadDisplaySettings() {
+    int rotation = 3;  // Default: button on the left
+    if (EbookFS.exists("/display_config.json")) {
+        File file = EbookFS.open("/display_config.json", "r");
+        if (file) {
+            DynamicJsonDocument doc(256);
+            if (!deserializeJson(doc, file)) {
+                rotation = doc["rotation"] | 3;
+            }
+            file.close();
+        }
+    }
+    setRotation(rotation);
+    Serial.printf("Loaded display settings: rotation=%d\n", _rotation);
 }
 
 void DisplayMgr::clear() {

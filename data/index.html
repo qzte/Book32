@@ -20,7 +20,7 @@
                 <li onclick="showTab('todo')">Todo</li>
                 <li onclick="showTab('settings')">Settings</li>
             </ul>
-            <div class="version">v<span id="version-display">1.0.0</span></div>
+            <div class="version">v<span id="version-display">1.0</span></div>
         </nav>
 
         <main class="content">
@@ -47,10 +47,6 @@
                         <h3>Free Space</h3>
                         <p id="freespace-val">--</p>
                     </div>
-                    <div class="card stat">
-                        <h3>Time</h3>
-                        <p id="time-val">--:--</p>
-                    </div>
                 </div>
             </section>
 
@@ -60,6 +56,15 @@
 
                 <div class="card">
                     <h3>Reader Options</h3>
+                    <div class="setting-row">
+                        <label for="font-size">Reading Font Size</label>
+                        <select id="font-size" style="margin-left: 10px;">
+                            <option value="9">Small</option>
+                            <option value="12">Medium</option>
+                            <option value="18">Large</option>
+                        </select>
+                    </div>
+                    <p class="hint">Applies to the book text. A larger size fits fewer words per page; pages reflow automatically.</p>
                     <div class="setting-row">
                         <label for="refresh-rate">Full Refresh Interval (Pages)</label>
                         <input type="number" id="refresh-rate" min="1" max="100" value="6" style="width: 60px;">
@@ -155,17 +160,44 @@
                     <div id="sleep-settings-status" class="status-msg"></div>
                 </div>
 
-                <div class="card setting-row">
-                    <span>Bluetooth</span>
-                    <label class="switch">
-                        <input type="checkbox" id="bt-toggle">
-                        <span class="slider round"></span>
-                    </label>
+                <div class="card">
+                    <h3>Display Orientation</h3>
+                    <div class="setting-row">
+                        <label for="display-rotation">Button Side</label>
+                        <select id="display-rotation" style="margin-left: 10px;">
+                            <option value="3">Left (default)</option>
+                            <option value="1">Right (rotate 180°)</option>
+                        </select>
+                    </div>
+                    <p class="hint">Flips the entire screen 180° so the button sits on your preferred side. Applies immediately.</p>
+                    <button class="btn secondary" onclick="saveDisplaySettings()">Apply Orientation</button>
+                    <div id="display-settings-status" class="status-msg"></div>
+                </div>
+
+                <div class="card">
+                    <h3>Wi-Fi &amp; Hotspot</h3>
+                    <p id="wifi-status" class="hint">Checking connection...</p>
+                    <div class="setting-row" style="margin-top: 12px;">
+                        <label for="wifi-ssid">Network</label>
+                        <select id="wifi-ssid" style="flex: 1; margin-left: 10px;">
+                            <option value="">Tap Scan to list networks…</option>
+                        </select>
+                    </div>
+                    <div class="setting-row" style="margin-top: 10px;">
+                        <label for="wifi-pass">Password</label>
+                        <input type="password" id="wifi-pass" placeholder="(leave blank if open)" style="flex: 1; margin-left: 10px;">
+                    </div>
+                    <p class="hint">Connect Book32 to a network, or manage it directly over the Book32 hotspot when no network is available.</p>
+                    <div style="margin-top: 12px;">
+                        <button class="btn secondary" onclick="scanWifi()">Scan</button>
+                        <button class="btn primary" onclick="connectWifi()">Connect</button>
+                    </div>
+                    <div id="wifi-connect-status" class="status-msg"></div>
                 </div>
 
                 <div class="card update-card">
                     <h3>Software Update</h3>
-                    <p>Current Version: <span id="current-ver">1.0.0</span></p>
+                    <p>Current Version: <span id="current-ver">1.0</span></p>
                     <div id="update-status" class="status-msg"></div>
                     <button id="check-update-btn" class="btn primary" onclick="checkUpdate()">Check for Updates</button>
                     <button id="update-btn" class="btn primary hidden" onclick="performUpdate()">Install Update</button>
