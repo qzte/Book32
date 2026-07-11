@@ -16,8 +16,6 @@
             <ul class="nav-links">
                 <li class="active" onclick="showTab('dashboard')">Dashboard</li>
                 <li onclick="showTab('ereader')">Ereader</li>
-                <li onclick="showTab('klipper')">Klipper</li>
-                <li onclick="showTab('todo')">Todo</li>
                 <li onclick="showTab('settings')">Settings</li>
             </ul>
             <div class="version">v<span id="version-display">1.0</span></div>
@@ -95,47 +93,6 @@
                     <h3>Your Books</h3>
                     <div id="book-list">
                         <!-- Books injected by JS -->
-                    </div>
-                </div>
-            </section>
-
-            <!-- Klipper Tab -->
-            <section id="klipper" class="tab-content">
-                <h1>Klipper Settings</h1>
-
-                <div class="card">
-                    <h3>Display Options</h3>
-                    <div class="setting-row">
-                        <label for="klipper-refresh">Full Refresh Interval (Minutes)</label>
-                        <input type="number" id="klipper-refresh" min="0" max="60" value="5" style="width: 60px;">
-                    </div>
-                    <p class="hint">Set to 0 for partial refresh only (faster updates, may cause ghosting over time)</p>
-                    <div class="setting-row">
-                        <label for="klipper-update-interval">Status Update Interval (Seconds)</label>
-                        <input type="number" id="klipper-update-interval" min="10" max="120" value="30" style="width: 60px;">
-                    </div>
-                    <p class="hint">How often the device polls printer status (10-120 seconds)</p>
-                    <button class="btn secondary" onclick="saveKlipperSettings()">Save Settings</button>
-                    <div id="klipper-settings-status" class="status-msg"></div>
-                </div>
-            </section>
-
-            <!-- Todo Tab -->
-            <section id="todo" class="tab-content">
-                <h1>Todo List</h1>
-
-                <div class="card">
-                    <h3>Add Task</h3>
-                    <div class="todo-input-container">
-                        <input type="text" id="new-todo-input" placeholder="Enter a new task..." maxlength="100">
-                        <button class="btn-add" onclick="addTodo()">Add</button>
-                    </div>
-                </div>
-
-                <div class="card">
-                    <h3>Your Tasks</h3>
-                    <div id="todo-list">
-                        <!-- Todos injected by JS -->
                     </div>
                 </div>
             </section>

@@ -1,8 +1,8 @@
 # Book32
 
 Book32 is a custom E-Ink application OS for the Seeed Studio XIAO ESP32-S3
-TRMNL 7.5 inch OG DIY kit. It includes an EPUB reader, a Todo app, a Klipper
-printer monitor, and a local web interface for books, settings, and OTA updates.
+TRMNL 7.5 inch OG DIY kit. It includes an EPUB reader and a local web
+interface for books, settings, and OTA updates.
 
 ## Hardware
 
@@ -156,8 +156,6 @@ python -m platformio device monitor
 - EPUB reader with saved reading progress and boot resume
 - Library menu optimized for E-Ink
 - Local web interface for uploading and deleting books
-- Todo app
-- Klipper printer monitor
 - Battery indicator and charging status
 - Public GitHub OTA firmware and web UI updates
 

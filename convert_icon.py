@@ -64,6 +64,4 @@ def convert_icon(image_path, output_path, var_name):
 
 if __name__ == "__main__":
     convert_icon("icon_reader.png", "lib/Apps/AppReader/icon_reader.h", "icon_reader_160x160")
-    convert_icon("icon_klipper.png", "lib/Apps/AppKlipper/icon_klipper.h", "icon_klipper_160x160")
-    convert_icon("icon_todo.png", "lib/Apps/AppTodo/icon_todo.h", "icon_todo_160x160")
     convert_icon("icon_update.png", "lib/Book32_Apps/icon_update.h", "icon_update_160x160")

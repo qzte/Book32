@@ -207,7 +207,7 @@ void AppMainMenu::start() {
 void AppMainMenu::stop() {
     // Hotspot is a main-menu-only convenience. Leaving the menu tears it down so
     // it doesn't keep the radio (and battery) busy inside other apps. Normal
-    // station connections are left untouched (Klipper still needs WiFi).
+    // station connections are left untouched for management services.
     stopHotspot();
 }
 
