@@ -58,6 +58,26 @@ static void listFiles(fs::FS &fs, const char * dirname, uint8_t levels) {
 #endif
 }
 
+static bool partitionLooksBlank(const esp_partition_t* partition) {
+    if (!partition) return false;
+
+    uint8_t buffer[256];
+    size_t bytesToCheck = min((size_t)4096, partition->size);
+    for (size_t offset = 0; offset < bytesToCheck; offset += sizeof(buffer)) {
+        size_t readLen = min(sizeof(buffer), bytesToCheck - offset);
+        if (esp_partition_read(partition, offset, buffer, readLen) != ESP_OK) {
+            return false;
+        }
+        for (size_t i = 0; i < readLen; i++) {
+            if (buffer[i] != 0xFF) {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
 void WebMgr::mountFilesystems() {
 #if BOOK32_VERBOSE_BOOT_LOG
     Serial.println("\n========== PARTITION TABLE DUMP ==========");
@@ -118,14 +138,19 @@ void WebMgr::mountFilesystems() {
         Serial.println("WARNING: No partition with label 'ebooks' found!");
     }
 
-    // Mount EbookFS - DO NOT format on fail to preserve user data
+    // Mount EbookFS without formatting first to preserve user data. If the
+    // partition is brand-new/blank, format it once so new boards have storage.
     bool ebookOK = EbookFS.begin(false, "/ebooks", 10, "ebooks");
+    if (!ebookOK && partitionLooksBlank(ebooksPart)) {
+        Serial.println("EbookFS appears blank; formatting first-use ebook storage...");
+        ebookOK = EbookFS.begin(true, "/ebooks", 10, "ebooks");
+    }
+
     if (ebookOK) {
         Serial.printf("EbookFS OK: %u / %u bytes used\n", EbookFS.usedBytes(), EbookFS.totalBytes());
         listFiles(EbookFS, "/", 1);
     } else {
-        Serial.println("ERROR: EbookFS mount failed! Ebooks partition may need manual formatting.");
-        Serial.println("       Upload an ebook via web UI to trigger first-time format if needed.");
+        Serial.println("ERROR: EbookFS mount failed! Ebooks partition is not available.");
     }
     
     Serial.println("============================\n");

@@ -78,6 +78,12 @@ python -m platformio run --target uploadfs
 The ebook storage partition is separate. These commands update firmware and the
 web UI, but they do not erase uploaded ebooks.
 
+On a brand-new board, the firmware creates the ebook filesystem on first boot.
+After the first successful boot, the web interface should report roughly 10 MB
+of ebook storage. If it reports 0 bytes, confirm that the firmware was flashed
+from this project so the custom `partitions_16MB.csv` partition table was
+installed.
+
 To watch boot logs:
 
 ```powershell
@@ -160,3 +166,12 @@ python -m platformio device monitor
 Book32 uses a custom partition table. The ebook partition is mounted separately
 from the firmware and web UI filesystem, so normal firmware and `uploadfs`
 updates do not overwrite user ebook storage.
+
+Fresh hardware setup uses three pieces:
+
+- `python -m platformio run --target upload` flashes the bootloader, firmware,
+  and the custom partition table.
+- `python -m platformio run --target uploadfs` flashes the 1 MB LittleFS web UI
+  partition named `spiffs`.
+- The 10 MB `ebooks` partition is not flashed by PlatformIO. Book32 formats it
+  automatically the first time it sees that partition is blank.
