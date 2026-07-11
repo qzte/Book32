@@ -7,7 +7,6 @@
 #include "../Book32_Core/Book32FS.h"
 #include "../Book32_Update/GitHubMgr.h"
 #include "../Book32_Core/BatteryMgr.h"
-#include "../Apps/AppTodo/AppTodo.h"
 #include "../Book32_Core/AppMgr.h"
 #include "../Book32_Core/DisplayMgr.h"
 #include "../../include/Config.h"
@@ -686,64 +685,6 @@ void WebMgr::setupEndpoints() {
         request->send(200, "application/json", "{\"status\":\"ok\"}");
     });
 
-    // API: Klipper Settings - GET
-    server->on("/api/settings/klipper", HTTP_GET, [](AsyncWebServerRequest *request) {
-        AsyncResponseStream *response = request->beginResponseStream("application/json");
-        DynamicJsonDocument doc(256);
-
-        // Try to load existing settings from EbookFS
-        if (EbookFS.exists("/klipper_config.json")) {
-            File file = EbookFS.open("/klipper_config.json", "r");
-            if (file) {
-                DynamicJsonDocument savedDoc(256);
-                if (!deserializeJson(savedDoc, file)) {
-                    doc["fullRefreshInterval"] = savedDoc["fullRefreshInterval"] | 5;
-                    doc["statusUpdateInterval"] = savedDoc["statusUpdateInterval"] | 30;
-                } else {
-                    doc["fullRefreshInterval"] = 5;
-                    doc["statusUpdateInterval"] = 30;
-                }
-                file.close();
-            } else {
-                doc["fullRefreshInterval"] = 5;
-                doc["statusUpdateInterval"] = 30;
-            }
-        } else {
-            doc["fullRefreshInterval"] = 5;  // Default: 5 minutes
-            doc["statusUpdateInterval"] = 30;  // Default: 30 seconds
-        }
-
-        serializeJson(doc, *response);
-        request->send(response);
-    });
-
-    // API: Klipper Settings - POST
-    AsyncCallbackJsonWebHandler* klipperSettingsHandler = new AsyncCallbackJsonWebHandler("/api/settings/klipper",
-        [](AsyncWebServerRequest *request, JsonVariant &json) {
-            DynamicJsonDocument doc(256);
-
-            if (json.containsKey("fullRefreshInterval")) {
-                doc["fullRefreshInterval"] = json["fullRefreshInterval"].as<int>();
-            }
-            if (json.containsKey("statusUpdateInterval")) {
-                doc["statusUpdateInterval"] = json["statusUpdateInterval"].as<int>();
-            }
-
-            // Save to EbookFS (persists through OTA updates)
-            File file = EbookFS.open("/klipper_config.json", FILE_WRITE);
-            if (file) {
-                serializeJson(doc, file);
-                file.close();
-                Serial.printf("Saved Klipper settings: fullRefreshInterval=%d min, statusUpdateInterval=%d sec\n",
-                             doc["fullRefreshInterval"].as<int>(), doc["statusUpdateInterval"].as<int>());
-                request->send(200, "application/json", "{\"status\":\"ok\"}");
-            } else {
-                request->send(500, "application/json", "{\"status\":\"error\",\"message\":\"Failed to save\"}");
-            }
-        }
-    );
-    server->addHandler(klipperSettingsHandler);
-
     // API: Sleep Settings - GET
     server->on("/api/settings/sleep", HTTP_GET, [](AsyncWebServerRequest *request) {
         AsyncResponseStream *response = request->beginResponseStream("application/json");
@@ -833,123 +774,6 @@ void WebMgr::setupEndpoints() {
         } else {
             request->send(404, "application/json", "{\"error\":\"App not found\"}");
         }
-    });
-
-    // === TODO API ENDPOINTS ===
-
-    // Helper to get AppTodo instance
-    auto getTodoApp = []() -> AppTodo* {
-        AppMgr& appMgr = AppMgr::getInstance();
-        for (auto* app : appMgr.getApps()) {
-            if (strcmp(app->getName(), "Todo") == 0) {
-                return static_cast<AppTodo*>(app);
-            }
-        }
-        return nullptr;
-    };
-
-    // GET /api/todos - List all todos
-    server->on("/api/todos", HTTP_GET, [getTodoApp](AsyncWebServerRequest *request) {
-        AsyncResponseStream *response = request->beginResponseStream("application/json");
-        DynamicJsonDocument doc(4096);
-        JsonArray arr = doc.createNestedArray("todos");
-
-        AppTodo* todoApp = getTodoApp();
-        if (todoApp) {
-            for (const auto& item : todoApp->getTodos()) {
-                JsonObject obj = arr.createNestedObject();
-                obj["id"] = item.id;
-                obj["text"] = item.text;
-                obj["completed"] = item.completed;
-            }
-        }
-
-        serializeJson(doc, *response);
-        request->send(response);
-    });
-
-    // NOTE: Register more specific routes FIRST to avoid prefix matching issues
-
-    // POST /api/todos/toggle - Toggle a todo's completed status
-    AsyncCallbackJsonWebHandler* toggleTodoHandler = new AsyncCallbackJsonWebHandler("/api/todos/toggle",
-        [getTodoApp](AsyncWebServerRequest *request, JsonVariant &json) {
-            AppTodo* todoApp = getTodoApp();
-            if (!todoApp) {
-                request->send(500, "application/json", "{\"error\":\"Todo app not found\"}");
-                return;
-            }
-
-            int id = json["id"] | -1;
-            if (id < 0) {
-                request->send(400, "application/json", "{\"error\":\"Valid ID is required\"}");
-                return;
-            }
-
-            todoApp->toggleTodo(id);
-            request->send(200, "application/json", "{\"status\":\"ok\"}");
-        }
-    );
-    server->addHandler(toggleTodoHandler);
-
-    // POST /api/todos/edit - Edit a todo's text
-    AsyncCallbackJsonWebHandler* editTodoHandler = new AsyncCallbackJsonWebHandler("/api/todos/edit",
-        [getTodoApp](AsyncWebServerRequest *request, JsonVariant &json) {
-            AppTodo* todoApp = getTodoApp();
-            if (!todoApp) {
-                request->send(500, "application/json", "{\"error\":\"Todo app not found\"}");
-                return;
-            }
-
-            int id = json["id"] | -1;
-            String text = json["text"].as<String>();
-            if (id < 0 || text.length() == 0) {
-                request->send(400, "application/json", "{\"error\":\"Valid ID and text are required\"}");
-                return;
-            }
-
-            todoApp->editTodo(id, text);
-            request->send(200, "application/json", "{\"status\":\"ok\"}");
-        }
-    );
-    server->addHandler(editTodoHandler);
-
-    // POST /api/todos/add - Add a new todo (use specific path to avoid conflicts)
-    AsyncCallbackJsonWebHandler* addTodoHandler = new AsyncCallbackJsonWebHandler("/api/todos/add",
-        [getTodoApp](AsyncWebServerRequest *request, JsonVariant &json) {
-            AppTodo* todoApp = getTodoApp();
-            if (!todoApp) {
-                request->send(500, "application/json", "{\"error\":\"Todo app not found\"}");
-                return;
-            }
-
-            String text = json["text"].as<String>();
-            if (text.length() == 0) {
-                request->send(400, "application/json", "{\"error\":\"Text is required\"}");
-                return;
-            }
-
-            todoApp->addTodo(text);
-            request->send(200, "application/json", "{\"status\":\"ok\"}");
-        }
-    );
-    server->addHandler(addTodoHandler);
-
-    // DELETE /api/todos - Delete a todo
-    server->on("/api/todos/delete", HTTP_DELETE, [getTodoApp](AsyncWebServerRequest *request) {
-        AppTodo* todoApp = getTodoApp();
-        if (!todoApp) {
-            request->send(500, "application/json", "{\"error\":\"Todo app not found\"}");
-            return;
-        }
-
-        if (!request->hasParam("id")) {
-            request->send(400, "application/json", "{\"error\":\"ID parameter is required\"}");
-            return;
-        }
-
-        int id = request->getParam("id")->value().toInt();
-        todoApp->deleteTodo(id);
-        request->send(200, "application/json", "{\"status\":\"ok\"}");
     });
 
     // === WIFI / HOTSPOT API ENDPOINTS ===

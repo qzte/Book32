@@ -8,14 +8,6 @@ ICON_MAP = {
     'icon_reader.png': {
         'path': r'c:\Users\Ron\Downloads\DEV\Book32-TRMNL\Book32\lib\Apps\AppReader\icon_reader.h',
         'var_name': 'icon_reader_80x80'
-    },
-    'icon_klipper.png': {
-        'path': r'c:\Users\Ron\Downloads\DEV\Book32-TRMNL\Book32\lib\Apps\AppKlipper\icon_klipper.h',
-        'var_name': 'icon_klipper_80x80'
-    },
-    'icon_todo.png': {
-        'path': r'c:\Users\Ron\Downloads\DEV\Book32-TRMNL\Book32\lib\Apps\AppTodo\icon_todo.h',
-        'var_name': 'icon_todo_80x80'
     }
 }
 

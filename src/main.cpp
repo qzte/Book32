@@ -7,14 +7,11 @@
 #include "InputMgr.h"
 #include "AppMgr.h"
 #include "WebMgr.h"
-#include "GitHubMgr.h"
 #include "BatteryMgr.h"
 #include "FontMgr.h"
 
 #include "../Book32_Apps/AppMainMenu.h"
 #include "../Apps/AppReader/AppReader.h"
-#include "../Apps/AppKlipper/AppKlipper.h"
-#include "../Apps/AppTodo/AppTodo.h"
 #include <WiFiManager.h>
 
 volatile bool gNetworkStartupInProgress = false;
@@ -84,7 +81,6 @@ void setup() {
     InputMgr& inputMgr = InputMgr::getInstance();
     AppMgr& appMgr = AppMgr::getInstance();
     WebMgr& webMgr = WebMgr::getInstance();
-    GitHubMgr& gitHubMgr = GitHubMgr::getInstance();
 
     // 2. Mount Filesystems EARLY (before WiFi, prevents race conditions)
     displayMgr.showBootScreen(28, "Mounting storage");
@@ -109,8 +105,6 @@ void setup() {
     appMgr.registerApp(new AppMainMenu());
     AppReader* readerApp = new AppReader();
     appMgr.registerApp(readerApp);
-    appMgr.registerApp(new AppTodo());
-    appMgr.registerApp(new AppKlipper());
 
     displayMgr.showBootScreen(90, "Starting network");
     gNetworkStartupInProgress = true;
