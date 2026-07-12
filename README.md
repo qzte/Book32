@@ -50,7 +50,7 @@ The easiest path is Visual Studio Code plus the PlatformIO extension.
 4. Clone this repo:
 
 ```powershell
-git clone https://github.com/rolohaun/Book32.git
+git clone https://github.com/qte/Book32.git
 cd Book32
 ```
 
