@@ -1,0 +1,118 @@
+diff --git a/include/Config.h b/include/Config.h
+index 8b1c43c..5b1d443 100644
+--- a/include/Config.h
++++ b/include/Config.h
+@@ -14,6 +14,7 @@
+ #define PIN_VBAT_SWITCH 6
+ #define VBAT_SWITCH_LEVEL HIGH
+ #define PIN_BUTTON   5  // "KEY3" button
++#define PIN_BUTTON_BACK 2  // "KEY1" button - dedicated Back button
+ 
+ // Display Pins (TRMNL 7.5" OG DIY Kit)
+ #define EPD_SCK     7
+diff --git a/lib/Apps/AppReader/AppReader.cpp b/lib/Apps/AppReader/AppReader.cpp
+index b9596d4..890fba5 100644
+--- a/lib/Apps/AppReader/AppReader.cpp
++++ b/lib/Apps/AppReader/AppReader.cpp
+@@ -275,11 +275,16 @@ void AppReader::handleInput(InputAction action) {
+             } else if (!_books.empty() && _selectedBookIndex >= 0) {
+                 openBook(_books[_selectedBookIndex].path.c_str());
+             }
++        } else if (action == INPUT_BACK) {
++            // KEY1 always goes straight back to the main menu from the library
++            markProgressInactive();
++            AppMgr::getInstance().switchTo(0);
+         }
+     } else if (_state == VIEW_READING) {
+         if (action == INPUT_NEXT) nextPage();
+         else if (action == INPUT_PREV) prevPage();
+         else if (action == INPUT_SELECT) { closeBook(); _state = VIEW_LIBRARY; _librarySelectionOnlyRedraw = false; _needsRedraw = true; }
++        else if (action == INPUT_BACK) { closeBook(); _state = VIEW_LIBRARY; _librarySelectionOnlyRedraw = false; _needsRedraw = true; }
+     }
+ }
+ 
+diff --git a/lib/Book32_Core/InputMgr.cpp b/lib/Book32_Core/InputMgr.cpp
+index bb1f8f6..ea49a5d 100644
+--- a/lib/Book32_Core/InputMgr.cpp
++++ b/lib/Book32_Core/InputMgr.cpp
+@@ -2,7 +2,7 @@
+ #include "../../include/Config.h"
+ #include "BatteryMgr.h"
+ 
+-InputMgr::InputMgr() : btn(PIN_BUTTON, true, true) { // Active Low, Pullup
++InputMgr::InputMgr() : btn(PIN_BUTTON, true, true), btnBack(PIN_BUTTON_BACK, true, true) { // Active Low, Pullup
+     callback = nullptr;
+ }
+ 
+@@ -22,6 +22,12 @@ void InputMgr::init() {
+     btn.attachLongPressStart(staticLongPress, this);
+     // Double-click disabled for faster response
+ 
++    // KEY1 - dedicated Back button
++    btnBack.setDebounceMs(30);
++    btnBack.setClickMs(100);
++    btnBack.setPressMs(400);
++    btnBack.attachClick(staticBackClick, this);
++
+     if (!_taskHandle) {
+         BaseType_t result = xTaskCreatePinnedToCore(
+             inputTask,
+@@ -43,6 +49,7 @@ void InputMgr::init() {
+ void InputMgr::update() {
+     if (!_taskRunning) {
+         btn.tick();
++        btnBack.tick();
+     }
+ 
+     InputAction action = INPUT_NONE;
+@@ -55,6 +62,7 @@ void InputMgr::inputTask(void* parameter) {
+     InputMgr* self = static_cast<InputMgr*>(parameter);
+     while (true) {
+         self->btn.tick();
++        self->btnBack.tick();
+         vTaskDelay(pdMS_TO_TICKS(5));
+     }
+ }
+@@ -93,6 +101,9 @@ void InputMgr::staticDoubleClick(void *ptr) {
+ void InputMgr::staticLongPress(void *ptr) {
+     if(ptr) static_cast<InputMgr*>(ptr)->onLongPress();
+ }
++void InputMgr::staticBackClick(void *ptr) {
++    if(ptr) static_cast<InputMgr*>(ptr)->onBackClick();
++}
+ 
+ // Handlers -> Dispatch to App
+ void InputMgr::onClick() {
+@@ -113,3 +124,9 @@ void InputMgr::onLongPress() {
+     BatteryMgr::getInstance().resetIdleTimer();  // Reset idle timer on user interaction
+     enqueueAction(INPUT_SELECT);
+ }
++
++void InputMgr::onBackClick() {
++    Serial.println("INPUT: KEY1 Click -> BACK");
++    BatteryMgr::getInstance().resetIdleTimer();  // Reset idle timer on user interaction
++    enqueueAction(INPUT_BACK);
++}
+diff --git a/lib/Book32_Core/InputMgr.h b/lib/Book32_Core/InputMgr.h
+index 6273409..a1e9a3a 100644
+--- a/lib/Book32_Core/InputMgr.h
++++ b/lib/Book32_Core/InputMgr.h
+@@ -28,6 +28,7 @@ public:
+ private:
+     InputMgr();
+     OneButton btn;
++    OneButton btnBack;
+     InputCallback callback;
+     TaskHandle_t _taskHandle = nullptr;
+     bool _taskRunning = false;
+@@ -46,8 +47,10 @@ private:
+     void onClick();
+     void onDoubleClick();
+     void onLongPress();
++    void onBackClick();
+     
+     static void staticClick(void *ptr);
+     static void staticDoubleClick(void *ptr);
+     static void staticLongPress(void *ptr);
++    static void staticBackClick(void *ptr);
+ };
