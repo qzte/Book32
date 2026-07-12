@@ -32,7 +32,8 @@ interface for books, settings, and OTA updates.
 
 Button:
 
-- Signal: GPIO 5
+- Next: GPIO 5
+- Back: GPIO 2
 - Other side: GND
 
 Battery sense:
@@ -50,7 +51,7 @@ The easiest path is Visual Studio Code plus the PlatformIO extension.
 4. Clone this repo:
 
 ```powershell
-git clone https://github.com/qte/Book32.git
+git clone https://github.com/qzte/Book32.git
 cd Book32
 ```
 
