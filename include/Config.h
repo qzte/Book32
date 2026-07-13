@@ -14,6 +14,7 @@
 #define PIN_VBAT_SWITCH 6
 #define VBAT_SWITCH_LEVEL HIGH
 #define PIN_BUTTON   5  // "KEY3" button
+#define PIN_BUTTON_BACK 2  // "KEY1" button - dedicated Back button
 
 // Display Pins (TRMNL 7.5" OG DIY Kit)
 #define EPD_SCK     7

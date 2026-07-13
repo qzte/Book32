@@ -28,6 +28,7 @@ public:
 private:
     InputMgr();
     OneButton btn;
+    OneButton btnBack;
     InputCallback callback;
     TaskHandle_t _taskHandle = nullptr;
     bool _taskRunning = false;
@@ -46,8 +47,10 @@ private:
     void onClick();
     void onDoubleClick();
     void onLongPress();
+    void onBackClick();
     
     static void staticClick(void *ptr);
     static void staticDoubleClick(void *ptr);
     static void staticLongPress(void *ptr);
+    static void staticBackClick(void *ptr);
 };

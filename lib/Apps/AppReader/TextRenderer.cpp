@@ -28,6 +28,17 @@ void TextRenderer::setFontSize(int size) {
     calculateDimensions();
 }
 
+void TextRenderer::setFontFamily(int family) {
+    int normalized = (family >= READER_FONT_SANS && family <= READER_FONT_GELASIO)
+                          ? family : READER_FONT_SANS;
+    if (normalized == _fontFamily) return;
+    _fontFamily = normalized;
+    // Force width cache + pagination to be recomputed for the new font.
+    _lastGFXFont = nullptr;
+    clearCache();
+    calculateDimensions();
+}
+
 void TextRenderer::calculateDimensions() {
     int lh = 0;
     getGFXFont(STYLE_NORMAL, lh);
@@ -48,24 +59,53 @@ const GFXfont* TextRenderer::getGFXFont(TextStyle style, int& lineHeight) {
     const GFXfont* bold;
     const GFXfont* h4; const GFXfont* h3; const GFXfont* h2; const GFXfont* h1;
 
-    switch (_fontSize) {
-        case 18:  // Large
-            normal = &FreeSans18pt7b;       bold = &FreeSansBold18pt7b;
-            h4 = &FreeSansBold18pt7b;        h3 = &FreeSansBold18pt7b;
-            h2 = &FreeSansBold24pt7b;        h1 = &FreeSansBold24pt7b;
+    // Each family provides Regular at 9/12/18pt and Bold at 9/12/18/24pt,
+    // mirroring the FreeSans set below so header steps behave identically
+    // regardless of which family is selected.
+#define B32_FONT_SET(NORMAL9, NORMAL12, NORMAL18, BOLD9, BOLD12, BOLD18, BOLD24) \
+    switch (_fontSize) { \
+        case 18:  /* Large */ \
+            normal = &NORMAL18; bold = &BOLD18; \
+            h4 = &BOLD18;       h3 = &BOLD18; \
+            h2 = &BOLD24;       h1 = &BOLD24; \
+            break; \
+        case 12:  /* Medium */ \
+            normal = &NORMAL12; bold = &BOLD12; \
+            h4 = &BOLD12;       h3 = &BOLD18; \
+            h2 = &BOLD18;       h1 = &BOLD24; \
+            break; \
+        case 9:   /* Small (default) */ \
+        default: \
+            normal = &NORMAL9;  bold = &BOLD9; \
+            h4 = &BOLD9;        h3 = &BOLD12; \
+            h2 = &BOLD18;       h1 = &BOLD24; \
+            break; \
+    }
+
+    switch (_fontFamily) {
+        case READER_FONT_MERRIWEATHER:
+            B32_FONT_SET(Merriweather_Regular9pt7b, Merriweather_Regular12pt7b, Merriweather_Regular18pt7b,
+                         Merriweather_Bold9pt7b, Merriweather_Bold12pt7b, Merriweather_Bold18pt7b, Merriweather_Bold24pt7b)
             break;
-        case 12:  // Medium
-            normal = &FreeSans12pt7b;       bold = &FreeSansBold12pt7b;
-            h4 = &FreeSansBold12pt7b;        h3 = &FreeSansBold18pt7b;
-            h2 = &FreeSansBold18pt7b;        h1 = &FreeSansBold24pt7b;
+        case READER_FONT_LITERATA:
+            B32_FONT_SET(Literata_Regular9pt7b, Literata_Regular12pt7b, Literata_Regular18pt7b,
+                         Literata_Bold9pt7b, Literata_Bold12pt7b, Literata_Bold18pt7b, Literata_Bold24pt7b)
             break;
-        case 9:   // Small (default)
+        case READER_FONT_SOURCE_SERIF:
+            B32_FONT_SET(SourceSerif4_Regular9pt7b, SourceSerif4_Regular12pt7b, SourceSerif4_Regular18pt7b,
+                         SourceSerif4_Bold9pt7b, SourceSerif4_Bold12pt7b, SourceSerif4_Bold18pt7b, SourceSerif4_Bold24pt7b)
+            break;
+        case READER_FONT_GELASIO:
+            B32_FONT_SET(Gelasio_Regular9pt7b, Gelasio_Regular12pt7b, Gelasio_Regular18pt7b,
+                         Gelasio_Bold9pt7b, Gelasio_Bold12pt7b, Gelasio_Bold18pt7b, Gelasio_Bold24pt7b)
+            break;
+        case READER_FONT_SANS:
         default:
-            normal = &FreeSans9pt7b;        bold = &FreeSansBold9pt7b;
-            h4 = &FreeSansBold9pt7b;         h3 = &FreeSansBold12pt7b;
-            h2 = &FreeSansBold18pt7b;        h1 = &FreeSansBold24pt7b;
+            B32_FONT_SET(FreeSans9pt7b, FreeSans12pt7b, FreeSans18pt7b,
+                         FreeSansBold9pt7b, FreeSansBold12pt7b, FreeSansBold18pt7b, FreeSansBold24pt7b)
             break;
     }
+#undef B32_FONT_SET
 
     const GFXfont* font;
     switch (style) {

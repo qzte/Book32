@@ -1,41 +1,144 @@
-// DIAGNOSTIC SKETCH - identifica em qual GPIO o botao KEY1 esta realmente ligado.
-// Substitua TEMPORARIAMENTE o conteudo de src/main.cpp por este arquivo,
-// compile e faca upload. Abra o monitor serial (115200) e aperte o KEY1
-// repetidamente. O pino que mudar de HIGH para LOW quando voce aperta
-// o botao e o pino correto.
-//
-// NAO deixe isso no lugar do main.cpp definitivo - e so para teste.
-
 #include <Arduino.h>
+#include <WiFi.h>
+#include "Config.h"
+#include "NetworkState.h"
 
-// Pinos candidatos: os que o Book32 NAO usa para nada (display, bateria, etc.)
-// Baseado no include/Config.h atual.
-const int candidatePins[] = {2, 3, 8, 43, 21, 44, 17, 18};
-const int numPins = sizeof(candidatePins) / sizeof(candidatePins[0]);
-int lastState[numPins];
+#include "DisplayMgr.h"
+#include "InputMgr.h"
+#include "AppMgr.h"
+#include "WebMgr.h"
+#include "BatteryMgr.h"
+#include "FontMgr.h"
+
+#include "../Book32_Apps/AppMainMenu.h"
+#include "../Apps/AppReader/AppReader.h"
+#include <WiFiManager.h>
+
+volatile bool gNetworkStartupInProgress = false;
+static WiFiManager* gWifiManager = nullptr;
+
+static void networkStartupTask(void* parameter) {
+    (void)parameter;
+
+    Serial.println("Network startup task started");
+    if (!gWifiManager) {
+        gWifiManager = new WiFiManager();
+    }
+    // Don't let the setup portal block forever when no known network is in
+    // range. On timeout autoConnect returns false and the main menu brings up
+    // the Book32 management hotspot instead.
+    gWifiManager->setConfigPortalTimeout(120);
+    bool connected = gWifiManager->autoConnect("Book32-Setup");
+
+    if (!connected) {
+        Serial.println("WiFi setup did not connect; continuing offline");
+        gNetworkStartupInProgress = false;
+        vTaskDelete(nullptr);
+        return;
+    }
+
+    Serial.println("WiFi connected");
+    Serial.println(WiFi.localIP());
+
+    App* currentApp = AppMgr::getInstance().getCurrentApp();
+    if (currentApp && strcmp(currentApp->getName(), "eReader") == 0) {
+        Serial.println("Network startup skipped services; eReader is active");
+        WebMgr::getInstance().stop();
+        WiFi.disconnect(false);
+        WiFi.mode(WIFI_OFF);
+        gNetworkStartupInProgress = false;
+        vTaskDelete(nullptr);
+        return;
+    }
+
+    // WiFiManager releases its config portal before returning, but a short yield
+    // gives the networking stack a clean handoff before starting our server.
+    vTaskDelay(pdMS_TO_TICKS(250));
+
+    WebMgr::getInstance().init();
+
+    Serial.println("Network services ready");
+    gNetworkStartupInProgress = false;
+    vTaskDelete(nullptr);
+}
 
 void setup() {
     Serial.begin(115200);
-    delay(1500);
-    Serial.println();
-    Serial.println("=== Scanner de pino do KEY1 ===");
-    Serial.println("Aperte o botao KEY1 repetidamente.");
-    Serial.println("O pino que aparecer como -> LOW e o correto.");
-    Serial.println();
+    delay(250);
 
-    for (int i = 0; i < numPins; i++) {
-        pinMode(candidatePins[i], INPUT_PULLUP);
-        lastState[i] = digitalRead(candidatePins[i]);
+    // Bring the E-ink panel up before the slower startup work begins.
+    DisplayMgr& displayMgr = DisplayMgr::getInstance();
+    displayMgr.init();
+    displayMgr.showBootScreen(8, "Display ready");
+
+    Serial.println("\n\n");
+    Serial.println("╔═══════════════════════════════════════╗");
+    Serial.println("║         Book32 OS Starting...         ║");
+    Serial.printf( "║  Build: %s %s  ║\n", __DATE__, __TIME__);
+    Serial.println("╚═══════════════════════════════════════╝");
+
+    // Get singleton instances (must be done after Arduino init, not at global scope)
+    InputMgr& inputMgr = InputMgr::getInstance();
+    AppMgr& appMgr = AppMgr::getInstance();
+    WebMgr& webMgr = WebMgr::getInstance();
+
+    // 2. Mount Filesystems EARLY (before WiFi, prevents race conditions)
+    displayMgr.showBootScreen(28, "Mounting storage");
+    webMgr.mountFilesystems();
+    
+    // 2.5. Initialize Font Manager (after filesystems, before UI)
+    FontMgr::getInstance().init();
+
+    // Apply the saved display orientation now that the filesystem is mounted
+    // (the boot screen briefly showed in the default orientation before this).
+    displayMgr.loadDisplaySettings();
+
+    // 3. Battery/Input/App Init. Network services start in the background so
+    // the menu is usable while WiFi and the web server finish coming up.
+    displayMgr.showBootScreen(72, "Preparing controls");
+    BatteryMgr::getInstance().init();
+
+    // 4. Input Init
+    inputMgr.init();
+
+    // 5. App Init
+    appMgr.registerApp(new AppMainMenu());
+    AppReader* readerApp = new AppReader();
+    appMgr.registerApp(readerApp);
+
+    displayMgr.showBootScreen(90, "Starting network");
+    gNetworkStartupInProgress = true;
+    BaseType_t networkTaskStarted = xTaskCreatePinnedToCore(
+        networkStartupTask,
+        "NetworkStart",
+        12288,
+        nullptr,
+        1,
+        nullptr,
+        0
+    );
+    if (networkTaskStarted != pdPASS) {
+        gNetworkStartupInProgress = false;
+        Serial.println("Failed to start network task; continuing offline");
     }
+
+    if (readerApp->hasBootResume()) {
+        displayMgr.showBootScreen(100, "Opening reader");
+        readerApp->resumeSavedBookOnStart();
+        appMgr.switchTo(1);
+    } else {
+        displayMgr.showBootScreen(100, "Opening menu");
+        appMgr.switchTo(0);
+    }
+
+    Serial.println("Setup Complete");
 }
 
 void loop() {
-    for (int i = 0; i < numPins; i++) {
-        int state = digitalRead(candidatePins[i]);
-        if (state != lastState[i]) {
-            Serial.printf("GPIO%-3d mudou -> %s\n", candidatePins[i], state == LOW ? "LOW (pressionado!)" : "HIGH (solto)");
-            lastState[i] = state;
-        }
-    }
-    delay(20);
+    InputMgr::getInstance().update();
+    AppMgr::getInstance().update();
+    AppMgr::getInstance().draw();  // Trigger app rendering
+    WebMgr::getInstance().update();
+    BatteryMgr::getInstance().update();  // Check charging state and critical battery
+    BatteryMgr::getInstance().drawStatusIndicator();  // Update charging indicator on e-ink (partial)
 }

@@ -25,6 +25,7 @@ public:
     // other apps ignore it. Lets the web layer drive it through the App*
     // interface without depending on reader internals.
     virtual void applyFontSize(int pt) {}
+    virtual void applyFontFamily(int family) {}
 
     // Metadata
     virtual const char* getName() = 0;

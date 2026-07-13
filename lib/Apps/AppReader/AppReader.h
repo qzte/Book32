@@ -42,6 +42,10 @@ public:
     // main loop; re-paginates the current page from the saved position.
     void applyFontSize(int pt) override;
 
+    // Apply a new reading font family (see ReaderFontFamily) live. Safe to
+    // call from the main loop; re-paginates the current page.
+    void applyFontFamily(int family) override;
+
 private:
     ReaderState _state;
     
@@ -67,6 +71,7 @@ private:
     int _refreshEveryNPages;
     int _pageTurnsSinceRefresh;
     int _fontSizePt;          // Reading body font size in points (9/12/18)
+    int _fontFamily;          // Reading font family (see ReaderFontFamily)
     bool _readingFirstDraw;   // Forces a full refresh on the next reading draw
     void loadSettings();
     
