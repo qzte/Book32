@@ -11,8 +11,21 @@
 #include <Fonts/FreeSansBold12pt7b.h>
 #include <Fonts/FreeSansBold18pt7b.h>
 #include <Fonts/FreeSansBold24pt7b.h>
+#include "Fonts/Merriweather.h"
+#include "Fonts/Literata.h"
+#include "Fonts/SourceSerif4.h"
+#include "Fonts/Gelasio.h"
 #include "DisplayMgr.h"
 #include "EpubLoader.h"
+
+// Reading font family, selectable in the web UI's Reader Options.
+enum ReaderFontFamily {
+    READER_FONT_SANS         = 0, // FreeSans (system default, no serif)
+    READER_FONT_MERRIWEATHER = 1, // Bookerly-style serif (SIL OFL substitute)
+    READER_FONT_LITERATA     = 2, // Literata (SIL OFL)
+    READER_FONT_SOURCE_SERIF = 3, // Source Serif 4 / "Source Serif Pro" (SIL OFL)
+    READER_FONT_GELASIO      = 4  // Georgia-style serif (SIL OFL substitute)
+};
 
 struct PagePointer {
     int nodeIndex;
@@ -43,6 +56,11 @@ public:
     void setFontSize(int size);
     int getFontSize() const { return _fontSize; }
 
+    // Reading font family (see ReaderFontFamily). Invalidates caches so
+    // word-wrap and pagination recompute with the new glyph metrics.
+    void setFontFamily(int family);
+    int getFontFamily() const { return _fontFamily; }
+
     void calculateDimensions();
 
     // New Dynamic Rendering
@@ -62,6 +80,7 @@ private:
     int _width;
     int _height;
     int _fontSize;
+    int _fontFamily = READER_FONT_SANS;
     int _charsPerLine;
     int _linesPerPage;
     int _lineHeight; 

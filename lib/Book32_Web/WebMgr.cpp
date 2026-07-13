@@ -196,6 +196,18 @@ void WebMgr::update() {
         }
     }
 
+    // Apply a pending reading font-family change from the main loop.
+    if (_pendingReaderFontFamily != -1) {
+        int fam = _pendingReaderFontFamily;
+        _pendingReaderFontFamily = -1;
+        for (auto* app : AppMgr::getInstance().getApps()) {
+            if (strcmp(app->getName(), "eReader") == 0) {
+                app->applyFontFamily(fam);
+                break;
+            }
+        }
+    }
+
     // Check if OTA was requested from web UI
     if (_otaPending) {
         _otaPending = false;
@@ -532,14 +544,17 @@ void WebMgr::setupEndpoints() {
             if (!deserializeJson(savedDoc, file)) {
                 doc["refreshFrequency"] = savedDoc["refreshFrequency"] | 10;
                 doc["fontSize"] = savedDoc["fontSize"] | 9;
+                doc["fontFamily"] = savedDoc["fontFamily"] | 0;
             } else {
                 doc["refreshFrequency"] = 10;  // Default
                 doc["fontSize"] = 9;           // Default (small)
+                doc["fontFamily"] = 0;         // Default (FreeSans)
             }
             file.close();
         } else {
             doc["refreshFrequency"] = 10;  // Default
             doc["fontSize"] = 9;           // Default (small)
+            doc["fontFamily"] = 0;         // Default (FreeSans)
         }
 
         serializeJson(doc, *response);
@@ -553,6 +568,7 @@ void WebMgr::setupEndpoints() {
             DynamicJsonDocument doc(256);
             doc["refreshFrequency"] = 10;
             doc["fontSize"] = 9;
+            doc["fontFamily"] = 0;
             if (EbookFS.exists("/reader_config.json")) {
                 File existing = EbookFS.open("/reader_config.json", "r");
                 if (existing) {
@@ -560,6 +576,7 @@ void WebMgr::setupEndpoints() {
                     if (!deserializeJson(savedDoc, existing)) {
                         doc["refreshFrequency"] = savedDoc["refreshFrequency"] | 10;
                         doc["fontSize"] = savedDoc["fontSize"] | 9;
+                        doc["fontFamily"] = savedDoc["fontFamily"] | 0;
                     }
                     existing.close();
                 }
@@ -575,14 +592,21 @@ void WebMgr::setupEndpoints() {
                 // Apply live from the main loop if a book is open.
                 WebMgr::getInstance()._pendingReaderFontSize = pt;
             }
+            if (json.containsKey("fontFamily")) {
+                int fam = json["fontFamily"].as<int>();
+                if (fam < 0 || fam > 4) fam = 0;  // Clamp to supported families
+                doc["fontFamily"] = fam;
+                // Apply live from the main loop if a book is open.
+                WebMgr::getInstance()._pendingReaderFontFamily = fam;
+            }
 
             // Save to EbookFS (primary storage - persists through OTA)
             File file = EbookFS.open("/reader_config.json", FILE_WRITE);
             if (file) {
                 serializeJson(doc, file);
                 file.close();
-                Serial.printf("Saved reader settings: refreshFrequency=%d, fontSize=%d\n",
-                             doc["refreshFrequency"].as<int>(), doc["fontSize"].as<int>());
+                Serial.printf("Saved reader settings: refreshFrequency=%d, fontSize=%d, fontFamily=%d\n",
+                             doc["refreshFrequency"].as<int>(), doc["fontSize"].as<int>(), doc["fontFamily"].as<int>());
                 request->send(200, "application/json", "{\"status\":\"ok\"}");
             } else {
                 request->send(500, "application/json", "{\"status\":\"error\",\"message\":\"Failed to save\"}");

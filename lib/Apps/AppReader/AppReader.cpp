@@ -118,6 +118,7 @@ AppReader::AppReader() {
     _totalBookPages = 0;
     _refreshEveryNPages = 10; // Default to full refresh every 10 pages
     _fontSizePt = 9;          // Default body size (small)
+    _fontFamily = READER_FONT_SANS; // Default family (system sans-serif)
     _readingFirstDraw = true;
     loadSettings();
 }
@@ -138,6 +139,10 @@ void AppReader::loadSettings() {
             if (doc.containsKey("fontSize")) {
                 int pt = doc["fontSize"];
                 _fontSizePt = (pt >= 18) ? 18 : (pt >= 12 ? 12 : 9);
+            }
+            if (doc.containsKey("fontFamily")) {
+                int fam = doc["fontFamily"];
+                _fontFamily = (fam >= READER_FONT_SANS && fam <= READER_FONT_GELASIO) ? fam : READER_FONT_SANS;
             }
         }
         file.close();
@@ -183,7 +188,10 @@ void AppReader::start() {
     // Pick up any settings (font size, refresh interval) changed via the web UI
     // while we were away.
     loadSettings();
-    if (_textRenderer) _textRenderer->setFontSize(_fontSizePt);
+    if (_textRenderer) {
+        _textRenderer->setFontSize(_fontSizePt);
+        _textRenderer->setFontFamily(_fontFamily);
+    }
 
     _state = VIEW_LIBRARY;
     _booksScanned = false;
@@ -315,10 +323,11 @@ bool AppReader::openBook(const String& path, bool restoreProgress) {
         Book32Display& display = dispMgr.getDisplay();
         _textRenderer = new TextRenderer(display.width(), display.height(), _fontSizePt);
     }
-    _textRenderer->setFontSize(_fontSizePt);  // Honor the current reading size
+    _textRenderer->setFontSize(_fontSizePt);      // Honor the current reading size
+    _textRenderer->setFontFamily(_fontFamily);    // Honor the current reading font
 
-    // Using Adafruit GFX FreeSans bitmap fonts (same as main menu and all apps)
-    Serial.println("TextRenderer: Using Adafruit GFX FreeSans fonts");
+    // Using Adafruit GFX bitmap fonts (same rendering path as main menu and all apps)
+    Serial.println("TextRenderer: Using Adafruit GFX fonts");
 
     _textRenderer->calculateDimensions();
 
@@ -742,6 +751,20 @@ void AppReader::applyFontSize(int pt) {
     // The pointer is a content position (node + char offset), so it's font-size
     // independent; the renderer recomputes where this page ends and the next
     // begins, keeping word-wrap and page breaks consistent.
+    _currentPageRenderValid = false;
+    _readingFirstDraw = true;     // Full refresh to clear the old layout cleanly
+    _pageTurnsSinceRefresh = 0;
+    _needsRedraw = true;
+}
+
+void AppReader::applyFontFamily(int family) {
+    int normalized = (family >= READER_FONT_SANS && family <= READER_FONT_GELASIO) ? family : READER_FONT_SANS;
+    _fontFamily = normalized;
+    if (_textRenderer) _textRenderer->setFontFamily(normalized);
+
+    // Re-render the current page from its saved start pointer with the new
+    // family. Same rationale as applyFontSize: the pointer is a content
+    // position, so pagination just recomputes with the new glyph metrics.
     _currentPageRenderValid = false;
     _readingFirstDraw = true;     // Full refresh to clear the old layout cleanly
     _pageTurnsSinceRefresh = 0;

@@ -21,7 +21,8 @@ public:
     // Deferred display changes: set by async web handlers, applied from the main
     // loop (in update()) so drawing never happens on the async server task.
     volatile int _pendingRotation = 0;        // 0 = none, else 1 or 3
-    volatile int _pendingReaderFontSize = 0;  // 0 = none, else 9/12/18
+    volatile int _pendingReaderFontSize = 0;    // 0 = none, else 9/12/18
+    volatile int _pendingReaderFontFamily = -1; // -1 = none, else ReaderFontFamily (0-4)
 
 private:
     WebMgr();

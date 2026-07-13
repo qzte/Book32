@@ -2,7 +2,7 @@
 #include "../../include/Config.h"
 #include "BatteryMgr.h"
 
-InputMgr::InputMgr() : btn(PIN_BUTTON, true, true), btnBack(PIN_BUTTON_BACK, true, true) { // Active Low, Pullup
+InputMgr::InputMgr() : btn(PIN_BUTTON, true, true) { // Active Low, Pullup
     callback = nullptr;
 }
 
@@ -21,12 +21,6 @@ void InputMgr::init() {
     btn.attachClick(staticClick, this);
     btn.attachLongPressStart(staticLongPress, this);
     // Double-click disabled for faster response
-
-    // KEY1 - dedicated Back button
-    btnBack.setDebounceMs(30);
-    btnBack.setClickMs(100);
-    btnBack.setPressMs(400);
-    btnBack.attachClick(staticBackClick, this);
 
     if (!_taskHandle) {
         BaseType_t result = xTaskCreatePinnedToCore(
@@ -49,7 +43,6 @@ void InputMgr::init() {
 void InputMgr::update() {
     if (!_taskRunning) {
         btn.tick();
-        btnBack.tick();
     }
 
     InputAction action = INPUT_NONE;
@@ -62,7 +55,6 @@ void InputMgr::inputTask(void* parameter) {
     InputMgr* self = static_cast<InputMgr*>(parameter);
     while (true) {
         self->btn.tick();
-        self->btnBack.tick();
         vTaskDelay(pdMS_TO_TICKS(5));
     }
 }
@@ -101,9 +93,6 @@ void InputMgr::staticDoubleClick(void *ptr) {
 void InputMgr::staticLongPress(void *ptr) {
     if(ptr) static_cast<InputMgr*>(ptr)->onLongPress();
 }
-void InputMgr::staticBackClick(void *ptr) {
-    if(ptr) static_cast<InputMgr*>(ptr)->onBackClick();
-}
 
 // Handlers -> Dispatch to App
 void InputMgr::onClick() {
@@ -123,10 +112,4 @@ void InputMgr::onLongPress() {
     Serial.println("INPUT: Long Press -> SELECT");
     BatteryMgr::getInstance().resetIdleTimer();  // Reset idle timer on user interaction
     enqueueAction(INPUT_SELECT);
-}
-
-void InputMgr::onBackClick() {
-    Serial.println("INPUT: KEY1 Click -> BACK");
-    BatteryMgr::getInstance().resetIdleTimer();  // Reset idle timer on user interaction
-    enqueueAction(INPUT_BACK);
 }
