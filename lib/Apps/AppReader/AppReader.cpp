@@ -283,11 +283,24 @@ void AppReader::handleInput(InputAction action) {
             } else if (!_books.empty() && _selectedBookIndex >= 0) {
                 openBook(_books[_selectedBookIndex].path.c_str());
             }
+        } else if (action == INPUT_BACK) {
+            // KEY1: dedicated Back button. From the library, go straight to
+            // the main menu without needing to navigate to the Back item.
+            markProgressInactive();
+            AppMgr::getInstance().switchTo(0);
         }
     } else if (_state == VIEW_READING) {
         if (action == INPUT_NEXT) nextPage();
         else if (action == INPUT_PREV) prevPage();
         else if (action == INPUT_SELECT) { closeBook(); _state = VIEW_LIBRARY; _librarySelectionOnlyRedraw = false; _needsRedraw = true; }
+        else if (action == INPUT_BACK) {
+            // KEY1: dedicated Back button. Return to the library from the
+            // reading view, same destination as INPUT_SELECT here.
+            closeBook();
+            _state = VIEW_LIBRARY;
+            _librarySelectionOnlyRedraw = false;
+            _needsRedraw = true;
+        }
     }
 }
 
