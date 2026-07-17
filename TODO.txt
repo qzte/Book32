@@ -1,1 +1,1 @@
-Auto Scroll, a hands-free mode that scrolls the page for you at an adjustable pace
+Auto Scroll, a hands-free mode that scrolls the page for you at an adjustable pace, use key2 to open a menu adjuste the pace of the scroll. 5 tipes of speed if possible 
