@@ -223,6 +223,8 @@ void AppMainMenu::handleInput(InputAction action) {
     AppMgr& appMgr = AppMgr::getInstance();
     std::vector<App*>& apps = appMgr.getApps();
     
+    Serial.printf("AppMainMenu::handleInput - action: %d\n", action);
+    
     // Max index is apps.size() - 1 + 1 (if update available)
     int maxIndex = apps.size() - 1 + (_updateAvailable ? 1 : 0); // 0-based index? No selectedIndex is 1-based (starts at 1)
     // Actually selectedIndex starts at 1. App 1 is index 1.
@@ -246,6 +248,10 @@ void AppMainMenu::handleInput(InputAction action) {
         else if (selectedIndex > 0 && selectedIndex < (int)apps.size()) {
             appMgr.switchTo(selectedIndex);
         }
+    }
+    else if (action == INPUT_GO_TO_MAIN_MENU) {
+        // Already at main menu, no action needed
+        Serial.println("AppMainMenu: INPUT_GO_TO_MAIN_MENU - already at main menu");
     }
 }
 

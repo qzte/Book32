@@ -10,7 +10,8 @@ enum InputAction {
     INPUT_NEXT,
     INPUT_PREV,
     INPUT_SELECT,
-    INPUT_BACK
+    INPUT_BACK,
+    INPUT_GO_TO_MAIN_MENU
 };
 
 class InputMgr {
@@ -32,6 +33,10 @@ private:
     InputCallback callback;
     TaskHandle_t _taskHandle = nullptr;
     bool _taskRunning = false;
+    
+    // KEY1 manual tracking
+    unsigned long _btnBackPressTime = 0;
+    bool _btnBackLongPressSent = false;
 
     static const uint8_t QUEUE_SIZE = 8;
     volatile uint8_t _queueHead = 0;
@@ -43,14 +48,13 @@ private:
     bool dequeueAction(InputAction& action);
     static void inputTask(void* parameter);
     
-    // We need to route static handlers to instance
     void onClick();
     void onDoubleClick();
     void onLongPress();
-    void onBackClick();
+    void onBackLongPress();
     
     static void staticClick(void *ptr);
     static void staticDoubleClick(void *ptr);
     static void staticLongPress(void *ptr);
-    static void staticBackClick(void *ptr);
+    static void staticBackLongPress(void *ptr);
 };
