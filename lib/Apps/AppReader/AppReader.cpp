@@ -260,6 +260,7 @@ void AppReader::drawBookTile(Book32Display& display, int x, int y, int w, int h,
 
 void AppReader::handleInput(InputAction action) {
     if (action == INPUT_NONE) return;
+    Serial.printf("AppReader::handleInput - action: %d, state: %d\n", action, _state);
     if (_state == VIEW_LIBRARY) {
         // Index -1 = "Back to Menu", 0+ = books
         int maxIndex = (int)_books.size() - 1;
@@ -284,8 +285,13 @@ void AppReader::handleInput(InputAction action) {
                 openBook(_books[_selectedBookIndex].path.c_str());
             }
         } else if (action == INPUT_BACK) {
-            // KEY1: dedicated Back button. From the library, go straight to
+            // KEY3: dedicated Back button. From the library, go straight to
             // the main menu without needing to navigate to the Back item.
+            markProgressInactive();
+            AppMgr::getInstance().switchTo(0);
+        } else if (action == INPUT_GO_TO_MAIN_MENU) {
+            // KEY1 long press: go to main menu from library
+            Serial.println("AppReader: INPUT_GO_TO_MAIN_MENU -> switching to main menu");
             markProgressInactive();
             AppMgr::getInstance().switchTo(0);
         }
@@ -294,12 +300,21 @@ void AppReader::handleInput(InputAction action) {
         else if (action == INPUT_PREV) prevPage();
         else if (action == INPUT_SELECT) { closeBook(); _state = VIEW_LIBRARY; _librarySelectionOnlyRedraw = false; _needsRedraw = true; }
         else if (action == INPUT_BACK) {
-            // KEY1: dedicated Back button. Return to the library from the
+            // KEY3: dedicated Back button. Return to the library from the
             // reading view, same destination as INPUT_SELECT here.
             closeBook();
             _state = VIEW_LIBRARY;
             _librarySelectionOnlyRedraw = false;
             _needsRedraw = true;
+        } else if (action == INPUT_GO_TO_MAIN_MENU) {
+            // KEY1 long press: go directly to main menu from reading view
+            Serial.println("AppReader: INPUT_GO_TO_MAIN_MENU from READING -> switching to main menu");
+            closeBook();
+            _state = VIEW_LIBRARY;
+            _librarySelectionOnlyRedraw = false;
+            _needsRedraw = true;
+            markProgressInactive();
+            AppMgr::getInstance().switchTo(0);
         }
     }
 }
