@@ -131,6 +131,13 @@ async function performUpdate() {
 }
 
 // === Ereader Book Management ===
+// v1.2.2: case-insensitive extension checks (match firmware behavior)
+const isEpub = f => f.toLowerCase().endsWith('.epub');
+const isFont = f => f.toLowerCase().endsWith('.ttf');
+
+let currentBooks = [];          // Server-provided order (books + fonts)
+let saveOrderTimer = null;      // Debounce: avoid hammering flash on rapid clicks
+
 async function fetchBooks() {
     const bookList = document.getElementById('book-list');
     bookList.innerHTML = '<p>Loading...</p>';
@@ -138,23 +145,74 @@ async function fetchBooks() {
     try {
         const res = await fetch('/api/books');
         const data = await res.json();
-
-        if (data.books && data.books.length > 0) {
-            bookList.innerHTML = data.books.map(book => {
-                const isFont = book.filename.endsWith('.ttf');
-                return `
-                <div class="book-item">
-                    <span class="book-title">${isFont ? '📂 [Font] ' : '📖 '}${book.name}</span>
-                    <span class="book-size">${Math.round(book.size / 1024)} KB</span>
-                    <button class="btn-delete" onclick="deleteBook('${book.filename}', '${book.name}')">Delete</button>
-                </div>
-            `}).join('');
-        } else {
-            bookList.innerHTML = '<p class="hint">No books uploaded yet.</p>';
-        }
+        currentBooks = (data.books || []);
+        renderBooks();
     } catch (e) {
         bookList.innerHTML = '<p class="error">Error loading books.</p>';
         console.error("Failed to fetch books", e);
+    }
+}
+
+function renderBooks() {
+    const bookList = document.getElementById('book-list');
+    if (!currentBooks.length) {
+        bookList.innerHTML = '<p class="hint">No books uploaded yet.</p>';
+        return;
+    }
+    const epubs = currentBooks.filter(b => isEpub(b.filename));
+    bookList.innerHTML = currentBooks.map(book => {
+        const bookIsFont = isFont(book.filename);
+        let orderBtns = '';
+        if (!bookIsFont && epubs.length > 1) {
+            const idx = epubs.indexOf(book);
+            orderBtns = `
+                <span class="order-btns">
+                    <button class="btn-order" ${idx === 0 ? 'disabled' : ''} onclick="moveBook('${book.filename}', -1)" title="Move up">▲</button>
+                    <button class="btn-order" ${idx === epubs.length - 1 ? 'disabled' : ''} onclick="moveBook('${book.filename}', 1)" title="Move down">▼</button>
+                </span>`;
+        }
+        return `
+        <div class="book-item">
+            ${orderBtns}
+            <span class="book-title">${bookIsFont ? '📂 [Font] ' : '📖 '}${escapeHtml(book.name)}</span>
+            <span class="book-size">${Math.round(book.size / 1024)} KB</span>
+            <button class="btn-delete" onclick="deleteBook('${book.filename}', '${escapeHtml(book.name)}')">Delete</button>
+        </div>
+    `}).join('');
+}
+
+function moveBook(filename, dir) {
+    // Swap within the .epub subsequence only; fonts keep their positions.
+    const epubIdxs = currentBooks
+        .map((b, i) => isEpub(b.filename) ? i : -1)
+        .filter(i => i >= 0);
+    const pos = epubIdxs.findIndex(i => currentBooks[i].filename === filename);
+    const target = pos + dir;
+    if (pos < 0 || target < 0 || target >= epubIdxs.length) return;
+
+    const a = epubIdxs[pos], b = epubIdxs[target];
+    [currentBooks[a], currentBooks[b]] = [currentBooks[b], currentBooks[a]];
+    renderBooks();
+    scheduleSaveOrder();
+}
+
+function scheduleSaveOrder() {
+    clearTimeout(saveOrderTimer);
+    saveOrderTimer = setTimeout(saveBookOrder, 500);
+}
+
+async function saveBookOrder() {
+    const order = currentBooks
+        .filter(b => isEpub(b.filename))
+        .map(b => b.filename);
+    try {
+        await fetch('/api/books/order', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ order })
+        });
+    } catch (e) {
+        console.error("Failed to save book order", e);
     }
 }
 
@@ -171,7 +229,7 @@ function uploadBook() {
     }
 
     const file = fileInput.files[0];
-    if (!file.name.endsWith('.epub') && !file.name.endsWith('.ttf')) {
+    if (!isEpub(file.name) && !isFont(file.name)) {
         status.innerText = "Only .epub and .ttf files are supported.";
         status.style.color = "var(--danger)";
         return;

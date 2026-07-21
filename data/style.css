@@ -423,6 +423,33 @@ input:checked+.slider:before {
     font-size: 0.85rem;
 }
 
+/* v1.2.1: styling for manual book-order buttons (were unstyled) */
+.order-btns {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.btn-order {
+    background: #333;
+    color: var(--text-primary);
+    border: 1px solid #444;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.7rem;
+    line-height: 1;
+    padding: 0.2rem 0.4rem;
+}
+
+.btn-order:hover:not(:disabled) {
+    background: #444;
+}
+
+.btn-order:disabled {
+    opacity: 0.3;
+    cursor: default;
+}
+
 .btn-delete {
     background: var(--danger);
     color: white;

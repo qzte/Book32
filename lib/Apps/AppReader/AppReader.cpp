@@ -5,6 +5,7 @@
 #include "AppMgr.h"
 #include "icon_reader.h"
 #include "Book32FS.h"
+#include "BookOrderLogic.h"
 #include "WebMgr.h"
 #include <WiFi.h>
 #include <LittleFS.h>
@@ -237,6 +238,29 @@ void AppReader::scanBooks() {
         file = root.openNextFile();
     }
     root.close();
+
+    // v1.2.0: apply manual order from SystemFS /book_order.json.
+    // Same merge rule as WebMgr's /api/books: ordered entries that still
+    // exist first, remaining books appended in FS enumeration order.
+    if (SystemFS.exists("/book_order.json")) {
+        File of = SystemFS.open("/book_order.json", "r");
+        if (of) {
+            DynamicJsonDocument doc(4096);
+            DeserializationError err = deserializeJson(doc, of);
+            of.close();
+            if (!err) {
+                JsonArray arr = doc["order"].as<JsonArray>();
+                if (!arr.isNull()) {
+                    std::vector<String> order;
+                    for (JsonVariant v : arr) order.push_back(v.as<String>());
+                    applyBookOrderT(order, _books,
+                        [](const BookEntry& e, const String& key) {
+                            return e.path == "/" + key;
+                        });
+                }
+            }
+        }
+    }
 }
 
 void AppReader::drawBookTile(Book32Display& display, int x, int y, int w, int h, bool selected) {

@@ -4,7 +4,10 @@
 #include <WiFi.h>
 #include <LittleFS.h>
 #include <esp_partition.h>
+#include <vector>
 #include "../Book32_Core/Book32FS.h"
+#include "../Book32_Core/FileExt.h"
+#include "../Book32_Core/BookOrderLogic.h"
 #include "../Book32_Update/GitHubMgr.h"
 #include "../Book32_Core/BatteryMgr.h"
 #include "../Book32_Core/AppMgr.h"
@@ -262,6 +265,83 @@ void saveBookMetadata(const String& truncatedName, const String& originalName) {
     }
 }
 
+// === Manual book ordering (v1.2.0) ===
+// Order persisted in SystemFS /book_order.json as {"order":["a.epub","b.epub"]}.
+// Merge rule: files present in the order list come first (in list order);
+// files on the FS but absent from the list are appended in FS enumeration order.
+static const char* BOOK_ORDER_PATH = "/book_order.json";
+
+static void loadBookOrder(std::vector<String>& order) {
+    order.clear();
+    File f = SystemFS.open(BOOK_ORDER_PATH, FILE_READ);
+    if (!f) return;
+    DynamicJsonDocument doc(4096);
+    DeserializationError err = deserializeJson(doc, f);
+    f.close();
+    if (err) return;
+    JsonArray arr = doc["order"].as<JsonArray>();
+    for (JsonVariant v : arr) {
+        order.push_back(v.as<String>());
+    }
+}
+
+static void saveBookOrder(const std::vector<String>& order) {
+    DynamicJsonDocument doc(4096);
+    JsonArray arr = doc.createNestedArray("order");
+    for (const String& s : order) arr.add(s);
+    File f = SystemFS.open(BOOK_ORDER_PATH, FILE_WRITE);
+    if (f) {
+        serializeJson(doc, f);
+        f.close();
+    }
+}
+
+static void removeFromBookOrder(const String& filename) {
+    std::vector<String> order;
+    loadBookOrder(order);
+    bool changed = false;
+    for (auto it = order.begin(); it != order.end();) {
+        if (*it == filename) { it = order.erase(it); changed = true; }
+        else ++it;
+    }
+    if (changed) saveBookOrder(order);
+}
+
+// Merge: ordered entries that still exist first, then the rest in FS order.
+// Logic shared with AppReader::scanBooks() via BookOrderLogic.h
+// (host test: tools/tests/test_book_order.cpp).
+static void applyBookOrder(const std::vector<String>& order, std::vector<String>& fsNames) {
+    applyBookOrderT(order, fsNames,
+        [](const String& item, const String& key) { return item == key; });
+}
+
+// Minimal JSON string escaping for streaming serialization.
+static String jsonEscape(const String& s) {
+    String out;
+    out.reserve(s.length() + 8);
+    for (size_t i = 0; i < s.length(); i++) {
+        char c = s[i];
+        switch (c) {
+            case '"':  out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\b': out += "\\b";  break;
+            case '\f': out += "\\f";  break;
+            case '\n': out += "\\n";  break;
+            case '\r': out += "\\r";  break;
+            case '\t': out += "\\t";  break;
+            default:
+                if ((uint8_t)c < 0x20) {
+                    char buf[8];
+                    snprintf(buf, sizeof(buf), "\\u%04x", c);
+                    out += buf;
+                } else {
+                    out += c;
+                }
+        }
+    }
+    return out;
+}
+
 String getOriginalFilename(const String& truncatedName) {
     File metaFile = SystemFS.open("/books_meta.json", FILE_READ);
     if (!metaFile) {
@@ -362,32 +442,69 @@ void WebMgr::setupEndpoints() {
     });
 
     // API: List Books from EbookFS
+    // v1.2.0: streamed serialization (no fixed 2KB buffer — previously books
+    // beyond the buffer were silently truncated) + manual ordering applied.
     server->on("/api/books", HTTP_GET, [](AsyncWebServerRequest *request) {
-        AsyncResponseStream *response = request->beginResponseStream("application/json");
-        DynamicJsonDocument doc(2048);
-        JsonArray books = doc.createNestedArray("books");
-
+        // 1) Enumerate FS: books (.epub) and fonts (.ttf) separately.
+        std::vector<String> epubs, fonts;
         File root = EbookFS.open("/");
         if (root && root.isDirectory()) {
             File file = root.openNextFile();
             while (file) {
                 String name = file.name();
-                if (name.endsWith(".epub") || name.endsWith(".ttf")) {
-                    JsonObject book = books.createNestedObject();
-                    String displayName = getOriginalFilename(name);
-                    book["name"] = displayName;
-                    book["filename"] = name;
-                    book["size"] = file.size();
-                }
+                if (hasExtensionCI(name, ".epub")) epubs.push_back(name);
+                else if (hasExtensionCI(name, ".ttf")) fonts.push_back(name);
                 file.close();
                 file = root.openNextFile();
             }
             root.close();
         }
 
-        serializeJson(doc, *response);
+        // 2) Apply manual order to books; fonts stay appended in FS order.
+        std::vector<String> order;
+        loadBookOrder(order);
+        applyBookOrder(order, epubs);
+        for (const String& f : fonts) epubs.push_back(f);
+
+        // 3) Stream JSON directly — O(1) memory w.r.t. number of books.
+        AsyncResponseStream *response = request->beginResponseStream("application/json");
+        response->print("{\"books\":[");
+        bool first = true;
+        for (const String& name : epubs) {
+            File f = EbookFS.open("/" + name, FILE_READ);
+            size_t sz = f ? f.size() : 0;
+            if (f) f.close();
+            if (!first) response->print(",");
+            first = false;
+            response->printf("{\"name\":\"%s\",\"filename\":\"%s\",\"size\":%u}",
+                             jsonEscape(getOriginalFilename(name)).c_str(),
+                             jsonEscape(name).c_str(),
+                             (unsigned)sz);
+        }
+        response->print("]}");
         request->send(response);
     });
+
+    // API (v1.2.0): Save manual book order. Body: {"order":["a.epub","b.epub"]}
+    AsyncCallbackJsonWebHandler* bookOrderHandler = new AsyncCallbackJsonWebHandler("/api/books/order",
+        [](AsyncWebServerRequest *request, JsonVariant &json) {
+            JsonArray arr = json["order"].as<JsonArray>();
+            if (arr.isNull()) {
+                request->send(400, "text/plain", "Missing 'order' array");
+                return;
+            }
+            std::vector<String> order;
+            for (JsonVariant v : arr) {
+                String name = v.as<String>();
+                if (name.length() > 0 && hasExtensionCI(name, ".epub")) {
+                    order.push_back(name);
+                }
+            }
+            saveBookOrder(order);
+            request->send(200, "application/json", "{\"ok\":true}");
+        });
+    bookOrderHandler->setMethod(HTTP_POST);
+    server->addHandler(bookOrderHandler);
 
     // API: Upload Book to EbookFS
     server->on("/api/books/upload", HTTP_POST,
@@ -473,6 +590,7 @@ void WebMgr::setupEndpoints() {
                 Serial.printf("Deleted: %s\n", path.c_str());
                 removeBookMetadata(filename);
                 removeBookProgress(filename);
+                removeFromBookOrder(filename);
                 String thumbPath = "/covers/" + filename;
                 thumbPath.replace(".epub", ".thumb");
                 if (EbookFS.exists(thumbPath)) EbookFS.remove(thumbPath);
