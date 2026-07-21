@@ -1,4 +1,4 @@
-// Auto-generated with Adafruit-GFX fontconvert from Merriweather (SIL Open Font License). Source: Google Fonts (github.com/google/fonts).
+// Auto-generated with Adafruit-GFX fontconvert from GNU FreeFont FreeSans (GPLv3 with font exception). Source: Debian fonts-freefont-ttf.
 // Charset: 0x20-0xFF (ASCII + Latin-1 Supplement) for Portuguese and other
 // Western European languages. Regenerate with: fontconvert <ttf> <size> 32 255
 //
@@ -9,17 +9,18 @@
 //
 // Data lives in the matching .cpp so that including this header from multiple
 // translation units does not duplicate the font bitmaps in flash.
-#ifndef FONT_MERRIWEATHER_H
-#define FONT_MERRIWEATHER_H
+#ifndef FONT_FREESANS_L1_H
+#define FONT_FREESANS_L1_H
 
 #include <Adafruit_GFX.h>
 
-extern const GFXfont Merriweather_Regular9pt8b;
-extern const GFXfont Merriweather_Regular12pt8b;
-extern const GFXfont Merriweather_Regular18pt8b;
-extern const GFXfont Merriweather_Bold9pt8b;
-extern const GFXfont Merriweather_Bold12pt8b;
-extern const GFXfont Merriweather_Bold18pt8b;
-extern const GFXfont Merriweather_Bold24pt8b;
+extern const GFXfont FreeSans9pt8b;
+extern const GFXfont FreeSans12pt8b;
+extern const GFXfont FreeSans18pt8b;
+extern const GFXfont FreeSans24pt8b;
+extern const GFXfont FreeSansBold9pt8b;
+extern const GFXfont FreeSansBold12pt8b;
+extern const GFXfont FreeSansBold18pt8b;
+extern const GFXfont FreeSansBold24pt8b;
 
-#endif // FONT_MERRIWEATHER_H
+#endif // FONT_FREESANS_L1_H

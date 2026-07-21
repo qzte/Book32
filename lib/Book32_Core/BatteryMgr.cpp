@@ -5,7 +5,8 @@
 #include "Book32FS.h"
 #include "DisplayMgr.h"
 #include <ArduinoJson.h>
-#include <Fonts/FreeSans18pt7b.h>
+// Local FreeSans with Latin-1 Supplement (0x20-0xFF).
+#include "Fonts/FreeSans.h"
 
 // Static constants
 const float BatteryMgr::CHARGE_THRESHOLD = 0.03f;  // 30mV increase = charging (avoid false positives from fluctuation)
@@ -307,7 +308,7 @@ void BatteryMgr::enterIdleSleep() {
     display.firstPage();
     do {
         display.fillScreen(GxEPD_WHITE);
-        display.setFont(&FreeSans18pt7b);
+        display.setFont(&FreeSans18pt8b);
         display.setTextColor(GxEPD_BLACK);
 
         // Calculate text bounds for centering

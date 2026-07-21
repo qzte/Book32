@@ -4,13 +4,10 @@
 #include <Arduino.h>
 #include <vector>
 #include <Adafruit_GFX.h>
-#include <Fonts/FreeSans9pt7b.h>
-#include <Fonts/FreeSans12pt7b.h>
-#include <Fonts/FreeSans18pt7b.h>
-#include <Fonts/FreeSansBold9pt7b.h>
-#include <Fonts/FreeSansBold12pt7b.h>
-#include <Fonts/FreeSansBold18pt7b.h>
-#include <Fonts/FreeSansBold24pt7b.h>
+// Local FreeSans with Latin-1 Supplement (0x20-0xFF); replaces the ASCII-only
+// Adafruit <Fonts/FreeSans*pt7b.h> headers so Portuguese text renders in the
+// reader when the Sans family is selected.
+#include "Fonts/FreeSans.h"
 #include "Fonts/Merriweather.h"
 #include "Fonts/Literata.h"
 #include "Fonts/SourceSerif4.h"
@@ -91,8 +88,10 @@ private:
     RenderResult _cachedResult = {0, 0, false, 0, 0};
     bool _hasCachedResult = false;
     
-    // Fast character width cache
-    uint8_t _gfxCharWidths[128];
+    // Fast character width cache.
+    // 256 entries: covers ASCII + Latin-1 Supplement (must match the glyph
+    // range of the fonts, 0x20-0xFF, or word-wrap widths silently break).
+    uint8_t _gfxCharWidths[256];
     const GFXfont* _lastGFXFont = nullptr;
 
     const GFXfont* getGFXFont(TextStyle style, int& lineHeight);

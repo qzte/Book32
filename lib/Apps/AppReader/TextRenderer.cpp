@@ -84,25 +84,25 @@ const GFXfont* TextRenderer::getGFXFont(TextStyle style, int& lineHeight) {
 
     switch (_fontFamily) {
         case READER_FONT_MERRIWEATHER:
-            B32_FONT_SET(Merriweather_Regular9pt7b, Merriweather_Regular12pt7b, Merriweather_Regular18pt7b,
-                         Merriweather_Bold9pt7b, Merriweather_Bold12pt7b, Merriweather_Bold18pt7b, Merriweather_Bold24pt7b)
+            B32_FONT_SET(Merriweather_Regular9pt8b, Merriweather_Regular12pt8b, Merriweather_Regular18pt8b,
+                         Merriweather_Bold9pt8b, Merriweather_Bold12pt8b, Merriweather_Bold18pt8b, Merriweather_Bold24pt8b)
             break;
         case READER_FONT_LITERATA:
-            B32_FONT_SET(Literata_Regular9pt7b, Literata_Regular12pt7b, Literata_Regular18pt7b,
-                         Literata_Bold9pt7b, Literata_Bold12pt7b, Literata_Bold18pt7b, Literata_Bold24pt7b)
+            B32_FONT_SET(Literata_Regular9pt8b, Literata_Regular12pt8b, Literata_Regular18pt8b,
+                         Literata_Bold9pt8b, Literata_Bold12pt8b, Literata_Bold18pt8b, Literata_Bold24pt8b)
             break;
         case READER_FONT_SOURCE_SERIF:
-            B32_FONT_SET(SourceSerif4_Regular9pt7b, SourceSerif4_Regular12pt7b, SourceSerif4_Regular18pt7b,
-                         SourceSerif4_Bold9pt7b, SourceSerif4_Bold12pt7b, SourceSerif4_Bold18pt7b, SourceSerif4_Bold24pt7b)
+            B32_FONT_SET(SourceSerif4_Regular9pt8b, SourceSerif4_Regular12pt8b, SourceSerif4_Regular18pt8b,
+                         SourceSerif4_Bold9pt8b, SourceSerif4_Bold12pt8b, SourceSerif4_Bold18pt8b, SourceSerif4_Bold24pt8b)
             break;
         case READER_FONT_GELASIO:
-            B32_FONT_SET(Gelasio_Regular9pt7b, Gelasio_Regular12pt7b, Gelasio_Regular18pt7b,
-                         Gelasio_Bold9pt7b, Gelasio_Bold12pt7b, Gelasio_Bold18pt7b, Gelasio_Bold24pt7b)
+            B32_FONT_SET(Gelasio_Regular9pt8b, Gelasio_Regular12pt8b, Gelasio_Regular18pt8b,
+                         Gelasio_Bold9pt8b, Gelasio_Bold12pt8b, Gelasio_Bold18pt8b, Gelasio_Bold24pt8b)
             break;
         case READER_FONT_SANS:
         default:
-            B32_FONT_SET(FreeSans9pt7b, FreeSans12pt7b, FreeSans18pt7b,
-                         FreeSansBold9pt7b, FreeSansBold12pt7b, FreeSansBold18pt7b, FreeSansBold24pt7b)
+            B32_FONT_SET(FreeSans9pt8b, FreeSans12pt8b, FreeSans18pt8b,
+                         FreeSansBold9pt8b, FreeSansBold12pt8b, FreeSansBold18pt8b, FreeSansBold24pt8b)
             break;
     }
 #undef B32_FONT_SET
@@ -163,7 +163,9 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
             display.setFont(font);
             
             if (font != _lastGFXFont) {
-                for (uint8_t c = 32; c < 127; c++) {
+                // int (not uint8_t) loop variable: an upper bound of 256
+                // would make a uint8_t wrap at 255 and never terminate.
+                for (int c = 32; c < 256; c++) {
                     if (c >= font->first && c <= font->last) {
                         _gfxCharWidths[c] = font->glyph[c - font->first].xAdvance;
                     } else {
@@ -214,7 +216,7 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
                     int wordWidth = 0;
                     for (int k = wordStart; k < wordEnd; k++) {
                         unsigned char c = (unsigned char)text[k];
-                        wordWidth += (c < 128) ? _gfxCharWidths[c] : 8;
+                        wordWidth += _gfxCharWidths[c];
                     }
 
                     int spaceWidth = (line_width + segment_width > 0) ? _gfxCharWidths[' '] : 0;

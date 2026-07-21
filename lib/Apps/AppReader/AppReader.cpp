@@ -10,9 +10,9 @@
 #include <WiFi.h>
 #include <LittleFS.h>
 #include <ArduinoJson.h>
-#include <Fonts/FreeSans9pt7b.h>
-#include <Fonts/FreeSans12pt7b.h>
-#include <Fonts/FreeSansBold12pt7b.h>
+// Local FreeSans with Latin-1 Supplement (0x20-0xFF) so Portuguese book
+// titles render correctly in the library list.
+#include "Fonts/FreeSans.h"
 #include <map>
 
 static const char* READER_PROGRESS_PATH = "/reader_progress.json";
@@ -231,7 +231,11 @@ void AppReader::scanBooks() {
             BookEntry entry;
             entry.path = "/" + fileName;
             auto meta = metadata.find(fileName);
-            entry.title = titleFromFilename(meta != metadata.end() ? meta->second : fileName);
+            // Convert to Latin-1 once at load time: the library list draws and
+            // measures these bytes directly (bypassing FontMgr::drawText), and
+            // the WebUI reads titles from books_meta.json, so UTF-8 is
+            // preserved where it matters and collapsed where the display needs it.
+            entry.title = FontMgr::utf8ToLatin1(titleFromFilename(meta != metadata.end() ? meta->second : fileName));
             _books.push_back(entry);
         }
         file.close();
@@ -656,7 +660,7 @@ void AppReader::drawLibrary() {
     do {
         display.fillScreen(GxEPD_WHITE);
 
-        drawTextWithFont(display, "Library", 20, 40, &FreeSansBold12pt7b, GxEPD_BLACK);
+        drawTextWithFont(display, "Library", 20, 40, &FreeSansBold12pt8b, GxEPD_BLACK);
         char countText[24];
         snprintf(countText, sizeof(countText), "%d books", (int)_books.size());
         fontMgr.drawTextRight(display, countText, display.width() - 20, 38, FONT_SIZE_SMALL, GxEPD_BLACK);
@@ -672,13 +676,13 @@ void AppReader::drawLibrary() {
             display.drawRoundRect(16, y + 2, display.width() - 32, BACK_ITEM_HEIGHT - 4, 6, GxEPD_BLACK);
         }
         drawTextWithFont(display, "<  Back to Menu", ITEM_PADDING + 14, y + 32,
-                         backSelected ? &FreeSansBold12pt7b : &FreeSans12pt7b, GxEPD_BLACK);
+                         backSelected ? &FreeSansBold12pt8b : &FreeSans12pt8b, GxEPD_BLACK);
         display.drawFastHLine(ITEM_PADDING, y + BACK_ITEM_HEIGHT - 1, display.width() - (ITEM_PADDING * 2), GxEPD_BLACK);
         y += BACK_ITEM_HEIGHT;
 
         // === Book list ===
         if (_books.empty()) {
-            drawTextWithFont(display, "No books found.", 28, y + 54, &FreeSansBold12pt7b, GxEPD_BLACK);
+            drawTextWithFont(display, "No books found.", 28, y + 54, &FreeSansBold12pt8b, GxEPD_BLACK);
             fontMgr.drawText(display, "Upload EPUBs via web.", 28, y + 88, FONT_SIZE_BODY, GxEPD_BLACK);
         } else {
             int idx = 0;
@@ -707,7 +711,7 @@ void AppReader::drawLibrary() {
 
                 // Draw book title with word wrapping
                 String title = book.title;
-                const GFXfont* titleFont = isSelected ? &FreeSansBold12pt7b : &FreeSans12pt7b;
+                const GFXfont* titleFont = isSelected ? &FreeSansBold12pt8b : &FreeSans12pt8b;
                 int textX = ITEM_PADDING + COVER_WIDTH + 44;
                 int textY = y + (isSelected ? 36 : 34);
                 int lineCount = 0;

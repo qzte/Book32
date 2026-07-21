@@ -2,10 +2,8 @@
 #include "../../include/Config.h"
 #include "Book32FS.h"
 #include <ArduinoJson.h>
-#include <Fonts/FreeSans9pt7b.h>
-#include <Fonts/FreeSans12pt7b.h>
-#include <Fonts/FreeSansBold18pt7b.h>
-#include <Fonts/FreeSansBold24pt7b.h>
+// Local FreeSans with Latin-1 Supplement (0x20-0xFF).
+#include "Fonts/FreeSans.h"
 
 static void drawCenteredText(Book32Display& display, const char* text, const GFXfont* font, int16_t baseline, uint16_t color) {
     int16_t x1, y1;
@@ -36,8 +34,8 @@ static void drawBootProgress(Book32Display& display, uint8_t progress, const cha
         display.fillRoundRect(barX + 4, barY + 4, fillW, barH - 8, 3, GxEPD_BLACK);
     }
 
-    drawCenteredText(display, percentText, &FreeSansBold18pt7b, barY + 76, GxEPD_BLACK);
-    drawCenteredText(display, status, &FreeSans12pt7b, barY + 116, GxEPD_BLACK);
+    drawCenteredText(display, percentText, &FreeSansBold18pt8b, barY + 76, GxEPD_BLACK);
+    drawCenteredText(display, status, &FreeSans12pt8b, barY + 116, GxEPD_BLACK);
 }
 
 // Constructor with Pin mapping
@@ -141,12 +139,12 @@ void DisplayMgr::showBootScreen(uint8_t progress, const char* status) {
             display.drawFastHLine(logoX + 72, logoY + 32, 34, GxEPD_BLACK);
             display.drawFastHLine(logoX + 72, logoY + 46, 28, GxEPD_BLACK);
 
-            drawCenteredText(display, DEVICE_NAME, &FreeSansBold24pt7b, titleY, GxEPD_BLACK);
-            drawCenteredText(display, "Starting Book32 OS", &FreeSans12pt7b, titleY + 42, GxEPD_BLACK);
+            drawCenteredText(display, DEVICE_NAME, &FreeSansBold24pt8b, titleY, GxEPD_BLACK);
+            drawCenteredText(display, "Starting Book32 OS", &FreeSans12pt8b, titleY + 42, GxEPD_BLACK);
 
             char versionText[20];
             snprintf(versionText, sizeof(versionText), "v%s", SYSTEM_VERSION);
-            drawCenteredText(display, versionText, &FreeSans9pt7b, screenH - 96, GxEPD_BLACK);
+            drawCenteredText(display, versionText, &FreeSans9pt8b, screenH - 96, GxEPD_BLACK);
         }
 
         drawBootProgress(display, progress, status);
