@@ -15,6 +15,11 @@ public:
     void stop();              // Stop web services before powering WiFi down
     void update(); // Handle any main loop needs (including pending OTA)
     bool isInitialized() const { return _initialized; }
+
+    // v1.5.0 (security): per-device credential derived from the WiFi MAC.
+    // Used both as the SoftAP WPA2 passphrase and as the HTTP Basic Auth
+    // password. See lib/Book32_Core/DeviceCred.h for the threat model.
+    static const char* devicePassword();
     
     volatile bool _otaPending = false;  // Flag to trigger OTA from main loop
 

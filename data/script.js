@@ -22,6 +22,18 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+// v1.5.0 (security): the device now protects mutating endpoints with HTTP
+// Basic Auth (user "book32", password shown on the e-ink footer while the
+// hotspot is up). Sending credentials: 'same-origin' lets the browser handle
+// the 401 challenge with its native prompt and reuse the credential for
+// subsequent requests, so no password is stored in this script.
+const _origFetch = window.fetch.bind(window);
+window.fetch = function (input, init) {
+    init = init || {};
+    if (!init.credentials) init.credentials = 'same-origin';
+    return _origFetch(input, init);
+};
+
 async function fetchStatus() {
     try {
         const res = await fetch('/api/status');

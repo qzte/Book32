@@ -5,6 +5,7 @@
 #include "../Book32_Core/InputMgr.h"
 #include "../Book32_Core/FontMgr.h"
 #include "../Book32_Web/WebMgr.h"
+#include "../Book32_Core/DeviceCred.h"
 #include "../../include/Config.h"
 #include "../../include/NetworkState.h"
 #include <WiFi.h>
@@ -130,7 +131,11 @@ String AppMainMenu::getWifiFooterText() const {
         }
     }
     if (_hotspotActive) {
-        return String("Wi-Fi: ") + AP_SSID + "  ->  192.168.4.1";
+        // Show the passphrase only while the hotspot is up. On a normal
+        // station connection the credential stays off-screen, so simply
+        // picking the device up doesn't reveal the API password.
+        return String("Wi-Fi: ") + AP_SSID + " / " + WebMgr::devicePassword() +
+               "  ->  192.168.4.1";
     }
     return _wifiStarting ? "WiFi starting" : "WiFi offline";
 }
@@ -141,7 +146,11 @@ void AppMainMenu::startHotspot() {
 
     Serial.println("Main menu: starting Book32 management hotspot (offline)");
     WiFi.mode(WIFI_AP_STA);  // AP serves the web UI; STA stays available for joining a network
-    WiFi.softAP(AP_SSID);
+    // v1.5.0 (security): the hotspot was previously open, giving anyone in
+    // radio range full access to the API. WPA2 needs >= 8 characters; the
+    // derived credential is always 10. The passphrase is shown in the footer
+    // while the hotspot is up so it can be read off the e-ink screen.
+    WiFi.softAP(AP_SSID, WebMgr::devicePassword());
     delay(100);  // Let the AP interface come up before binding the server
     WebMgr::getInstance().init();
     _hotspotActive = true;

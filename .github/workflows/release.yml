@@ -1,0 +1,122 @@
+name: Release
+
+# Builds the firmware and filesystem images and publishes them with their
+# SHA-256 digests in the release body.
+#
+# The digest lines are what the device verifies before flashing (see
+# lib/Book32_Core/OtaDigest.h). From v1.6.0 the device REFUSES to install an
+# asset that has no valid digest line, so a release published by hand — without
+# this workflow — will not install over the air.
+#
+# Tags must be exact Semantic Versioning with a leading v: v1.6.0, not v.1.6.
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: Run host tests
+        # The encoding, ordering, versioning and digest logic is all pure and
+        # host-testable. Catching a regression here is much cheaper than
+        # shipping it to a device that then refuses to update.
+        run: |
+          set -e
+          for t in tools/tests/test_*.cpp; do
+            echo "=== $t ==="
+            g++ -std=c++17 -Wall -I lib/Book32_Core "$t" -o /tmp/$(basename "$t" .cpp)
+            /tmp/$(basename "$t" .cpp)
+          done
+
+      - name: Verify tag matches SYSTEM_VERSION
+        # A mismatch here would ship a firmware that reports a different
+        # version than its tag, so the device would keep re-offering the same
+        # update forever.
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          SRC=$(grep -oP '#define SYSTEM_VERSION "\K[^"]+' include/Config.h)
+          echo "tag=$TAG  Config.h=$SRC"
+          if [ "$TAG" != "$SRC" ]; then
+            echo "::error::Tag $TAG does not match SYSTEM_VERSION $SRC in include/Config.h"
+            exit 1
+          fi
+
+      - name: Build firmware
+        run: pio run
+
+      - name: Build filesystem image
+        run: pio run --target buildfs
+
+      - name: Collect artefacts
+        id: collect
+        run: |
+          set -e
+          mkdir -p dist
+          cp .pio/build/seeed_xiao_esp32s3/firmware.bin dist/firmware.bin
+          cp .pio/build/seeed_xiao_esp32s3/littlefs.bin dist/littlefs.bin
+          ls -l dist
+
+      - name: Compute checksums
+        id: sums
+        run: |
+          set -e
+          cd dist
+          FW=$(sha256sum firmware.bin | cut -d' ' -f1)
+          FS=$(sha256sum littlefs.bin | cut -d' ' -f1)
+          echo "fw=$FW" >> "$GITHUB_OUTPUT"
+          echo "fs=$FS" >> "$GITHUB_OUTPUT"
+          echo "firmware.bin  $FW"
+          echo "littlefs.bin  $FS"
+
+      - name: Write release notes
+        run: |
+          cat > notes.md <<EOF
+          Book32 ${GITHUB_REF_NAME}
+
+          Install over the air from the device web interface, or flash by USB
+          with \`pio run --target upload\` and \`pio run --target uploadfs\`.
+
+          ### Checksums
+
+          The device verifies these before flashing and refuses to install an
+          asset whose digest is missing or does not match.
+
+          \`\`\`
+          SHA256 (firmware.bin) = ${{ steps.sums.outputs.fw }}
+          SHA256 (littlefs.bin) = ${{ steps.sums.outputs.fs }}
+          \`\`\`
+          EOF
+          cat notes.md
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/firmware.bin
+            dist/littlefs.bin
+          body_path: notes.md

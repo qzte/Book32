@@ -8,6 +8,8 @@
 #include <vector>
 #include "../Book32_Core/Book32FS.h"
 #include "../Book32_Core/FileExt.h"
+#include "../Book32_Core/SafeName.h"
+#include "../Book32_Core/DeviceCred.h"
 #include "../Book32_Core/BookOrderLogic.h"
 #include "../Book32_Update/GitHubMgr.h"
 #include "../Book32_Core/BatteryMgr.h"
@@ -16,6 +18,39 @@
 #include "../../include/Config.h"
 
 static const char* READER_PROGRESS_PATH = "/reader_progress.json";
+
+// v1.5.0 (security): HTTP Basic Auth.
+//
+// Scope is decided by *effect*, not by HTTP verb. Every POST/DELETE is
+// protected, plus two GETs that are not read-only in practice:
+//   * /api/app/switch  — declared HTTP_GET but changes device state.
+//   * /api/wifi/status and /api/wifi/scan — leak the home network SSID, the
+//     local IP and the list of neighbouring networks.
+// Left open so the web UI can load and render before prompting for
+// credentials: /api/status, /api/books, the settings GETs and the reader
+// progress GET.
+//
+// Caveat: Basic Auth is base64, not encryption, and this server is plain HTTP.
+// This stops casual access; it is not confidential against a LAN sniffer.
+const char* WebMgr::devicePassword() {
+    static char pw[BOOK32_CRED_LEN] = {0};
+    if (pw[0] == '\0') {
+        uint8_t mac[6];
+        WiFi.macAddress(mac);
+        deriveDevicePassword(mac, pw, sizeof(pw));
+    }
+    return pw;
+}
+
+// Returns true when the request is authorised. On failure it has already sent
+// a 401 challenge, so the caller must simply return.
+static bool requireAuth(AsyncWebServerRequest* request) {
+    if (request->authenticate(BOOK32_AUTH_USER, WebMgr::devicePassword())) {
+        return true;
+    }
+    request->requestAuthentication();
+    return false;
+}
 
 WebMgr::WebMgr() {
     server = new AsyncWebServer(80);
@@ -489,6 +524,7 @@ void WebMgr::setupEndpoints() {
     // API (v1.2.0): Save manual book order. Body: {"order":["a.epub","b.epub"]}
     AsyncCallbackJsonWebHandler* bookOrderHandler = new AsyncCallbackJsonWebHandler("/api/books/order",
         [](AsyncWebServerRequest *request, JsonVariant &json) {
+            if (!requireAuth(request)) return;
             JsonArray arr = json["order"].as<JsonArray>();
             if (arr.isNull()) {
                 request->send(400, "text/plain", "Missing 'order' array");
@@ -497,7 +533,9 @@ void WebMgr::setupEndpoints() {
             std::vector<String> order;
             for (JsonVariant v : arr) {
                 String name = v.as<String>();
-                if (name.length() > 0 && hasExtensionCI(name, ".epub")) {
+                // v1.4.1 (security): the order list is persisted and later
+                // used to build paths, so apply the same allow-list.
+                if (isSafeBookName(name) && hasExtensionCI(name, ".epub")) {
                     order.push_back(name);
                 }
             }
@@ -510,12 +548,18 @@ void WebMgr::setupEndpoints() {
     // API: Upload Book to EbookFS
     server->on("/api/books/upload", HTTP_POST,
         [](AsyncWebServerRequest *request) {
+            if (!requireAuth(request)) return;
             request->send(200, "text/plain", "Upload Complete");
         },
         [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
             static File uploadFile;
             static String savedPath;
             static String originalFilename;
+
+            // v1.5.0: the body handler runs before the response handler, so it
+            // must reject unauthenticated uploads itself or data would be
+            // written to flash before the 401 is sent.
+            if (!request->authenticate(BOOK32_AUTH_USER, WebMgr::devicePassword())) return;
 
             if (index == 0) {
                 originalFilename = filename;
@@ -578,12 +622,23 @@ void WebMgr::setupEndpoints() {
 
     // API: Delete Book from EbookFS
     server->on("/api/books/delete", HTTP_DELETE, [](AsyncWebServerRequest *request) {
+        if (!requireAuth(request)) return;
         if (!request->hasParam("name")) {
             request->send(400, "text/plain", "Missing name param");
             return;
         }
 
         String filename = request->getParam("name")->value();
+
+        // v1.4.1 (security): reject path separators, ".." and unknown
+        // extensions before building a filesystem path. Without this,
+        // ?name=../spiffs/index.html escaped the ebooks root.
+        if (!isSafeBookName(filename)) {
+            Serial.printf("Rejected unsafe delete request: %s\n", filename.c_str());
+            request->send(400, "text/plain", "Invalid name");
+            return;
+        }
+
         String path = "/" + filename;
 
         if (EbookFS.exists(path)) {
@@ -640,6 +695,7 @@ void WebMgr::setupEndpoints() {
     // API: Perform Full Update (firmware + filesystem)
     // Sets flag to perform OTA from main loop (avoids blocking async_tcp)
     server->on("/api/update/all", HTTP_POST, [](AsyncWebServerRequest *request) {
+        if (!requireAuth(request)) return;
         request->send(200, "text/plain", "Update scheduled - will start in a moment");
         Serial.println("OTA update requested via web UI, scheduling...");
         WebMgr::getInstance()._otaPending = true;
@@ -662,6 +718,8 @@ void WebMgr::setupEndpoints() {
     // API: Reader Settings - POST
     AsyncCallbackJsonWebHandler* readerSettingsHandler = new AsyncCallbackJsonWebHandler("/api/settings/reader",
         [](AsyncWebServerRequest *request, JsonVariant &json) {
+            if (!requireAuth(request)) return;
+
             // Merge into the existing config so one setting doesn't wipe the
             // other. Clamping lives in SettingsStore, shared with the
             // on-device settings menu.
@@ -706,6 +764,7 @@ void WebMgr::setupEndpoints() {
     // EbookFS so it survives OTA updates.
     AsyncCallbackJsonWebHandler* displaySettingsHandler = new AsyncCallbackJsonWebHandler("/api/settings/display",
         [](AsyncWebServerRequest *request, JsonVariant &json) {
+            if (!requireAuth(request)) return;
             DisplaySettings s;
             s.rotation = SettingsStore::clampRotation(json["rotation"] | 3);
 
@@ -758,6 +817,7 @@ void WebMgr::setupEndpoints() {
 
     // API: Reader Progress - DELETE
     server->on("/api/reader/progress", HTTP_DELETE, [](AsyncWebServerRequest *request) {
+        if (!requireAuth(request)) return;
         if (EbookFS.exists(READER_PROGRESS_PATH)) {
             if (!EbookFS.remove(READER_PROGRESS_PATH)) {
                 request->send(500, "application/json", "{\"status\":\"error\",\"message\":\"Failed to reset progress\"}");
@@ -783,6 +843,8 @@ void WebMgr::setupEndpoints() {
     // API: Sleep Settings - POST
     AsyncCallbackJsonWebHandler* sleepSettingsHandler = new AsyncCallbackJsonWebHandler("/api/settings/sleep",
         [](AsyncWebServerRequest *request, JsonVariant &json) {
+            if (!requireAuth(request)) return;
+
             // Merge, so posting only one key doesn't blank the other.
             SettingsStore& store = SettingsStore::getInstance();
             SleepSettings s = store.loadSleep();
@@ -807,6 +869,7 @@ void WebMgr::setupEndpoints() {
 
     // API: Switch to app by name
     server->on("/api/app/switch", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (!requireAuth(request)) return;  // GET by verb, mutating by effect
         if (!request->hasParam("name")) {
             request->send(400, "application/json", "{\"error\":\"App name required\"}");
             return;
@@ -838,6 +901,7 @@ void WebMgr::setupEndpoints() {
 
     // API: WiFi status - station connection + hotspot (AP) state
     server->on("/api/wifi/status", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (!requireAuth(request)) return;  // leaks home SSID and local IP
         AsyncResponseStream *response = request->beginResponseStream("application/json");
         DynamicJsonDocument doc(512);
 
@@ -860,6 +924,7 @@ void WebMgr::setupEndpoints() {
     // API: WiFi scan - async so async_tcp keeps running. First call kicks off a
     // scan and returns 202; the client polls until results are ready.
     server->on("/api/wifi/scan", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (!requireAuth(request)) return;  // leaks neighbouring networks
         int n = WiFi.scanComplete();
         if (n == WIFI_SCAN_RUNNING) {
             request->send(202, "application/json", "{\"status\":\"scanning\"}");
@@ -890,6 +955,7 @@ void WebMgr::setupEndpoints() {
     // device reconnects automatically on the next boot.
     AsyncCallbackJsonWebHandler* wifiConnectHandler = new AsyncCallbackJsonWebHandler("/api/wifi/connect",
         [](AsyncWebServerRequest *request, JsonVariant &json) {
+            if (!requireAuth(request)) return;
             String ssid = json["ssid"].as<String>();
             String password = json["password"] | "";
 

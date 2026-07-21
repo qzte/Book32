@@ -3,8 +3,14 @@
 #include <HTTPClient.h>
 #include <Update.h>
 #include "../../include/Config.h"
+#include "../Book32_Core/SemVer.h"
+#include "../Book32_Core/OtaDigest.h"
+#include <mbedtls/sha256.h>
 #include "../Book32_Core/DisplayMgr.h"
 #include "../Book32_Core/FontMgr.h"
+
+// v1.4.1: abort a download that makes no progress for this long (ms).
+static const unsigned long OTA_STALL_TIMEOUT_MS = 15000;
 
 // Draw OTA progress bar on display
 static void drawOTAProgress(int progress, const char* title, const char* status) {
@@ -63,7 +69,7 @@ void GitHubMgr::init() {
 }
 
 UpdateInfo GitHubMgr::checkUpdate(const char* currentVersion) {
-    UpdateInfo info = {false, "", "", "", "", false, false};
+    UpdateInfo info = {false, "", "", "", "", false, false, "", ""};
 
     if (WiFi.status() != WL_CONNECTED) {
         Serial.println("WiFi not connected, cannot check for updates");
@@ -101,12 +107,14 @@ UpdateInfo GitHubMgr::checkUpdate(const char* currentVersion) {
 
         Serial.printf("Latest version: %s, Current: %s\n", info.version.c_str(), currentVersion);
 
-        // Check if version is different (handle both "1.0.5" and "v1.0.5" formats)
-        String currentV = currentVersion;
+        // v1.4.1: compare Major.Minor.Patch numerically instead of testing for
+        // mere inequality. The old check reported a *downgrade* as an available
+        // update, and String::replace("v","") stripped every 'v' in the tag,
+        // not just the prefix. See lib/Book32_Core/SemVer.h.
+        String currentV = String(currentVersion);
         String latestV = info.version;
-        latestV.replace("v", "");  // Remove 'v' prefix if present
 
-        if (latestV.length() > 0 && latestV != currentV) {
+        if (semverIsNewer(latestV, currentV)) {
             info.available = true;
             Serial.println("Update IS available");
 
@@ -128,6 +136,24 @@ UpdateInfo GitHubMgr::checkUpdate(const char* currentVersion) {
                     Serial.printf("Found filesystem: %s\n", name.c_str());
                 }
             }
+            // v1.6.0: pull the expected SHA-256 for each asset out of the
+            // release body. Absent or malformed digests leave these empty,
+            // which makes the download abort (fail closed).
+            if (info.hasFirmware) {
+                if (extractSha256(info.notes, "firmware.bin", info.firmwareSha256)) {
+                    Serial.printf("Expected firmware SHA-256: %s\n", info.firmwareSha256.c_str());
+                } else {
+                    Serial.println("WARNING: release publishes no SHA-256 for firmware.bin");
+                }
+            }
+            if (info.hasFilesystem) {
+                if (!extractSha256(info.notes, "littlefs.bin", info.filesystemSha256)) {
+                    extractSha256(info.notes, "filesystem.bin", info.filesystemSha256);
+                }
+                if (info.filesystemSha256.length() == 0) {
+                    Serial.println("WARNING: release publishes no SHA-256 for the filesystem image");
+                }
+            }
         } else {
             Serial.println("Already up to date");
         }
@@ -142,10 +168,22 @@ UpdateInfo GitHubMgr::checkUpdate(const char* currentVersion) {
     return info;
 }
 
-bool GitHubMgr::performFirmwareUpdate(const char* url, bool restartAfter, int step, int totalSteps) {
+bool GitHubMgr::performFirmwareUpdate(const char* url, bool restartAfter, int step, int totalSteps,
+                                     const char* expectedSha256) {
     if (WiFi.status() != WL_CONNECTED) return false;
 
     Serial.printf("Downloading firmware from: %s\n", url);
+
+    // v1.6.0: refuse to flash anything we can't verify. The release workflow
+    // publishes "SHA256 (<asset>) = <hex>" in the release body; a missing or
+    // malformed line lands here.
+    if (!expectedSha256 || strlen(expectedSha256) != BOOK32_SHA256_HEX_LEN) {
+        Serial.println("Refusing update: release publishes no valid SHA-256 for this asset");
+        drawOTAProgress(0, "Update Blocked", "No checksum in release");
+        delay(3000);
+        return false;
+    }
+
 
     // Build title with step indicator if provided
     char title[64];
@@ -168,6 +206,15 @@ bool GitHubMgr::performFirmwareUpdate(const char* url, bool restartAfter, int st
         int contentLength = http.getSize();
         Serial.printf("Firmware size: %d bytes\n", contentLength);
 
+        // v1.4.1: getSize() returns -1 for chunked responses. The download loop
+        // compares size_t against this int, so -1 promotes to SIZE_MAX and the
+        // loop never terminates (watchdog reset). Fail closed instead.
+        if (contentLength <= 0) {
+            Serial.println("Invalid or unknown firmware content length; aborting");
+            http.end();
+            return false;
+        }
+
         if (!Update.begin(contentLength, U_FLASH)) {
             Serial.println("Not enough space for firmware update");
             http.end();
@@ -184,13 +231,31 @@ bool GitHubMgr::performFirmwareUpdate(const char* url, bool restartAfter, int st
         size_t written = 0;
         int lastProgress = 0;
 
-        while (written < contentLength) {
+        // v1.6.0: hash the stream as it is written, so verification costs no
+        // extra flash reads and no second download.
+        mbedtls_sha256_context shaCtx;
+        mbedtls_sha256_init(&shaCtx);
+        mbedtls_sha256_starts(&shaCtx, 0);  // 0 = SHA-256, not SHA-224
+
+        // v1.4.1: abort if the stream stalls, instead of spinning forever on
+        // available() == 0 when the connection drops mid-download.
+        unsigned long lastDataMs = millis();
+
+        while (written < (size_t)contentLength) {
             // Read chunk
             size_t available = stream->available();
             if (available == 0) {
+                if (millis() - lastDataMs > OTA_STALL_TIMEOUT_MS) {
+                    Serial.println("Download stalled; aborting firmware update");
+                    mbedtls_sha256_free(&shaCtx);
+                    Update.abort();
+                    http.end();
+                    return false;
+                }
                 delay(1);  // Yield to other tasks
                 continue;
             }
+            lastDataMs = millis();
 
             size_t toRead = min(available, sizeof(buff));
             size_t bytesRead = stream->readBytes(buff, toRead);
@@ -199,10 +264,12 @@ bool GitHubMgr::performFirmwareUpdate(const char* url, bool restartAfter, int st
                 size_t bytesWritten = Update.write(buff, bytesRead);
                 if (bytesWritten != bytesRead) {
                     Serial.println("Write error during update");
+                    mbedtls_sha256_free(&shaCtx);
                     Update.abort();
                     http.end();
                     return false;
                 }
+                mbedtls_sha256_update(&shaCtx, buff, bytesRead);
                 written += bytesWritten;
 
                 // Progress and yield every ~5%
@@ -218,8 +285,36 @@ bool GitHubMgr::performFirmwareUpdate(const char* url, bool restartAfter, int st
             }
         }
 
-        if (written == contentLength) {
+        if (written == (size_t)contentLength) {
             Serial.println("Firmware written successfully");
+            drawOTAProgress(100, title, "Verifying...");
+
+        // v1.6.0: finalise the digest and compare BEFORE Update.end() commits
+        // the image. Update.abort() on mismatch leaves the running firmware
+        // untouched.
+        uint8_t digest[32];
+        mbedtls_sha256_finish(&shaCtx, digest);
+        mbedtls_sha256_free(&shaCtx);
+
+        char actualHex[BOOK32_SHA256_HEX_LEN + 1];
+        for (int i = 0; i < 32; i++) {
+            snprintf(actualHex + (i * 2), 3, "%02x", digest[i]);
+        }
+
+        String actual = String(actualHex);
+        String expected = String(expectedSha256);
+        if (!sha256Equal(actual, expected)) {
+            Serial.println("SHA-256 MISMATCH - refusing to install");
+            Serial.printf("  expected: %s\n", expected.c_str());
+            Serial.printf("  actual:   %s\n", actual.c_str());
+            Update.abort();
+            http.end();
+            drawOTAProgress(0, "Update Blocked", "Checksum mismatch");
+            delay(3000);
+            return false;
+        }
+        Serial.println("SHA-256 verified OK");
+
             drawOTAProgress(100, title, "Installing...");
             if (Update.end()) {
                 Serial.println("Firmware update complete");
@@ -233,7 +328,8 @@ bool GitHubMgr::performFirmwareUpdate(const char* url, bool restartAfter, int st
                 return true;
             }
         } else {
-            Serial.printf("Firmware write failed. Written: %d / %d\n", written, contentLength);
+            mbedtls_sha256_free(&shaCtx);
+            Serial.printf("Firmware write failed. Written: %u / %d\n", (unsigned)written, contentLength);
         }
     } else {
         Serial.printf("Firmware download failed: %d\n", httpCode);
@@ -242,10 +338,22 @@ bool GitHubMgr::performFirmwareUpdate(const char* url, bool restartAfter, int st
     return false;
 }
 
-bool GitHubMgr::performFilesystemUpdate(const char* url, bool restartAfter, int step, int totalSteps) {
+bool GitHubMgr::performFilesystemUpdate(const char* url, bool restartAfter, int step, int totalSteps,
+                                       const char* expectedSha256) {
     if (WiFi.status() != WL_CONNECTED) return false;
 
     Serial.printf("Downloading filesystem from: %s\n", url);
+
+    // v1.6.0: refuse to flash anything we can't verify. The release workflow
+    // publishes "SHA256 (<asset>) = <hex>" in the release body; a missing or
+    // malformed line lands here.
+    if (!expectedSha256 || strlen(expectedSha256) != BOOK32_SHA256_HEX_LEN) {
+        Serial.println("Refusing update: release publishes no valid SHA-256 for this asset");
+        drawOTAProgress(0, "Update Blocked", "No checksum in release");
+        delay(3000);
+        return false;
+    }
+
 
     // Build title with step indicator if provided
     char title[64];
@@ -268,6 +376,13 @@ bool GitHubMgr::performFilesystemUpdate(const char* url, bool restartAfter, int 
         int contentLength = http.getSize();
         Serial.printf("Filesystem size: %d bytes\n", contentLength);
 
+        // v1.4.1: see performFirmwareUpdate() — guard against getSize() == -1.
+        if (contentLength <= 0) {
+            Serial.println("Invalid or unknown filesystem content length; aborting");
+            http.end();
+            return false;
+        }
+
         // U_SPIFFS is used for both SPIFFS and LittleFS partitions
         if (!Update.begin(contentLength, U_SPIFFS)) {
             Serial.println("Not enough space for filesystem update");
@@ -285,12 +400,29 @@ bool GitHubMgr::performFilesystemUpdate(const char* url, bool restartAfter, int 
         size_t written = 0;
         int lastProgress = 0;
 
-        while (written < contentLength) {
+        // v1.6.0: hash the stream as it is written, so verification costs no
+        // extra flash reads and no second download.
+        mbedtls_sha256_context shaCtx;
+        mbedtls_sha256_init(&shaCtx);
+        mbedtls_sha256_starts(&shaCtx, 0);  // 0 = SHA-256, not SHA-224
+
+        // v1.4.1: same stall guard as the firmware download.
+        unsigned long lastDataMs = millis();
+
+        while (written < (size_t)contentLength) {
             size_t available = stream->available();
             if (available == 0) {
+                if (millis() - lastDataMs > OTA_STALL_TIMEOUT_MS) {
+                    Serial.println("Download stalled; aborting filesystem update");
+                    mbedtls_sha256_free(&shaCtx);
+                    Update.abort();
+                    http.end();
+                    return false;
+                }
                 delay(1);
                 continue;
             }
+            lastDataMs = millis();
 
             size_t toRead = min(available, sizeof(buff));
             size_t bytesRead = stream->readBytes(buff, toRead);
@@ -299,10 +431,12 @@ bool GitHubMgr::performFilesystemUpdate(const char* url, bool restartAfter, int 
                 size_t bytesWritten = Update.write(buff, bytesRead);
                 if (bytesWritten != bytesRead) {
                     Serial.println("Write error during filesystem update");
+                    mbedtls_sha256_free(&shaCtx);
                     Update.abort();
                     http.end();
                     return false;
                 }
+                mbedtls_sha256_update(&shaCtx, buff, bytesRead);
                 written += bytesWritten;
 
                 int progress = (written * 100) / contentLength;
@@ -315,8 +449,36 @@ bool GitHubMgr::performFilesystemUpdate(const char* url, bool restartAfter, int 
             }
         }
 
-        if (written == contentLength) {
+        if (written == (size_t)contentLength) {
             Serial.println("Filesystem written successfully");
+            drawOTAProgress(100, title, "Verifying...");
+
+        // v1.6.0: finalise the digest and compare BEFORE Update.end() commits
+        // the image. Update.abort() on mismatch leaves the running firmware
+        // untouched.
+        uint8_t digest[32];
+        mbedtls_sha256_finish(&shaCtx, digest);
+        mbedtls_sha256_free(&shaCtx);
+
+        char actualHex[BOOK32_SHA256_HEX_LEN + 1];
+        for (int i = 0; i < 32; i++) {
+            snprintf(actualHex + (i * 2), 3, "%02x", digest[i]);
+        }
+
+        String actual = String(actualHex);
+        String expected = String(expectedSha256);
+        if (!sha256Equal(actual, expected)) {
+            Serial.println("SHA-256 MISMATCH - refusing to install");
+            Serial.printf("  expected: %s\n", expected.c_str());
+            Serial.printf("  actual:   %s\n", actual.c_str());
+            Update.abort();
+            http.end();
+            drawOTAProgress(0, "Update Blocked", "Checksum mismatch");
+            delay(3000);
+            return false;
+        }
+        Serial.println("SHA-256 verified OK");
+
             drawOTAProgress(100, title, "Installing...");
             if (Update.end()) {
                 Serial.println("Filesystem update complete");
@@ -330,7 +492,8 @@ bool GitHubMgr::performFilesystemUpdate(const char* url, bool restartAfter, int 
                 return true;
             }
         } else {
-            Serial.printf("Filesystem write failed. Written: %d / %d\n", written, contentLength);
+            mbedtls_sha256_free(&shaCtx);
+            Serial.printf("Filesystem write failed. Written: %u / %d\n", (unsigned)written, contentLength);
         }
     } else {
         Serial.printf("Filesystem download failed: %d\n", httpCode);
@@ -344,7 +507,7 @@ void GitHubMgr::triggerUpdate(const char* currentVersion) {
     UpdateInfo info = checkUpdate(currentVersion);
     if (info.available && info.hasFirmware) {
         Serial.printf("Update Available: %s. Starting firmware download.\n", info.version.c_str());
-        performFirmwareUpdate(info.firmwareUrl.c_str(), true, 1, 1);
+        performFirmwareUpdate(info.firmwareUrl.c_str(), true, 1, 1, info.firmwareSha256.c_str());
     } else {
         Serial.println("No firmware update available.");
     }
@@ -372,7 +535,8 @@ bool GitHubMgr::performFullUpdate(const char* currentVersion) {
     if (info.hasFirmware) {
         currentStep++;
         Serial.println("Updating firmware...");
-        firmwareUpdated = performFirmwareUpdate(info.firmwareUrl.c_str(), false, currentStep, totalSteps);
+        firmwareUpdated = performFirmwareUpdate(info.firmwareUrl.c_str(), false, currentStep, totalSteps,
+                                                info.firmwareSha256.c_str());
         if (!firmwareUpdated) {
             Serial.println("Firmware update failed!");
             return false;
@@ -383,7 +547,8 @@ bool GitHubMgr::performFullUpdate(const char* currentVersion) {
     if (info.hasFilesystem) {
         currentStep++;
         Serial.println("Updating filesystem...");
-        filesystemUpdated = performFilesystemUpdate(info.filesystemUrl.c_str(), false, currentStep, totalSteps);
+        filesystemUpdated = performFilesystemUpdate(info.filesystemUrl.c_str(), false, currentStep, totalSteps,
+                                                    info.filesystemSha256.c_str());
         if (!filesystemUpdated) {
             Serial.println("Filesystem update failed!");
             // Still restart if firmware was updated
