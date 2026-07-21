@@ -12,6 +12,7 @@
 
 #include "../Book32_Apps/AppMainMenu.h"
 #include "../Apps/AppReader/AppReader.h"
+#include "../Book32_Apps/AppSettings.h"
 #include <WiFiManager.h>
 
 volatile bool gNetworkStartupInProgress = false;
@@ -105,6 +106,9 @@ void setup() {
     appMgr.registerApp(new AppMainMenu());
     AppReader* readerApp = new AppReader();
     appMgr.registerApp(readerApp);
+    // On-device settings menu. The main menu renders one grid icon per
+    // registered app, so this appears on the home screen automatically.
+    appMgr.registerApp(new AppSettings());
 
     displayMgr.showBootScreen(90, "Starting network");
     gNetworkStartupInProgress = true;

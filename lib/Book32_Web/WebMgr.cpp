@@ -1,4 +1,5 @@
 #include "WebMgr.h"
+#include "../Book32_Core/SettingsStore.h"
 #include <ESPAsyncWebServer.h>
 #include <AsyncJson.h>
 #include <WiFi.h>
@@ -649,31 +650,10 @@ void WebMgr::setupEndpoints() {
         AsyncResponseStream *response = request->beginResponseStream("application/json");
         DynamicJsonDocument doc(256);
 
-        // Try to load existing settings
-        File file;
-        if (EbookFS.exists("/reader_config.json")) {
-            file = EbookFS.open("/reader_config.json", "r");
-        } else if (SystemFS.exists("/reader_config.json")) {
-            file = SystemFS.open("/reader_config.json", "r");
-        }
-
-        if (file) {
-            DynamicJsonDocument savedDoc(256);
-            if (!deserializeJson(savedDoc, file)) {
-                doc["refreshFrequency"] = savedDoc["refreshFrequency"] | 10;
-                doc["fontSize"] = savedDoc["fontSize"] | 9;
-                doc["fontFamily"] = savedDoc["fontFamily"] | 0;
-            } else {
-                doc["refreshFrequency"] = 10;  // Default
-                doc["fontSize"] = 9;           // Default (small)
-                doc["fontFamily"] = 0;         // Default (FreeSans)
-            }
-            file.close();
-        } else {
-            doc["refreshFrequency"] = 10;  // Default
-            doc["fontSize"] = 9;           // Default (small)
-            doc["fontFamily"] = 0;         // Default (FreeSans)
-        }
+        ReaderSettings s = SettingsStore::getInstance().loadReader();
+        doc["refreshFrequency"] = s.refreshFrequency;
+        doc["fontSize"] = s.fontSize;
+        doc["fontFamily"] = s.fontFamily;
 
         serializeJson(doc, *response);
         request->send(response);
@@ -682,49 +662,27 @@ void WebMgr::setupEndpoints() {
     // API: Reader Settings - POST
     AsyncCallbackJsonWebHandler* readerSettingsHandler = new AsyncCallbackJsonWebHandler("/api/settings/reader",
         [](AsyncWebServerRequest *request, JsonVariant &json) {
-            // Merge into the existing config so one setting doesn't wipe the other.
-            DynamicJsonDocument doc(256);
-            doc["refreshFrequency"] = 10;
-            doc["fontSize"] = 9;
-            doc["fontFamily"] = 0;
-            if (EbookFS.exists("/reader_config.json")) {
-                File existing = EbookFS.open("/reader_config.json", "r");
-                if (existing) {
-                    DynamicJsonDocument savedDoc(256);
-                    if (!deserializeJson(savedDoc, existing)) {
-                        doc["refreshFrequency"] = savedDoc["refreshFrequency"] | 10;
-                        doc["fontSize"] = savedDoc["fontSize"] | 9;
-                        doc["fontFamily"] = savedDoc["fontFamily"] | 0;
-                    }
-                    existing.close();
-                }
-            }
+            // Merge into the existing config so one setting doesn't wipe the
+            // other. Clamping lives in SettingsStore, shared with the
+            // on-device settings menu.
+            SettingsStore& store = SettingsStore::getInstance();
+            ReaderSettings s = store.loadReader();
 
             if (json.containsKey("refreshFrequency")) {
-                doc["refreshFrequency"] = json["refreshFrequency"].as<int>();
+                s.refreshFrequency = json["refreshFrequency"].as<int>();
             }
             if (json.containsKey("fontSize")) {
-                int pt = json["fontSize"].as<int>();
-                pt = (pt >= 18) ? 18 : (pt >= 12 ? 12 : 9);  // Clamp to supported sizes
-                doc["fontSize"] = pt;
+                s.fontSize = SettingsStore::clampFontSize(json["fontSize"].as<int>());
                 // Apply live from the main loop if a book is open.
-                WebMgr::getInstance()._pendingReaderFontSize = pt;
+                WebMgr::getInstance()._pendingReaderFontSize = s.fontSize;
             }
             if (json.containsKey("fontFamily")) {
-                int fam = json["fontFamily"].as<int>();
-                if (fam < 0 || fam > 4) fam = 0;  // Clamp to supported families
-                doc["fontFamily"] = fam;
+                s.fontFamily = SettingsStore::clampFontFamily(json["fontFamily"].as<int>());
                 // Apply live from the main loop if a book is open.
-                WebMgr::getInstance()._pendingReaderFontFamily = fam;
+                WebMgr::getInstance()._pendingReaderFontFamily = s.fontFamily;
             }
 
-            // Save to EbookFS (primary storage - persists through OTA)
-            File file = EbookFS.open("/reader_config.json", FILE_WRITE);
-            if (file) {
-                serializeJson(doc, file);
-                file.close();
-                Serial.printf("Saved reader settings: refreshFrequency=%d, fontSize=%d, fontFamily=%d\n",
-                             doc["refreshFrequency"].as<int>(), doc["fontSize"].as<int>(), doc["fontFamily"].as<int>());
+            if (store.saveReader(s)) {
                 request->send(200, "application/json", "{\"status\":\"ok\"}");
             } else {
                 request->send(500, "application/json", "{\"status\":\"error\",\"message\":\"Failed to save\"}");
@@ -738,18 +696,7 @@ void WebMgr::setupEndpoints() {
         AsyncResponseStream *response = request->beginResponseStream("application/json");
         DynamicJsonDocument doc(128);
 
-        int rotation = 3;  // Default: button on the left
-        if (EbookFS.exists("/display_config.json")) {
-            File file = EbookFS.open("/display_config.json", "r");
-            if (file) {
-                DynamicJsonDocument savedDoc(128);
-                if (!deserializeJson(savedDoc, file)) {
-                    rotation = savedDoc["rotation"] | 3;
-                }
-                file.close();
-            }
-        }
-        doc["rotation"] = rotation;
+        doc["rotation"] = SettingsStore::getInstance().loadDisplay().rotation;
 
         serializeJson(doc, *response);
         request->send(response);
@@ -759,19 +706,12 @@ void WebMgr::setupEndpoints() {
     // EbookFS so it survives OTA updates.
     AsyncCallbackJsonWebHandler* displaySettingsHandler = new AsyncCallbackJsonWebHandler("/api/settings/display",
         [](AsyncWebServerRequest *request, JsonVariant &json) {
-            int rotation = json["rotation"] | 3;
-            if (rotation != 1 && rotation != 3) rotation = 3;  // Portrait orientations only
+            DisplaySettings s;
+            s.rotation = SettingsStore::clampRotation(json["rotation"] | 3);
 
-            DynamicJsonDocument doc(128);
-            doc["rotation"] = rotation;
-
-            File file = EbookFS.open("/display_config.json", FILE_WRITE);
-            if (file) {
-                serializeJson(doc, file);
-                file.close();
+            if (SettingsStore::getInstance().saveDisplay(s)) {
                 // Apply from the main loop (never rotate/draw on the async task).
-                WebMgr::getInstance()._pendingRotation = rotation;
-                Serial.printf("Saved display settings: rotation=%d\n", rotation);
+                WebMgr::getInstance()._pendingRotation = s.rotation;
                 request->send(200, "application/json", "{\"status\":\"ok\"}");
             } else {
                 request->send(500, "application/json", "{\"status\":\"error\",\"message\":\"Failed to save\"}");
@@ -832,27 +772,9 @@ void WebMgr::setupEndpoints() {
         AsyncResponseStream *response = request->beginResponseStream("application/json");
         DynamicJsonDocument doc(512);
 
-        // Try to load existing settings from EbookFS
-        if (EbookFS.exists("/sleep_config.json")) {
-            File file = EbookFS.open("/sleep_config.json", "r");
-            if (file) {
-                DynamicJsonDocument savedDoc(512);
-                if (!deserializeJson(savedDoc, file)) {
-                    doc["sleepTimeout"] = savedDoc.containsKey("sleepTimeout") ? savedDoc["sleepTimeout"].as<int>() : 0;
-                    doc["sleepMessage"] = savedDoc["sleepMessage"] | "Press button to wake";
-                } else {
-                    doc["sleepTimeout"] = 0;  // Default (disabled)
-                    doc["sleepMessage"] = "Press button to wake";
-                }
-                file.close();
-            } else {
-                doc["sleepTimeout"] = 0;  // Default (disabled)
-                doc["sleepMessage"] = "Press button to wake";
-            }
-        } else {
-            doc["sleepTimeout"] = 0;  // Default: disabled
-            doc["sleepMessage"] = "Press button to wake";
-        }
+        SleepSettings s = SettingsStore::getInstance().loadSleep();
+        doc["sleepTimeout"] = s.timeout;
+        doc["sleepMessage"] = s.message;
 
         serializeJson(doc, *response);
         request->send(response);
@@ -861,26 +783,20 @@ void WebMgr::setupEndpoints() {
     // API: Sleep Settings - POST
     AsyncCallbackJsonWebHandler* sleepSettingsHandler = new AsyncCallbackJsonWebHandler("/api/settings/sleep",
         [](AsyncWebServerRequest *request, JsonVariant &json) {
-            DynamicJsonDocument doc(512);
+            // Merge, so posting only one key doesn't blank the other.
+            SettingsStore& store = SettingsStore::getInstance();
+            SleepSettings s = store.loadSleep();
 
             if (json.containsKey("sleepTimeout")) {
-                doc["sleepTimeout"] = json["sleepTimeout"].as<int>();
+                s.timeout = json["sleepTimeout"].as<int>();
             }
             if (json.containsKey("sleepMessage")) {
-                doc["sleepMessage"] = json["sleepMessage"].as<String>();
+                s.message = json["sleepMessage"].as<String>();
             }
 
-            // Save to EbookFS (persists through OTA updates)
-            File file = EbookFS.open("/sleep_config.json", FILE_WRITE);
-            if (file) {
-                serializeJson(doc, file);
-                file.close();
-                Serial.printf("Saved sleep settings: timeout=%d min, message=%s\n",
-                             doc["sleepTimeout"].as<int>(), doc["sleepMessage"].as<String>().c_str());
-
+            if (store.saveSleep(s)) {
                 // Notify BatteryMgr to reload settings
                 BatteryMgr::getInstance().loadSleepSettings();
-
                 request->send(200, "application/json", "{\"status\":\"ok\"}");
             } else {
                 request->send(500, "application/json", "{\"status\":\"error\",\"message\":\"Failed to save\"}");

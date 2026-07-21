@@ -1,8 +1,10 @@
 #include "InputMgr.h"
 #include "../../include/Config.h"
 #include "BatteryMgr.h"
+#include "AppMgr.h"
 
-InputMgr::InputMgr() : btn(PIN_BUTTON, true, true), btnBack(PIN_BUTTON_BACK, true, true) { // Active Low, Pullup
+InputMgr::InputMgr() : btn(PIN_BUTTON, true, true), btnBack(PIN_BUTTON_BACK, true, true),
+                       btnSleep(PIN_BUTTON_SLEEP, true, true) { // Active Low, Pullup
     callback = nullptr;
 }
 
@@ -27,6 +29,13 @@ void InputMgr::init() {
     // We'll poll it manually for long press detection
     btnBack.setDebounceMs(30);
     btnBack.setPressMs(400);
+
+    // KEY2 - manual standby. Long press only, so a brush against the button
+    // never drops the device into deep sleep mid-page. Polled manually for the
+    // same reason as KEY1.
+    btnSleep.setDebounceMs(30);
+    btnSleep.setPressMs(400);
+    pinMode(PIN_BUTTON_SLEEP, INPUT_PULLUP);
 
     if (!_taskHandle) {
         BaseType_t result = xTaskCreatePinnedToCore(
@@ -103,8 +112,48 @@ void InputMgr::inputTask(void* parameter) {
             }
         }
         
+        // Manual KEY2 long press detection (PIN_BUTTON_SLEEP) -> standby.
+        // Handled here rather than dispatched through the callback so it works
+        // in every app and on modal screens like the unsaved-changes prompt.
+        int sleepState = digitalRead(PIN_BUTTON_SLEEP);
+        bool sleepPressed = (sleepState == LOW);  // Active low
+
+        if (sleepPressed) {
+            if (self->_btnSleepPressTime == 0) {
+                self->_btnSleepPressTime = now;
+                self->_btnSleepLongPressSent = false;
+                Serial.println("KEY2: Button pressed");
+            } else if (!self->_btnSleepLongPressSent &&
+                       (now - self->_btnSleepPressTime) >= 400) {
+                Serial.println("INPUT: KEY2 Long Press -> STANDBY");
+                self->_btnSleepLongPressSent = true;
+                self->enterStandby();  // Does not return: deep sleep
+            }
+        } else {
+            if (self->_btnSleepPressTime != 0) {
+                self->_btnSleepPressTime = 0;
+                self->_btnSleepLongPressSent = false;
+            }
+        }
+
         vTaskDelay(pdMS_TO_TICKS(5));
     }
+}
+
+void InputMgr::enterStandby() {
+    // Give the active app a chance to persist state first. The reader already
+    // saves progress on stop(); the settings menu would otherwise lose an
+    // unsaved draft to the deep sleep reset.
+    // stop() is the app's own save hook: the reader persists reading progress
+    // and the settings menu flushes an unsaved draft. Calling it through the
+    // base interface keeps InputMgr free of any app-specific dependency.
+    App* current = AppMgr::getInstance().getCurrentApp();
+    if (current) current->stop();
+
+    // Reuses the existing idle-sleep path: e-ink message, ext0 wake on KEY3,
+    // then deep sleep. Wake still happens on KEY3 because ext0 supports a
+    // single pin; adding KEY2 would require switching to ext1 with a pin mask.
+    BatteryMgr::getInstance().enterIdleSleep();
 }
 
 void InputMgr::enqueueAction(InputAction action) {

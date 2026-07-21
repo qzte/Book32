@@ -1,7 +1,7 @@
 #pragma once
 
 // System Information
-#define SYSTEM_VERSION "1.3.1"
+#define SYSTEM_VERSION "1.4.0"
 #define DEVICE_NAME "Book32"
 
 // Offline management hotspot (SoftAP). When the device can't reach a known
@@ -15,6 +15,7 @@
 #define VBAT_SWITCH_LEVEL HIGH
 #define PIN_BUTTON   5  // "KEY3" button
 #define PIN_BUTTON_BACK 2  // "KEY1" button - dedicated Back button
+#define PIN_BUTTON_SLEEP 3  // "KEY2" button - manual standby (long press)
 
 // Display Pins (TRMNL 7.5" OG DIY Kit)
 #define EPD_SCK     7
