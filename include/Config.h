@@ -1,7 +1,7 @@
 #pragma once
 
 // System Information
-#define SYSTEM_VERSION "1.3.0"
+#define SYSTEM_VERSION "1.3.1"
 #define DEVICE_NAME "Book32"
 
 // Offline management hotspot (SoftAP). When the device can't reach a known
@@ -43,5 +43,8 @@
 #define BATTERY_FULL_VOLTAGE 4.20f
 
 // GitHub OTA Config
-#define GITHUB_REPO "rolohaun/Book32"
-#define GITHUB_USER "rolohaun"
+// IMPORTANT: this fork publishes its own releases. Do not revert these to the
+// upstream repository (rolohaun/Book32) or the device will check for updates
+// against a repo that this firmware does not track.
+#define GITHUB_REPO "qzte/Book32"
+#define GITHUB_USER "qzte"
