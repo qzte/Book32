@@ -3,6 +3,7 @@
 #include <ESPAsyncWebServer.h>
 #include <AsyncJson.h>
 #include <WiFi.h>
+#include <ESPmDNS.h>
 #include <LittleFS.h>
 #include <esp_partition.h>
 #include <vector>
@@ -226,10 +227,21 @@ void WebMgr::init() {
     server->begin();
     _initialized = true;
     Serial.println("Web Server Started");
+
+    // mDNS: http://book32.local/send funciona sem saber o IP. Falha
+    // silenciosamente em redes que bloqueiam multicast — o IP continua a
+    // funcionar, por isso isto nunca é fatal.
+    if (MDNS.begin("book32")) {
+        MDNS.addService("http", "tcp", 80);
+        Serial.println("mDNS: http://book32.local/");
+    } else {
+        Serial.println("mDNS: arranque falhou (o IP continua a funcionar)");
+    }
 }
 
 void WebMgr::stop() {
     if (!_initialized) return;
+    MDNS.end();
     server->end();
     _initialized = false;
     Serial.println("Web Server Stopped");
