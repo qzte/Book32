@@ -42,6 +42,11 @@ const list = document.getElementById('list');
 const free = document.getElementById('free');
 const queue = [];
 let busy = false;
+let knownFreeSpace = null;
+
+// Se não chegar nenhum evento upload.onprogress durante este intervalo,
+// consideramos a transferência parada (ex: device adormecido) e abortamos.
+const STALL_TIMEOUT_MS = 20000;
 
 drop.addEventListener('click', () => picker.click());
 drop.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') picker.click(); });
@@ -91,12 +96,40 @@ function send(job) {
   const btn = li.querySelector('button');
   if (btn) btn.remove();
 
+  // Validações client-side para evitar uma transferência inútil: o servidor
+  // só responde depois de receber o corpo todo, o que faz a barra chegar a
+  // 100% antes de mostrar um erro que já era previsível à partida. O servidor
+  // continua a ser a autoridade - isto é só para poupar tempo/dados.
+  const lowerName = file.name.toLowerCase();
+  if (!lowerName.endsWith('.epub') && !lowerName.endsWith('.ttf')) {
+    return new Promise(resolve => {
+      fail(li, 'tipo de ficheiro não suportado (.epub, .ttf)', job);
+      resolve();
+    });
+  }
+  if (knownFreeSpace !== null && file.size > knownFreeSpace) {
+    return new Promise(resolve => {
+      fail(li, 'sem espaço livre suficiente no Book32', job);
+      resolve();
+    });
+  }
+
   return new Promise(resolve => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', '/api/books/upload');
     xhr.withCredentials = true;
 
+    let stallTimer = null;
+    const clearStallTimer = () => {
+      if (stallTimer !== null) { clearTimeout(stallTimer); stallTimer = null; }
+    };
+    const armStallTimer = () => {
+      clearStallTimer();
+      stallTimer = setTimeout(() => { xhr.abort(); }, STALL_TIMEOUT_MS);
+    };
+
     xhr.upload.onprogress = e => {
+      armStallTimer();
       if (!e.lengthComputable) return;
       const pct = Math.round(e.loaded / e.total * 100);
       bar.value = pct;
@@ -104,6 +137,7 @@ function send(job) {
     };
 
     xhr.onload = () => {
+      clearStallTimer();
       bar.value = 100;
       let body = {};
       try { body = JSON.parse(xhr.responseText); } catch (_) {}
@@ -116,6 +150,8 @@ function send(job) {
         }
       } else if (xhr.status === 401) {
         fail(li, 'credenciais recusadas', job);
+      } else if (xhr.status === 409) {
+        fail(li, body.error || 'outro envio em curso - tenta de novo', job);
       } else {
         fail(li, body.error || ('erro ' + xhr.status), job);
       }
@@ -123,13 +159,20 @@ function send(job) {
     };
 
     xhr.onerror = () => {
+      clearStallTimer();
       fail(li, 'device inacessivel - acorda o Book32 e tenta de novo', job);
       resolve();
     };
-    xhr.ontimeout = () => { fail(li, 'timeout', job); resolve(); };
+    xhr.onabort = () => {
+      clearStallTimer();
+      fail(li, 'device inacessivel - acorda o Book32 e tenta de novo', job);
+      resolve();
+    };
+    xhr.ontimeout = () => { clearStallTimer(); fail(li, 'timeout', job); resolve(); };
 
     const form = new FormData();
     form.append('file', file, file.name);
+    armStallTimer();
     xhr.send(form);
   });
 }
@@ -161,6 +204,7 @@ function fail(li, msg, job) {
 
 function refreshFree() {
   fetch('/api/status').then(r => r.json()).then(s => {
+    knownFreeSpace = s.freeSpace;
     free.textContent = 'Livre: ' + (s.freeSpace / 1048576).toFixed(1) + ' MB de ' +
                        (s.totalSpace / 1048576).toFixed(1) + ' MB';
   }).catch(() => { free.textContent = ''; });
