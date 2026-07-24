@@ -136,6 +136,12 @@ function send(job) {
       state.textContent = pct + '%';
     };
 
+    // O corpo acabou de sair. A partir daqui não há mais eventos de progresso
+    // (o device ainda está a fechar o ficheiro, renomear o .part e gravar
+    // metadados), por isso desarmar o detetor: caso contrário abortaria um
+    // envio bem-sucedido à chegada.
+    xhr.upload.onload = () => clearStallTimer();
+
     xhr.onload = () => {
       clearStallTimer();
       bar.value = 100;
