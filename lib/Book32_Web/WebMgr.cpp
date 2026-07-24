@@ -525,6 +525,17 @@ void WebMgr::setupEndpoints() {
         request->send(response);
     });
 
+    // Página de envio dedicada: caminho curto e memorizável para o atalho no
+    // ecrã principal do telemóvel. Sem auth aqui — a página em si não expõe
+    // nada; o POST para /api/books/upload é que exige Basic Auth.
+    server->on("/send", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (SystemFS.exists("/send.html")) {
+            request->send(SystemFS, "/send.html", "text/html");
+        } else {
+            request->send(404, "text/plain", "send.html nao encontrado - correr uploadfs");
+        }
+    });
+
     // API: List Books from EbookFS
     // v1.2.0: streamed serialization (no fixed 2KB buffer — previously books
     // beyond the buffer were silently truncated) + manual ordering applied.
