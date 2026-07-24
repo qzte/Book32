@@ -33,7 +33,17 @@
       "Bash(\"C:\\\\Users\\\\Ron\\\\Downloads\\\\bin\\\\gh.exe\" release create v1.3.12 --title \"v1.3.12\" --notes \"$\\(cat <<''EOF''\n## Changes\n- **Fix garbled display**: Draw initial scanning screen with full refresh before starting network operations\n- **Progress bar updates**: Progress bar now updates every 500ms during scanning\n- Small delay after initial draw to let e-ink complete before WiFi operations start\nEOF\n\\)\" \"c:\\\\Users\\\\Ron\\\\Downloads\\\\DEV\\\\Book32-TRMNL\\\\Book32\\\\.pio\\\\build\\\\seeed_xiao_esp32s3\\\\firmware.bin\")",
       "Bash(unzip:*)",
       "Bash(\"C:\\\\Users\\\\Ron\\\\Downloads\\\\bin\\\\gh.exe\" release create v1.3.13 --title \"v1.3.13\" --notes \"$\\(cat <<''EOF''\n## Changes\n- **Fix huge font on copyright pages**: The EPUB parser was detecting CSS classes containing \"title\" \\(like \"title-page-contributor\"\\) as chapter headers, causing text to render in 24pt font instead of normal 9pt\n- More specific chapter detection now requires \"chapter\", \"chap-\", \"heading\", or \"section-title\" in class names\nEOF\n\\)\" \"c:\\\\Users\\\\Ron\\\\Downloads\\\\DEV\\\\Book32-TRMNL\\\\Book32\\\\.pio\\\\build\\\\seeed_xiao_esp32s3\\\\firmware.bin\")",
-      "Bash(\"C:\\\\Users\\\\Ron\\\\Downloads\\\\bin\\\\gh.exe\" release create v1.3.14 --title \"v1.3.14\" --notes \"$\\(cat <<''EOF''\n## Changes\n- **Fix chapter body rendering as huge text**: The EPUB parser was matching CSS classes like \"heading\" and \"chapter\" on wrapper divs, causing all content inside to render as headers\n- Now only matches very specific title classes: \"chapter-title\", \"chap-title\", \"section-title\", \"part-title\"\n- Actual `<h1>`-`<h6>` header tags are handled separately and still work correctly\nEOF\n\\)\" \"c:\\\\Users\\\\Ron\\\\Downloads\\\\DEV\\\\Book32-TRMNL\\\\Book32\\\\.pio\\\\build\\\\seeed_xiao_esp32s3\\\\firmware.bin\")"
+      "Bash(\"C:\\\\Users\\\\Ron\\\\Downloads\\\\bin\\\\gh.exe\" release create v1.3.14 --title \"v1.3.14\" --notes \"$\\(cat <<''EOF''\n## Changes\n- **Fix chapter body rendering as huge text**: The EPUB parser was matching CSS classes like \"heading\" and \"chapter\" on wrapper divs, causing all content inside to render as headers\n- Now only matches very specific title classes: \"chapter-title\", \"chap-title\", \"section-title\", \"part-title\"\n- Actual `<h1>`-`<h6>` header tags are handled separately and still work correctly\nEOF\n\\)\" \"c:\\\\Users\\\\Ron\\\\Downloads\\\\DEV\\\\Book32-TRMNL\\\\Book32\\\\.pio\\\\build\\\\seeed_xiao_esp32s3\\\\firmware.bin\")",
+      "Bash(xargs wc -l)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(find / -iname \"g++*.exe\" 2>/dev/null | head -20)",
+      "Read(//c//**)",
+      "Bash(ls /mingw64/bin | grep -i -E \"gcc|g\\\\+\\\\+|clang\" ; echo \"---\"; ls /mingw64/bin | wc -l; echo \"---\"; find \"c:/\" -iname \"g++.exe\" 2>/dev/null | head -5)",
+      "Read(//mingw64/**)",
+      "Bash(powershell -Command \"Get-Command g++,gcc,cl,clang++ -ErrorAction SilentlyContinue | Format-Table Name,Source\")",
+      "Bash(powershell.exe -NoProfile -Command \"Get-Command g++,gcc,cl,clang++ -ErrorAction SilentlyContinue\")",
+      "Bash(python -m platformio run --target buildfs)"
     ]
   }
 }
