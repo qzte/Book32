@@ -188,6 +188,28 @@ void WebMgr::mountFilesystems() {
     if (ebookOK) {
         Serial.printf("EbookFS OK: %u / %u bytes used\n", EbookFS.usedBytes(), EbookFS.totalBytes());
         listFiles(EbookFS, "/", 1);
+
+        // Uploads interrompidos deixam ficheiros .part. Como não são listados
+        // por /api/books nem abertos pelo leitor, só ocupam espaço — limpar no
+        // arranque, que é o único momento em que nenhum upload está em curso.
+        {
+            std::vector<String> stale;
+            File root = EbookFS.open("/");
+            if (root && root.isDirectory()) {
+                File f = root.openNextFile();
+                while (f) {
+                    String n = f.name();
+                    if (hasExtensionCI(n, ".part")) stale.push_back(n);
+                    f.close();
+                    f = root.openNextFile();
+                }
+                root.close();
+            }
+            for (const String& n : stale) {
+                Serial.printf("A remover upload incompleto: %s\n", n.c_str());
+                EbookFS.remove("/" + n);
+            }
+        }
     } else {
         Serial.println("ERROR: EbookFS mount failed! Ebooks partition is not available.");
     }
@@ -457,6 +479,7 @@ struct UploadState {
     UploadStatus status = UploadStatus::WriteFailed;
     File file;
     String path;
+    String tempPath;
     String finalName;
     String originalName;
 
@@ -464,6 +487,7 @@ struct UploadState {
         if (file) file.close();
         status = UploadStatus::WriteFailed;
         path = "";
+        tempPath = "";
         finalName = "";
         originalName = "";
     }
@@ -583,6 +607,9 @@ void WebMgr::setupEndpoints() {
                     String body = "{\"ok\":true,\"name\":\"" +
                                   jsonEscape(g_uploadState.finalName) + "\"}";
                     request->send(200, "application/json", body);
+                    // Consumir o estado: um POST sem corpo não corre o body
+                    // handler, e sem isto herdaria o sucesso do upload anterior.
+                    g_uploadState.status = UploadStatus::WriteFailed;
                     break;
                 }
                 case UploadStatus::BadExtension:
@@ -667,7 +694,8 @@ void WebMgr::setupEndpoints() {
                 g_uploadState.path = "/" + safeName;
                 Serial.printf("Upload Start: %s (original: %s)\n",
                               g_uploadState.path.c_str(), filename.c_str());
-                g_uploadState.file = EbookFS.open(g_uploadState.path, FILE_WRITE);
+                g_uploadState.tempPath = g_uploadState.path + ".part";
+                g_uploadState.file = EbookFS.open(g_uploadState.tempPath, FILE_WRITE);
                 if (!g_uploadState.file) {
                     g_uploadState.status = UploadStatus::WriteFailed;
                     return;
@@ -682,7 +710,7 @@ void WebMgr::setupEndpoints() {
                 if (g_uploadState.file.write(data, len) != len) {
                     Serial.println("Upload: write failed (disco cheio?)");
                     g_uploadState.file.close();
-                    EbookFS.remove(g_uploadState.path);
+                    EbookFS.remove(g_uploadState.tempPath);
                     g_uploadState.status = UploadStatus::WriteFailed;
                     return;
                 }
@@ -690,6 +718,12 @@ void WebMgr::setupEndpoints() {
 
             if (final && g_uploadState.file) {
                 g_uploadState.file.close();
+                if (!EbookFS.rename(g_uploadState.tempPath, g_uploadState.path)) {
+                    Serial.println("Upload: rename do .part falhou");
+                    EbookFS.remove(g_uploadState.tempPath);
+                    g_uploadState.status = UploadStatus::WriteFailed;
+                    return;
+                }
                 saveBookMetadata(g_uploadState.finalName, g_uploadState.originalName);
             }
         }
