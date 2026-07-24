@@ -3,12 +3,14 @@
 #include <ESPAsyncWebServer.h>
 #include <AsyncJson.h>
 #include <WiFi.h>
+#include <ESPmDNS.h>
 #include <LittleFS.h>
 #include <esp_partition.h>
 #include <vector>
 #include "../Book32_Core/Book32FS.h"
 #include "../Book32_Core/FileExt.h"
 #include "../Book32_Core/SafeName.h"
+#include "../Book32_Core/UploadGuard.h"
 #include "../Book32_Core/DeviceCred.h"
 #include "../Book32_Core/BookOrderLogic.h"
 #include "../Book32_Update/GitHubMgr.h"
@@ -187,6 +189,28 @@ void WebMgr::mountFilesystems() {
     if (ebookOK) {
         Serial.printf("EbookFS OK: %u / %u bytes used\n", EbookFS.usedBytes(), EbookFS.totalBytes());
         listFiles(EbookFS, "/", 1);
+
+        // Uploads interrompidos deixam ficheiros .part. Como não são listados
+        // por /api/books nem abertos pelo leitor, só ocupam espaço — limpar no
+        // arranque, que é o único momento em que nenhum upload está em curso.
+        {
+            std::vector<String> stale;
+            File root = EbookFS.open("/");
+            if (root && root.isDirectory()) {
+                File f = root.openNextFile();
+                while (f) {
+                    String n = f.name();
+                    if (hasExtensionCI(n, ".part")) stale.push_back(n);
+                    f.close();
+                    f = root.openNextFile();
+                }
+                root.close();
+            }
+            for (const String& n : stale) {
+                Serial.printf("A remover upload incompleto: %s\n", n.c_str());
+                EbookFS.remove("/" + n);
+            }
+        }
     } else {
         Serial.println("ERROR: EbookFS mount failed! Ebooks partition is not available.");
     }
@@ -203,10 +227,21 @@ void WebMgr::init() {
     server->begin();
     _initialized = true;
     Serial.println("Web Server Started");
+
+    // mDNS: http://book32.local/send funciona sem saber o IP. Falha
+    // silenciosamente em redes que bloqueiam multicast — o IP continua a
+    // funcionar, por isso isto nunca é fatal.
+    if (MDNS.begin("book32")) {
+        MDNS.addService("http", "tcp", 80);
+        Serial.println("mDNS: http://book32.local/");
+    } else {
+        Serial.println("mDNS: arranque falhou (o IP continua a funcionar)");
+    }
 }
 
 void WebMgr::stop() {
     if (!_initialized) return;
+    MDNS.end();
     server->end();
     _initialized = false;
     Serial.println("Web Server Stopped");
@@ -447,6 +482,36 @@ void removeBookProgress(const String& filename) {
     }
 }
 
+// Estado de um upload em curso. Partilhado entre o body handler (que decide) e
+// o response handler (que reporta). Como o estado é global e o LittleFS é
+// single-writer, o endpoint é single-flight: `owner` marca o pedido que detém
+// o estado e qualquer outro pedido concorrente é recusado com 409 sem tocar
+// no upload activo. `Idle` é o estado "ninguém a usar" — distinto de
+// `WriteFailed`, que significa mesmo erro de escrita.
+enum class UploadStatus { Idle, Ok, BadExtension, UnsafeName, NoSpace, WriteFailed };
+
+struct UploadState {
+    UploadStatus status = UploadStatus::Idle;
+    AsyncWebServerRequest* owner = nullptr;
+    File file;
+    String path;
+    String tempPath;
+    String finalName;
+    String originalName;
+
+    void reset() {
+        if (file) file.close();
+        status = UploadStatus::Idle;
+        owner = nullptr;
+        path = "";
+        tempPath = "";
+        finalName = "";
+        originalName = "";
+    }
+};
+
+static UploadState g_uploadState;
+
 void WebMgr::setupEndpoints() {
     // API: Status
     server->on("/api/status", HTTP_GET, [this](AsyncWebServerRequest *request) {
@@ -475,6 +540,17 @@ void WebMgr::setupEndpoints() {
 
         serializeJson(doc, *response);
         request->send(response);
+    });
+
+    // Página de envio dedicada: caminho curto e memorizável para o atalho no
+    // ecrã principal do telemóvel. Sem auth aqui — a página em si não expõe
+    // nada; o POST para /api/books/upload é que exige Basic Auth.
+    server->on("/send", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (SystemFS.exists("/send.html")) {
+            request->send(SystemFS, "/send.html", "text/html");
+        } else {
+            request->send(404, "text/plain", "send.html nao encontrado - correr uploadfs");
+        }
     });
 
     // API: List Books from EbookFS
@@ -546,25 +622,87 @@ void WebMgr::setupEndpoints() {
     server->addHandler(bookOrderHandler);
 
     // API: Upload Book to EbookFS
+    //
+    // Estado partilhado entre o body handler e o response handler. O
+    // ESPAsyncWebServer corre o body handler primeiro, por isso o veredito
+    // aqui guardado já está decidido quando a resposta é montada. Uploads são
+    // servidos em série (o LittleFS é single-writer), logo `static` é seguro.
     server->on("/api/books/upload", HTTP_POST,
         [](AsyncWebServerRequest *request) {
             if (!requireAuth(request)) return;
-            request->send(200, "text/plain", "Upload Complete");
+
+            if (g_uploadState.owner != request) {
+                if (g_uploadState.owner != nullptr) {
+                    // Outro upload detém o estado: recusar sem lhe tocar.
+                    request->send(409, "application/json",
+                        "{\"ok\":false,\"error\":\"outro envio em curso - tenta daqui a pouco\"}");
+                } else {
+                    // O body handler nunca correu para este pedido (parte
+                    // multipart sem filename): não há nada a reportar.
+                    request->send(400, "application/json",
+                        "{\"ok\":false,\"error\":\"pedido sem ficheiro\"}");
+                }
+                return;
+            }
+
+            switch (g_uploadState.status) {
+                case UploadStatus::Ok: {
+                    String body = "{\"ok\":true,\"name\":\"" +
+                                  jsonEscape(g_uploadState.finalName) + "\"}";
+                    request->send(200, "application/json", body);
+                    break;
+                }
+                case UploadStatus::BadExtension:
+                    request->send(415, "application/json",
+                        "{\"ok\":false,\"error\":\"tipo de ficheiro nao suportado\"}");
+                    break;
+                case UploadStatus::UnsafeName:
+                    request->send(400, "application/json",
+                        "{\"ok\":false,\"error\":\"nome de ficheiro invalido\"}");
+                    break;
+                case UploadStatus::NoSpace:
+                    request->send(507, "application/json",
+                        "{\"ok\":false,\"error\":\"sem espaco na particao de ebooks\"}");
+                    break;
+                case UploadStatus::WriteFailed:
+                default:
+                    request->send(500, "application/json",
+                        "{\"ok\":false,\"error\":\"falha a escrever no armazenamento\"}");
+                    break;
+            }
+            // Libertar o estado: o corpo JSON já foi construído acima. Sem
+            // isto o endpoint ficaria trancado para sempre e um POST sem
+            // ficheiro herdaria o veredito do upload anterior.
+            g_uploadState.reset();
         },
         [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
-            static File uploadFile;
-            static String savedPath;
-            static String originalFilename;
-
             // v1.5.0: the body handler runs before the response handler, so it
             // must reject unauthenticated uploads itself or data would be
             // written to flash before the 401 is sent.
             if (!request->authenticate(BOOK32_AUTH_USER, WebMgr::devicePassword())) return;
 
             if (index == 0) {
-                originalFilename = filename;
-                String safeName = filename;
+                // Single-flight: se outro pedido detém o estado, sair sem
+                // tocar em nada — nem reset(), que fecharia o File dele.
+                if (g_uploadState.owner != nullptr && g_uploadState.owner != request) {
+                    return;
+                }
+                g_uploadState.reset();
+                g_uploadState.owner = request;
 
+                // A ligação pode cair a meio do corpo: o `final` nunca chega e
+                // o estado ficaria trancado. Este callback também dispara
+                // depois de uma resposta normal, mas aí o response handler já
+                // limpou o `owner`, por isso a guarda torna-o inofensivo.
+                request->onDisconnect([request]() {
+                    if (g_uploadState.owner == request) {
+                        if (g_uploadState.file) g_uploadState.file.close();
+                        if (g_uploadState.tempPath.length()) EbookFS.remove(g_uploadState.tempPath);
+                        g_uploadState.reset();
+                    }
+                });
+
+                String safeName = filename;
                 int lastSlash = safeName.lastIndexOf('/');
                 if (lastSlash >= 0) safeName = safeName.substring(lastSlash + 1);
                 lastSlash = safeName.lastIndexOf('\\');
@@ -576,12 +714,27 @@ void WebMgr::setupEndpoints() {
                     safeName = safeName.substring(0, 28 - ext.length()) + ext;
                 }
 
+                size_t freeBytes = EbookFS.totalBytes() - EbookFS.usedBytes();
+                switch (checkUpload(safeName, request->contentLength(), freeBytes)) {
+                    case UploadVerdict::BadExtension:
+                        g_uploadState.status = UploadStatus::BadExtension;
+                        return;
+                    case UploadVerdict::UnsafeName:
+                        g_uploadState.status = UploadStatus::UnsafeName;
+                        return;
+                    case UploadVerdict::NoSpace:
+                        g_uploadState.status = UploadStatus::NoSpace;
+                        return;
+                    case UploadVerdict::Ok:
+                        break;
+                }
+
                 String testPath = "/" + safeName;
                 if (EbookFS.exists(testPath)) {
                     int dotPos = safeName.lastIndexOf('.');
                     String baseName = (dotPos != -1) ? safeName.substring(0, dotPos) : safeName;
                     String ext = (dotPos != -1) ? safeName.substring(dotPos) : "";
-                    
+
                     if (baseName.length() > 20) baseName = baseName.substring(0, 20);
 
                     int suffix = 1;
@@ -593,29 +746,49 @@ void WebMgr::setupEndpoints() {
                     }
                 }
 
-                savedPath = "/" + safeName;
-                Serial.printf("Upload Start: %s (original: %s)\n", savedPath.c_str(), filename.c_str());
-                uploadFile = EbookFS.open(savedPath, FILE_WRITE);
-                if (!uploadFile) return;
-            }
+                g_uploadState.finalName = safeName;
+                g_uploadState.originalName = filename;
+                int origSlash = g_uploadState.originalName.lastIndexOf('/');
+                if (origSlash >= 0) g_uploadState.originalName = g_uploadState.originalName.substring(origSlash + 1);
+                origSlash = g_uploadState.originalName.lastIndexOf('\\');
+                if (origSlash >= 0) g_uploadState.originalName = g_uploadState.originalName.substring(origSlash + 1);
 
-            if (uploadFile && len) {
-                uploadFile.write(data, len);
-            }
-
-            if (final) {
-                if (uploadFile) {
-                    uploadFile.close();
-                    String truncatedName = savedPath.substring(1); 
-                    String origName = originalFilename;
-                    int lastSlash = origName.lastIndexOf('/');
-                    if (lastSlash >= 0) origName = origName.substring(lastSlash + 1);
-                    lastSlash = origName.lastIndexOf('\\');
-                    if (lastSlash >= 0) origName = origName.substring(lastSlash + 1);
-
-                    saveBookMetadata(truncatedName, origName);
-
+                g_uploadState.path = "/" + safeName;
+                Serial.printf("Upload Start: %s (original: %s)\n",
+                              g_uploadState.path.c_str(), filename.c_str());
+                g_uploadState.tempPath = g_uploadState.path + ".part";
+                g_uploadState.file = EbookFS.open(g_uploadState.tempPath, FILE_WRITE);
+                if (!g_uploadState.file) {
+                    g_uploadState.status = UploadStatus::WriteFailed;
+                    return;
                 }
+                g_uploadState.status = UploadStatus::Ok;
+            }
+
+            // Chunks de um pedido que não é o dono são descartados sem tocar
+            // no ficheiro. Um chunk depois de um erro também: nada foi aberto.
+            if (g_uploadState.owner != request) return;
+            if (g_uploadState.status != UploadStatus::Ok) return;
+
+            if (g_uploadState.file && len) {
+                if (g_uploadState.file.write(data, len) != len) {
+                    Serial.println("Upload: write failed (disco cheio?)");
+                    g_uploadState.file.close();
+                    EbookFS.remove(g_uploadState.tempPath);
+                    g_uploadState.status = UploadStatus::WriteFailed;
+                    return;
+                }
+            }
+
+            if (final && g_uploadState.file) {
+                g_uploadState.file.close();
+                if (!EbookFS.rename(g_uploadState.tempPath, g_uploadState.path)) {
+                    Serial.println("Upload: rename do .part falhou");
+                    EbookFS.remove(g_uploadState.tempPath);
+                    g_uploadState.status = UploadStatus::WriteFailed;
+                    return;
+                }
+                saveBookMetadata(g_uploadState.finalName, g_uploadState.originalName);
             }
         }
     );

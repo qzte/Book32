@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git apply *)",
+      "Bash(python -m platformio run --target buildfs)"
+    ]
+  }
+}

@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Enviar para o Book32</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 1.25rem;
+         max-width: 34rem; margin-inline: auto; }
+  h1 { font-size: 1.25rem; margin: 0 0 1rem; }
+  #drop { border: 2px dashed currentColor; border-radius: 12px; padding: 2rem 1rem;
+          text-align: center; opacity: .75; cursor: pointer; }
+  #drop.over { opacity: 1; background: rgba(127,127,127,.15); }
+  input[type=file] { display: none; }
+  ul { list-style: none; padding: 0; margin: 1rem 0 0; }
+  li { border-top: 1px solid rgba(127,127,127,.35); padding: .6rem 0; }
+  .row { display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap; }
+  .name { flex: 1; word-break: break-all; }
+  .state { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .ok { color: #17803d; } .err { color: #b3261e; }
+  progress { width: 100%; height: .4rem; margin-top: .35rem; }
+  button { font: inherit; padding: .2rem .6rem; }
+  #free { opacity: .7; font-size: .85rem; margin-top: .75rem; }
+</style>
+</head>
+<body>
+<h1>Enviar para o Book32</h1>
+
+<div id="drop" tabindex="0">
+  Larga aqui os ficheiros<br><small>ou toca para escolher (.epub, .ttf)</small>
+</div>
+<input id="picker" type="file" multiple accept=".epub,.ttf">
+
+<ul id="list"></ul>
+<div id="free"></div>
+
+<script>
+const drop = document.getElementById('drop');
+const picker = document.getElementById('picker');
+const list = document.getElementById('list');
+const free = document.getElementById('free');
+const queue = [];
+let busy = false;
+let knownFreeSpace = null;
+
+// Se não chegar nenhum evento upload.onprogress durante este intervalo,
+// consideramos a transferência parada (ex: device adormecido) e abortamos.
+const STALL_TIMEOUT_MS = 20000;
+
+drop.addEventListener('click', () => picker.click());
+drop.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') picker.click(); });
+picker.addEventListener('change', () => { add(picker.files); picker.value = ''; });
+
+['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => {
+  e.preventDefault(); drop.classList.add('over');
+}));
+['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => {
+  e.preventDefault(); drop.classList.remove('over');
+}));
+drop.addEventListener('drop', e => add(e.dataTransfer.files));
+
+function add(files) {
+  for (const file of files) {
+    const li = document.createElement('li');
+    li.innerHTML = '<div class="row"><span class="name"></span>' +
+                   '<span class="state">na fila</span></div>' +
+                   '<progress value="0" max="100"></progress>';
+    li.querySelector('.name').textContent = file.name;
+    list.appendChild(li);
+    queue.push({ file, li });
+  }
+  pump();
+}
+
+// Envio em série: o LittleFS do device é single-writer e o servidor assíncrono
+// não lida bem com uploads concorrentes.
+function pump() {
+  if (busy) return;
+  const job = queue.shift();
+  if (!job) { refreshFree(); return; }
+  busy = true;
+  send(job).finally(() => { busy = false; pump(); });
+}
+
+function send(job) {
+  const { file, li } = job;
+  const state = li.querySelector('.state');
+  const bar = li.querySelector('progress');
+  state.className = 'state';
+  state.textContent = '0%';
+  bar.value = 0;
+  const row = li.querySelector('.row');
+  const msg = row.querySelector('.msg');
+  if (msg) msg.textContent = '';
+  const btn = li.querySelector('button');
+  if (btn) btn.remove();
+
+  // Validações client-side para evitar uma transferência inútil: o servidor
+  // só responde depois de receber o corpo todo, o que faz a barra chegar a
+  // 100% antes de mostrar um erro que já era previsível à partida. O servidor
+  // continua a ser a autoridade - isto é só para poupar tempo/dados.
+  const lowerName = file.name.toLowerCase();
+  if (!lowerName.endsWith('.epub') && !lowerName.endsWith('.ttf')) {
+    return new Promise(resolve => {
+      fail(li, 'tipo de ficheiro não suportado (.epub, .ttf)', job);
+      resolve();
+    });
+  }
+  if (knownFreeSpace !== null && file.size > knownFreeSpace) {
+    return new Promise(resolve => {
+      fail(li, 'sem espaço livre suficiente no Book32', job);
+      resolve();
+    });
+  }
+
+  return new Promise(resolve => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/books/upload');
+    xhr.withCredentials = true;
+
+    let stallTimer = null;
+    const clearStallTimer = () => {
+      if (stallTimer !== null) { clearTimeout(stallTimer); stallTimer = null; }
+    };
+    const armStallTimer = () => {
+      clearStallTimer();
+      stallTimer = setTimeout(() => { xhr.abort(); }, STALL_TIMEOUT_MS);
+    };
+
+    xhr.upload.onprogress = e => {
+      armStallTimer();
+      if (!e.lengthComputable) return;
+      const pct = Math.round(e.loaded / e.total * 100);
+      bar.value = pct;
+      state.textContent = pct + '%';
+    };
+
+    // O corpo acabou de sair. A partir daqui não há mais eventos de progresso
+    // (o device ainda está a fechar o ficheiro, renomear o .part e gravar
+    // metadados), por isso desarmar o detetor: caso contrário abortaria um
+    // envio bem-sucedido à chegada.
+    xhr.upload.onload = () => clearStallTimer();
+
+    xhr.onload = () => {
+      clearStallTimer();
+      bar.value = 100;
+      let body = {};
+      try { body = JSON.parse(xhr.responseText); } catch (_) {}
+      if (xhr.status === 200 && body.ok) {
+        state.className = 'state ok';
+        // O device pode truncar o nome ou juntar um sufixo anti-colisão.
+        state.textContent = '✓';
+        if (body.name && body.name !== file.name) {
+          li.querySelector('.name').textContent = file.name + ' → ' + body.name;
+        }
+      } else if (xhr.status === 401) {
+        fail(li, 'credenciais recusadas', job);
+      } else if (xhr.status === 409) {
+        fail(li, body.error || 'outro envio em curso - tenta de novo', job);
+      } else {
+        fail(li, body.error || ('erro ' + xhr.status), job);
+      }
+      resolve();
+    };
+
+    xhr.onerror = () => {
+      clearStallTimer();
+      fail(li, 'device inacessivel - acorda o Book32 e tenta de novo', job);
+      resolve();
+    };
+    xhr.onabort = () => {
+      clearStallTimer();
+      fail(li, 'device inacessivel - acorda o Book32 e tenta de novo', job);
+      resolve();
+    };
+    xhr.ontimeout = () => { clearStallTimer(); fail(li, 'timeout', job); resolve(); };
+
+    const form = new FormData();
+    form.append('file', file, file.name);
+    armStallTimer();
+    xhr.send(form);
+  });
+}
+
+function fail(li, msg, job) {
+  const state = li.querySelector('.state');
+  state.className = 'state err';
+  state.textContent = '✗';
+  const row = li.querySelector('.row');
+  if (!row.querySelector('.msg')) {
+    const span = document.createElement('span');
+    span.className = 'msg err';
+    span.style.flexBasis = '100%';
+    row.appendChild(span);
+  }
+  row.querySelector('.msg').textContent = msg;
+  if (!li.querySelector('button')) {
+    const btn = document.createElement('button');
+    btn.textContent = 'repetir';
+    btn.onclick = () => {
+      btn.remove();
+      row.querySelector('.msg').textContent = '';
+      queue.push(job);
+      pump();
+    };
+    row.appendChild(btn);
+  }
+}
+
+function refreshFree() {
+  fetch('/api/status').then(r => r.json()).then(s => {
+    knownFreeSpace = s.freeSpace;
+    free.textContent = 'Livre: ' + (s.freeSpace / 1048576).toFixed(1) + ' MB de ' +
+                       (s.totalSpace / 1048576).toFixed(1) + ' MB';
+  }).catch(() => { free.textContent = ''; });
+}
+refreshFree();
+</script>
+</body>
+</html>
