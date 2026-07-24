@@ -483,12 +483,16 @@ void removeBookProgress(const String& filename) {
 }
 
 // Estado de um upload em curso. Partilhado entre o body handler (que decide) e
-// o response handler (que reporta). Uploads são feitos em série pelo cliente e
-// o LittleFS é single-writer, por isso não há concorrência a proteger aqui.
-enum class UploadStatus { Ok, BadExtension, UnsafeName, NoSpace, WriteFailed };
+// o response handler (que reporta). Como o estado é global e o LittleFS é
+// single-writer, o endpoint é single-flight: `owner` marca o pedido que detém
+// o estado e qualquer outro pedido concorrente é recusado com 409 sem tocar
+// no upload activo. `Idle` é o estado "ninguém a usar" — distinto de
+// `WriteFailed`, que significa mesmo erro de escrita.
+enum class UploadStatus { Idle, Ok, BadExtension, UnsafeName, NoSpace, WriteFailed };
 
 struct UploadState {
-    UploadStatus status = UploadStatus::WriteFailed;
+    UploadStatus status = UploadStatus::Idle;
+    AsyncWebServerRequest* owner = nullptr;
     File file;
     String path;
     String tempPath;
@@ -497,7 +501,8 @@ struct UploadState {
 
     void reset() {
         if (file) file.close();
-        status = UploadStatus::WriteFailed;
+        status = UploadStatus::Idle;
+        owner = nullptr;
         path = "";
         tempPath = "";
         finalName = "";
@@ -625,14 +630,26 @@ void WebMgr::setupEndpoints() {
     server->on("/api/books/upload", HTTP_POST,
         [](AsyncWebServerRequest *request) {
             if (!requireAuth(request)) return;
+
+            if (g_uploadState.owner != request) {
+                if (g_uploadState.owner != nullptr) {
+                    // Outro upload detém o estado: recusar sem lhe tocar.
+                    request->send(409, "application/json",
+                        "{\"ok\":false,\"error\":\"outro envio em curso - tenta daqui a pouco\"}");
+                } else {
+                    // O body handler nunca correu para este pedido (parte
+                    // multipart sem filename): não há nada a reportar.
+                    request->send(400, "application/json",
+                        "{\"ok\":false,\"error\":\"pedido sem ficheiro\"}");
+                }
+                return;
+            }
+
             switch (g_uploadState.status) {
                 case UploadStatus::Ok: {
                     String body = "{\"ok\":true,\"name\":\"" +
                                   jsonEscape(g_uploadState.finalName) + "\"}";
                     request->send(200, "application/json", body);
-                    // Consumir o estado: um POST sem corpo não corre o body
-                    // handler, e sem isto herdaria o sucesso do upload anterior.
-                    g_uploadState.status = UploadStatus::WriteFailed;
                     break;
                 }
                 case UploadStatus::BadExtension:
@@ -653,6 +670,10 @@ void WebMgr::setupEndpoints() {
                         "{\"ok\":false,\"error\":\"falha a escrever no armazenamento\"}");
                     break;
             }
+            // Libertar o estado: o corpo JSON já foi construído acima. Sem
+            // isto o endpoint ficaria trancado para sempre e um POST sem
+            // ficheiro herdaria o veredito do upload anterior.
+            g_uploadState.reset();
         },
         [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
             // v1.5.0: the body handler runs before the response handler, so it
@@ -661,7 +682,25 @@ void WebMgr::setupEndpoints() {
             if (!request->authenticate(BOOK32_AUTH_USER, WebMgr::devicePassword())) return;
 
             if (index == 0) {
+                // Single-flight: se outro pedido detém o estado, sair sem
+                // tocar em nada — nem reset(), que fecharia o File dele.
+                if (g_uploadState.owner != nullptr && g_uploadState.owner != request) {
+                    return;
+                }
                 g_uploadState.reset();
+                g_uploadState.owner = request;
+
+                // A ligação pode cair a meio do corpo: o `final` nunca chega e
+                // o estado ficaria trancado. Este callback também dispara
+                // depois de uma resposta normal, mas aí o response handler já
+                // limpou o `owner`, por isso a guarda torna-o inofensivo.
+                request->onDisconnect([request]() {
+                    if (g_uploadState.owner == request) {
+                        if (g_uploadState.file) g_uploadState.file.close();
+                        if (g_uploadState.tempPath.length()) EbookFS.remove(g_uploadState.tempPath);
+                        g_uploadState.reset();
+                    }
+                });
 
                 String safeName = filename;
                 int lastSlash = safeName.lastIndexOf('/');
@@ -726,7 +765,9 @@ void WebMgr::setupEndpoints() {
                 g_uploadState.status = UploadStatus::Ok;
             }
 
-            // Um chunk depois de um erro é descartado: nada foi aberto.
+            // Chunks de um pedido que não é o dono são descartados sem tocar
+            // no ficheiro. Um chunk depois de um erro também: nada foi aberto.
+            if (g_uploadState.owner != request) return;
             if (g_uploadState.status != UploadStatus::Ok) return;
 
             if (g_uploadState.file && len) {
