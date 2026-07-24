@@ -9,6 +9,7 @@
 #include "../Book32_Core/Book32FS.h"
 #include "../Book32_Core/FileExt.h"
 #include "../Book32_Core/SafeName.h"
+#include "../Book32_Core/UploadGuard.h"
 #include "../Book32_Core/DeviceCred.h"
 #include "../Book32_Core/BookOrderLogic.h"
 #include "../Book32_Update/GitHubMgr.h"
@@ -447,6 +448,29 @@ void removeBookProgress(const String& filename) {
     }
 }
 
+// Estado de um upload em curso. Partilhado entre o body handler (que decide) e
+// o response handler (que reporta). Uploads são feitos em série pelo cliente e
+// o LittleFS é single-writer, por isso não há concorrência a proteger aqui.
+enum class UploadStatus { Ok, BadExtension, UnsafeName, NoSpace, WriteFailed };
+
+struct UploadState {
+    UploadStatus status = UploadStatus::WriteFailed;
+    File file;
+    String path;
+    String finalName;
+    String originalName;
+
+    void reset() {
+        if (file) file.close();
+        status = UploadStatus::WriteFailed;
+        path = "";
+        finalName = "";
+        originalName = "";
+    }
+};
+
+static UploadState g_uploadState;
+
 void WebMgr::setupEndpoints() {
     // API: Status
     server->on("/api/status", HTTP_GET, [this](AsyncWebServerRequest *request) {
@@ -546,25 +570,50 @@ void WebMgr::setupEndpoints() {
     server->addHandler(bookOrderHandler);
 
     // API: Upload Book to EbookFS
+    //
+    // Estado partilhado entre o body handler e o response handler. O
+    // ESPAsyncWebServer corre o body handler primeiro, por isso o veredito
+    // aqui guardado já está decidido quando a resposta é montada. Uploads são
+    // servidos em série (o LittleFS é single-writer), logo `static` é seguro.
     server->on("/api/books/upload", HTTP_POST,
         [](AsyncWebServerRequest *request) {
             if (!requireAuth(request)) return;
-            request->send(200, "text/plain", "Upload Complete");
+            switch (g_uploadState.status) {
+                case UploadStatus::Ok: {
+                    String body = "{\"ok\":true,\"name\":\"" +
+                                  jsonEscape(g_uploadState.finalName) + "\"}";
+                    request->send(200, "application/json", body);
+                    break;
+                }
+                case UploadStatus::BadExtension:
+                    request->send(415, "application/json",
+                        "{\"ok\":false,\"error\":\"tipo de ficheiro nao suportado\"}");
+                    break;
+                case UploadStatus::UnsafeName:
+                    request->send(400, "application/json",
+                        "{\"ok\":false,\"error\":\"nome de ficheiro invalido\"}");
+                    break;
+                case UploadStatus::NoSpace:
+                    request->send(507, "application/json",
+                        "{\"ok\":false,\"error\":\"sem espaco na particao de ebooks\"}");
+                    break;
+                case UploadStatus::WriteFailed:
+                default:
+                    request->send(500, "application/json",
+                        "{\"ok\":false,\"error\":\"falha a escrever no armazenamento\"}");
+                    break;
+            }
         },
         [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
-            static File uploadFile;
-            static String savedPath;
-            static String originalFilename;
-
             // v1.5.0: the body handler runs before the response handler, so it
             // must reject unauthenticated uploads itself or data would be
             // written to flash before the 401 is sent.
             if (!request->authenticate(BOOK32_AUTH_USER, WebMgr::devicePassword())) return;
 
             if (index == 0) {
-                originalFilename = filename;
-                String safeName = filename;
+                g_uploadState.reset();
 
+                String safeName = filename;
                 int lastSlash = safeName.lastIndexOf('/');
                 if (lastSlash >= 0) safeName = safeName.substring(lastSlash + 1);
                 lastSlash = safeName.lastIndexOf('\\');
@@ -576,12 +625,27 @@ void WebMgr::setupEndpoints() {
                     safeName = safeName.substring(0, 28 - ext.length()) + ext;
                 }
 
+                size_t freeBytes = EbookFS.totalBytes() - EbookFS.usedBytes();
+                switch (checkUpload(safeName, request->contentLength(), freeBytes)) {
+                    case UploadVerdict::BadExtension:
+                        g_uploadState.status = UploadStatus::BadExtension;
+                        return;
+                    case UploadVerdict::UnsafeName:
+                        g_uploadState.status = UploadStatus::UnsafeName;
+                        return;
+                    case UploadVerdict::NoSpace:
+                        g_uploadState.status = UploadStatus::NoSpace;
+                        return;
+                    case UploadVerdict::Ok:
+                        break;
+                }
+
                 String testPath = "/" + safeName;
                 if (EbookFS.exists(testPath)) {
                     int dotPos = safeName.lastIndexOf('.');
                     String baseName = (dotPos != -1) ? safeName.substring(0, dotPos) : safeName;
                     String ext = (dotPos != -1) ? safeName.substring(dotPos) : "";
-                    
+
                     if (baseName.length() > 20) baseName = baseName.substring(0, 20);
 
                     int suffix = 1;
@@ -593,29 +657,40 @@ void WebMgr::setupEndpoints() {
                     }
                 }
 
-                savedPath = "/" + safeName;
-                Serial.printf("Upload Start: %s (original: %s)\n", savedPath.c_str(), filename.c_str());
-                uploadFile = EbookFS.open(savedPath, FILE_WRITE);
-                if (!uploadFile) return;
-            }
+                g_uploadState.finalName = safeName;
+                g_uploadState.originalName = filename;
+                int origSlash = g_uploadState.originalName.lastIndexOf('/');
+                if (origSlash >= 0) g_uploadState.originalName = g_uploadState.originalName.substring(origSlash + 1);
+                origSlash = g_uploadState.originalName.lastIndexOf('\\');
+                if (origSlash >= 0) g_uploadState.originalName = g_uploadState.originalName.substring(origSlash + 1);
 
-            if (uploadFile && len) {
-                uploadFile.write(data, len);
-            }
-
-            if (final) {
-                if (uploadFile) {
-                    uploadFile.close();
-                    String truncatedName = savedPath.substring(1); 
-                    String origName = originalFilename;
-                    int lastSlash = origName.lastIndexOf('/');
-                    if (lastSlash >= 0) origName = origName.substring(lastSlash + 1);
-                    lastSlash = origName.lastIndexOf('\\');
-                    if (lastSlash >= 0) origName = origName.substring(lastSlash + 1);
-
-                    saveBookMetadata(truncatedName, origName);
-
+                g_uploadState.path = "/" + safeName;
+                Serial.printf("Upload Start: %s (original: %s)\n",
+                              g_uploadState.path.c_str(), filename.c_str());
+                g_uploadState.file = EbookFS.open(g_uploadState.path, FILE_WRITE);
+                if (!g_uploadState.file) {
+                    g_uploadState.status = UploadStatus::WriteFailed;
+                    return;
                 }
+                g_uploadState.status = UploadStatus::Ok;
+            }
+
+            // Um chunk depois de um erro é descartado: nada foi aberto.
+            if (g_uploadState.status != UploadStatus::Ok) return;
+
+            if (g_uploadState.file && len) {
+                if (g_uploadState.file.write(data, len) != len) {
+                    Serial.println("Upload: write failed (disco cheio?)");
+                    g_uploadState.file.close();
+                    EbookFS.remove(g_uploadState.path);
+                    g_uploadState.status = UploadStatus::WriteFailed;
+                    return;
+                }
+            }
+
+            if (final && g_uploadState.file) {
+                g_uploadState.file.close();
+                saveBookMetadata(g_uploadState.finalName, g_uploadState.originalName);
             }
         }
     );
