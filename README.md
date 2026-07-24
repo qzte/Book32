@@ -108,7 +108,7 @@ RESET, then run the upload command again.
 Book32 now uses the public GitHub release feed:
 
 ```text
-https://github.com/rolohaun/Book32/releases/latest
+https://github.com/qzte/Book32/releases/latest
 ```
 
 No GitHub personal access token is required. Releases should include:
