@@ -1,4 +1,25 @@
+// Mobile nav: the sidebar becomes an off-canvas panel below 768px, driven by
+// the .nav-open class on <body>. On desktop the class is inert.
+function toggleNav() {
+    setNav(!document.body.classList.contains('nav-open'));
+}
+
+function closeNav() {
+    setNav(false);
+}
+
+function setNav(open) {
+    document.body.classList.toggle('nav-open', open);
+    const btn = document.querySelector('.nav-toggle');
+    if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeNav();
+});
+
 function showTab(tabId) {
+    closeNav();
     document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
     document.querySelectorAll('.nav-links li').forEach(el => el.classList.remove('active'));
 
