@@ -108,6 +108,17 @@ mais nada.
 
 Sem alterações em `src/`: o servidor limita-se a servir os ficheiros do LittleFS.
 
+## Desvios ao "desktop intocado" (verificados na implementação)
+
+A comparação pixel a pixel dos três separadores a 1280px deu Dashboard e
+Ereader idênticos. Em Settings ficaram duas diferenças deliberadas:
+
+1. A linha "Sleep Message" passou a `.setting-row.stacked` — o label fica acima
+   do campo, em vez de partir em duas linhas com o campo espremido ao lado.
+2. Deslocamentos verticais de até 3px em três linhas, cujas margens de topo
+   ad-hoc (15px, 12px, 10px, todas inline) foram unificadas em 12px pela classe
+   `.setting-row.spaced`.
+
 ## Verificação
 
 Não há testes automatizados no repo e não se criam para CSS. A verificação é
