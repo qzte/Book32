@@ -22,19 +22,20 @@
 #include "../Book32_Core/DisplayMgr.h"
 #include "../../include/Config.h"
 
-// v1.5.0 (security): HTTP Basic Auth.
+// v1.9.0: HTTP Basic Auth was removed from every endpoint by request.
 //
-// Scope is decided by *effect*, not by HTTP verb. Every POST/DELETE is
-// protected, plus two GETs that are not read-only in practice:
-//   * /api/app/switch  — declared HTTP_GET but changes device state.
-//   * /api/wifi/status and /api/wifi/scan — leak the home network SSID, the
-//     local IP and the list of neighbouring networks.
-// Left open so the web UI can load and render before prompting for
-// credentials: /api/status, /api/books, the settings GETs and the reader
-// progress GET.
+// The web API is now completely open to anyone who can reach the device on
+// port 80 — reading status, uploading/deleting books, changing settings,
+// joining a WiFi network and triggering OTA all work with no credential.
+// Whoever re-adds a login must protect *every* mutating endpoint plus the
+// GETs that are mutating by effect (/api/app/switch) or leak network
+// topology (/api/wifi/status, /api/wifi/scan), and must also guard the two
+// upload *body* handlers, which run before their response handler and would
+// otherwise write to flash before a 401 could be sent.
 //
-// Caveat: Basic Auth is base64, not encryption, and this server is plain HTTP.
-// This stops casual access; it is not confidential against a LAN sniffer.
+// devicePassword() is kept: it is still the SoftAP WPA2 passphrase shown on
+// the e-ink footer (see AppMainMenu.cpp), which is the only access control
+// left when the device is running as a hotspot.
 const char* WebMgr::devicePassword() {
     static char pw[BOOK32_CRED_LEN] = {0};
     if (pw[0] == '\0') {
@@ -43,16 +44,6 @@ const char* WebMgr::devicePassword() {
         deriveDevicePassword(mac, pw, sizeof(pw));
     }
     return pw;
-}
-
-// Returns true when the request is authorised. On failure it has already sent
-// a 401 challenge, so the caller must simply return.
-static bool requireAuth(AsyncWebServerRequest* request) {
-    if (request->authenticate(BOOK32_AUTH_USER, WebMgr::devicePassword())) {
-        return true;
-    }
-    request->requestAuthentication();
-    return false;
 }
 
 WebMgr::WebMgr() {
@@ -555,8 +546,8 @@ void WebMgr::setupEndpoints() {
     });
 
     // Página de envio dedicada: caminho curto e memorizável para o atalho no
-    // ecrã principal do telemóvel. Sem auth aqui — a página em si não expõe
-    // nada; o POST para /api/books/upload é que exige Basic Auth.
+    // ecrã principal do telemóvel. Desde a v1.9.0 nem a página nem o POST
+    // para /api/books/upload pedem credenciais.
     server->on("/send", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (SystemFS.exists("/send.html")) {
             request->send(SystemFS, "/send.html", "text/html");
@@ -612,7 +603,6 @@ void WebMgr::setupEndpoints() {
     // API (v1.2.0): Save manual book order. Body: {"order":["a.epub","b.epub"]}
     AsyncCallbackJsonWebHandler* bookOrderHandler = new AsyncCallbackJsonWebHandler("/api/books/order",
         [](AsyncWebServerRequest *request, JsonVariant &json) {
-            if (!requireAuth(request)) return;
             JsonArray arr = json["order"].as<JsonArray>();
             if (arr.isNull()) {
                 request->send(400, "text/plain", "Missing 'order' array");
@@ -641,8 +631,6 @@ void WebMgr::setupEndpoints() {
     // servidos em série (o LittleFS é single-writer), logo `static` é seguro.
     server->on("/api/books/upload", HTTP_POST,
         [](AsyncWebServerRequest *request) {
-            if (!requireAuth(request)) return;
-
             if (g_uploadState.owner != request) {
                 if (g_uploadState.owner != nullptr) {
                     // Outro upload detém o estado: recusar sem lhe tocar.
@@ -688,11 +676,6 @@ void WebMgr::setupEndpoints() {
             g_uploadState.reset();
         },
         [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
-            // v1.5.0: the body handler runs before the response handler, so it
-            // must reject unauthenticated uploads itself or data would be
-            // written to flash before the 401 is sent.
-            if (!request->authenticate(BOOK32_AUTH_USER, WebMgr::devicePassword())) return;
-
             if (index == 0) {
                 // Single-flight: se outro pedido detém o estado, sair sem
                 // tocar em nada — nem reset(), que fecharia o File dele.
@@ -807,7 +790,6 @@ void WebMgr::setupEndpoints() {
 
     // API: Delete Book from EbookFS
     server->on("/api/books/delete", HTTP_DELETE, [](AsyncWebServerRequest *request) {
-        if (!requireAuth(request)) return;
         if (!request->hasParam("name")) {
             request->send(400, "text/plain", "Missing name param");
             return;
@@ -880,7 +862,6 @@ void WebMgr::setupEndpoints() {
     // API: Perform Full Update (firmware + filesystem)
     // Sets flag to perform OTA from main loop (avoids blocking async_tcp)
     server->on("/api/update/all", HTTP_POST, [](AsyncWebServerRequest *request) {
-        if (!requireAuth(request)) return;
         request->send(200, "text/plain", "Update scheduled - will start in a moment");
         Serial.println("OTA update requested via web UI, scheduling...");
         WebMgr::getInstance()._otaPending = true;
@@ -903,8 +884,6 @@ void WebMgr::setupEndpoints() {
     // API: Reader Settings - POST
     AsyncCallbackJsonWebHandler* readerSettingsHandler = new AsyncCallbackJsonWebHandler("/api/settings/reader",
         [](AsyncWebServerRequest *request, JsonVariant &json) {
-            if (!requireAuth(request)) return;
-
             // Merge into the existing config so one setting doesn't wipe the
             // other. Clamping lives in SettingsStore, shared with the
             // on-device settings menu.
@@ -949,7 +928,6 @@ void WebMgr::setupEndpoints() {
     // EbookFS so it survives OTA updates.
     AsyncCallbackJsonWebHandler* displaySettingsHandler = new AsyncCallbackJsonWebHandler("/api/settings/display",
         [](AsyncWebServerRequest *request, JsonVariant &json) {
-            if (!requireAuth(request)) return;
             DisplaySettings s;
             s.rotation = SettingsStore::clampRotation(json["rotation"] | 3);
 
@@ -989,7 +967,6 @@ void WebMgr::setupEndpoints() {
 
     // API: Reader Progress - DELETE
     server->on("/api/reader/progress", HTTP_DELETE, [](AsyncWebServerRequest *request) {
-        if (!requireAuth(request)) return;
         ProgressStore::getInstance().clearAll();
         request->send(200, "application/json", "{\"status\":\"ok\"}");
     });
@@ -1000,8 +977,8 @@ void WebMgr::setupEndpoints() {
     // Keyed by original filename throughout, so importing on a device that
     // truncated the names differently still matches the right books.
     //
-    // Left unauthenticated, like /api/books and the progress GET: it exposes
-    // nothing those two do not already expose.
+    // Como todos os endpoints desde a v1.9.0, é aberto: quem chegar à porta 80
+    // pode exportar o estado da biblioteca.
     server->on("/api/library/export", HTTP_GET, [](AsyncWebServerRequest *request) {
         std::map<String, String> metadata;
         loadBookMetadata(metadata);
@@ -1046,8 +1023,6 @@ void WebMgr::setupEndpoints() {
     // library-sized bundle risks exhausting the heap mid-request.
     server->on("/api/library/import", HTTP_POST,
         [](AsyncWebServerRequest *request) {
-            if (!requireAuth(request)) return;
-
             if (g_importState.owner != nullptr && g_importState.owner != request) {
                 request->send(409, "application/json",
                               "{\"status\":\"error\",\"message\":\"import em curso\"}");
@@ -1093,11 +1068,6 @@ void WebMgr::setupEndpoints() {
             request->send(response);
         },
         [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
-            // The body handler runs before the response handler, so it must
-            // reject unauthenticated requests itself or we would write to flash
-            // before sending the 401.
-            if (!request->authenticate(BOOK32_AUTH_USER, WebMgr::devicePassword())) return;
-
             if (index == 0) {
                 if (g_importState.owner != nullptr && g_importState.owner != request) return;
                 g_importState.reset();
@@ -1149,8 +1119,6 @@ void WebMgr::setupEndpoints() {
     // API: Sleep Settings - POST
     AsyncCallbackJsonWebHandler* sleepSettingsHandler = new AsyncCallbackJsonWebHandler("/api/settings/sleep",
         [](AsyncWebServerRequest *request, JsonVariant &json) {
-            if (!requireAuth(request)) return;
-
             // Merge, so posting only one key doesn't blank the other.
             SettingsStore& store = SettingsStore::getInstance();
             SleepSettings s = store.loadSleep();
@@ -1175,7 +1143,6 @@ void WebMgr::setupEndpoints() {
 
     // API: Switch to app by name
     server->on("/api/app/switch", HTTP_GET, [](AsyncWebServerRequest *request) {
-        if (!requireAuth(request)) return;  // GET by verb, mutating by effect
         if (!request->hasParam("name")) {
             request->send(400, "application/json", "{\"error\":\"App name required\"}");
             return;
@@ -1207,7 +1174,6 @@ void WebMgr::setupEndpoints() {
 
     // API: WiFi status - station connection + hotspot (AP) state
     server->on("/api/wifi/status", HTTP_GET, [](AsyncWebServerRequest *request) {
-        if (!requireAuth(request)) return;  // leaks home SSID and local IP
         AsyncResponseStream *response = request->beginResponseStream("application/json");
         DynamicJsonDocument doc(512);
 
@@ -1230,7 +1196,6 @@ void WebMgr::setupEndpoints() {
     // API: WiFi scan - async so async_tcp keeps running. First call kicks off a
     // scan and returns 202; the client polls until results are ready.
     server->on("/api/wifi/scan", HTTP_GET, [](AsyncWebServerRequest *request) {
-        if (!requireAuth(request)) return;  // leaks neighbouring networks
         int n = WiFi.scanComplete();
         if (n == WIFI_SCAN_RUNNING) {
             request->send(202, "application/json", "{\"status\":\"scanning\"}");
@@ -1261,7 +1226,6 @@ void WebMgr::setupEndpoints() {
     // device reconnects automatically on the next boot.
     AsyncCallbackJsonWebHandler* wifiConnectHandler = new AsyncCallbackJsonWebHandler("/api/wifi/connect",
         [](AsyncWebServerRequest *request, JsonVariant &json) {
-            if (!requireAuth(request)) return;
             String ssid = json["ssid"].as<String>();
             String password = json["password"] | "";
 

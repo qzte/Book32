@@ -117,7 +117,6 @@ function send(job) {
   return new Promise(resolve => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', '/api/books/upload');
-    xhr.withCredentials = true;
 
     let stallTimer = null;
     const clearStallTimer = () => {
@@ -154,8 +153,6 @@ function send(job) {
         if (body.name && body.name !== file.name) {
           li.querySelector('.name').textContent = file.name + ' → ' + body.name;
         }
-      } else if (xhr.status === 401) {
-        fail(li, 'credenciais recusadas', job);
       } else if (xhr.status === 409) {
         fail(li, body.error || 'outro envio em curso - tenta de novo', job);
       } else {

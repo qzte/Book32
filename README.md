@@ -115,6 +115,14 @@ RESET, then run the upload command again.
 5. After connection, Book32 shows its IP address on the main menu.
 6. Open `http://<BOOK32_IP>/` in a browser to manage books and settings.
 
+## Access Control
+
+Since v1.9.0 the web interface asks for no login: every endpoint is open to any
+client that can reach the device on port 80. The only remaining barrier is the
+network itself — your router's password on the home LAN, or the WPA2 passphrase
+shown on the e-ink footer while the `Book32` hotspot is up. Do not expose the
+device to an untrusted network or forward port 80 to it.
+
 ## OTA Updates
 
 Book32 now uses the public GitHub release feed:

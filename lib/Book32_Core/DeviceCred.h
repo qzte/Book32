@@ -8,15 +8,19 @@
 //
 // The credential is derived from the last three bytes of the MAC so that it is
 // stable across reboots (the value printed on the e-ink screen stays valid)
-// and needs no persisted state or configuration UI. The same value is used as
-// the SoftAP WPA2 passphrase and as the HTTP Basic Auth password.
+// and needs no persisted state or configuration UI.
+//
+// v1.9.0: the HTTP Basic Auth layer was removed, so this value is now *only*
+// the SoftAP WPA2 passphrase.
 //
 // Threat model — be honest about what this does and does not achieve:
-//   * It stops casual access by anyone in radio range or on the home LAN.
+//   * It keeps the hotspot from being an open AP.
+//   * It does NOT protect the HTTP API. Once a client is on the same network
+//     (hotspot or home LAN) every endpoint is reachable with no credential:
+//     uploading and deleting books, changing settings, joining a WiFi network
+//     and triggering OTA.
 //   * It does NOT stop a determined attacker. The MAC is observable over the
-//     air, so the passphrase is derivable by someone who knows this scheme,
-//     and HTTP Basic Auth sends the credential base64-encoded over plaintext
-//     HTTP. Treat this as raising the bar, not as strong authentication.
+//     air, so the passphrase is derivable by someone who knows this scheme.
 //
 // Pure function over a caller-supplied MAC — no Arduino dependency, so it is
 // host-testable: tools/tests/test_device_cred.cpp.
@@ -27,9 +31,6 @@
 
 // "book" + 6 hex digits + NUL.
 #define BOOK32_CRED_LEN 11
-
-// Fixed HTTP Basic Auth username. The password carries the entropy.
-#define BOOK32_AUTH_USER "book32"
 
 // Write "book<XXYYZZ>" (uppercase hex of mac[3..5]) into out.
 // out must be at least BOOK32_CRED_LEN bytes.

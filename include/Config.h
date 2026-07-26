@@ -1,7 +1,7 @@
 #pragma once
 
 // System Information
-#define SYSTEM_VERSION "1.8.1"
+#define SYSTEM_VERSION "1.9.0"
 #define DEVICE_NAME "Book32"
 
 // Offline management hotspot (SoftAP). When the device can't reach a known
