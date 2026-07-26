@@ -2,6 +2,7 @@
 #include "../../include/Config.h"
 #include "BatteryMgr.h"
 #include "AppMgr.h"
+#include "ButtonPressLogic.h"
 
 InputMgr::InputMgr() : btn(PIN_BUTTON, true, true), btnBack(PIN_BUTTON_BACK, true, true),
                        btnSleep(PIN_BUTTON_SLEEP, true, true) { // Active Low, Pullup
@@ -14,28 +15,33 @@ InputMgr& InputMgr::getInstance() {
 }
 
 void InputMgr::init() {
-    // Configure timing FIRST - ULTRA SNAPPY SETTINGS
-    btn.setDebounceMs(30);      // Reduced debounce (default 50ms)
+    // Configure timing FIRST - ULTRA SNAPPY SETTINGS.
+    // KEY3 is the one button actually driven by OneButton::tick(), so these
+    // settings take effect here. KEY1 and KEY2 are polled with digitalRead()
+    // and get their timing from ButtonPressLogic.h instead.
+    btn.setDebounceMs(BUTTON_DEBOUNCE_MIN_MS);
     btn.setClickMs(100);        // Very short click window - no waiting for double-click
-    btn.setPressMs(400);        // Faster long press detection (400ms)
+    btn.setPressMs(BUTTON_LONG_PRESS_MS);
 
     // Attach static handlers that trampoline to member functions
     btn.attachClick(staticClick, this);
     btn.attachLongPressStart(staticLongPress, this);
     // Double-click disabled for faster response
 
-    // KEY1 - dedicated Back button - Use long press for going to main menu
-    // Just set up debounce, don't attach handlers via OneButton
-    // We'll poll it manually for long press detection
-    btnBack.setDebounceMs(30);
-    btnBack.setPressMs(400);
+    // KEY1 - dedicated Back button - Use long press for going to main menu.
+    // No handlers attached and tick() is never called on it: the polling task
+    // reads the pin directly, so these setters are inert. They are kept only so
+    // the object is left in a consistent state if tick() is ever restored.
+    // Real debounce for KEY1 lives in classifyButtonRelease().
+    btnBack.setDebounceMs(BUTTON_DEBOUNCE_MIN_MS);
+    btnBack.setPressMs(BUTTON_LONG_PRESS_MS);
 
     // KEY2 - short click triggers a manual full display refresh; long press
     // enters standby. Standby stays on the long press so a brush against the
     // button never drops the device into deep sleep mid-page. Polled manually
     // for the same reason as KEY1.
-    btnSleep.setDebounceMs(30);
-    btnSleep.setPressMs(400);
+    btnSleep.setDebounceMs(BUTTON_DEBOUNCE_MIN_MS);
+    btnSleep.setPressMs(BUTTON_LONG_PRESS_MS);
     pinMode(PIN_BUTTON_SLEEP, INPUT_PULLUP);
 
     if (!_taskHandle) {
@@ -100,8 +106,9 @@ void InputMgr::inputTask(void* parameter) {
                 self->_btnBackPressTime = now;
                 self->_btnBackLongPressSent = false;
                 Serial.println("KEY1: Button pressed");
-            } else if (!self->_btnBackLongPressSent && (now - self->_btnBackPressTime) >= 400) {
-                // Long press threshold (400ms)
+            } else if (!self->_btnBackLongPressSent &&
+                       (now - self->_btnBackPressTime) >= BUTTON_LONG_PRESS_MS) {
+                // Long press threshold
                 Serial.println("INPUT: KEY1 Long Press -> GO TO MAIN MENU");
                 BatteryMgr::getInstance().resetIdleTimer();
                 self->enqueueAction(INPUT_GO_TO_MAIN_MENU);
@@ -112,9 +119,13 @@ void InputMgr::inputTask(void* parameter) {
             if (self->_btnBackPressTime != 0) {
                 unsigned long pressDuration = now - self->_btnBackPressTime;
                 Serial.printf("KEY1: Button released after %lu ms\n", pressDuration);
-                
-                // If long press wasn't already sent, and press was short, send INPUT_PREV (page up)
-                if (!self->_btnBackLongPressSent && pressDuration < 400) {
+
+                // Shared classifier: rejects contact bounce below the debounce
+                // floor, and releases where the long press already fired.
+                // Without the floor a rebound sent a second INPUT_PREV and the
+                // reader went back two pages on one press.
+                if (classifyButtonRelease(pressDuration, self->_btnBackLongPressSent) ==
+                    BUTTON_RELEASE_CLICK) {
                     Serial.println("INPUT: KEY1 Click -> PREV");
                     BatteryMgr::getInstance().resetIdleTimer();
                     self->enqueueAction(INPUT_PREV);
@@ -138,7 +149,7 @@ void InputMgr::inputTask(void* parameter) {
                 self->_btnSleepLongPressSent = false;
                 Serial.println("KEY2: Button pressed");
             } else if (!self->_btnSleepLongPressSent &&
-                       (now - self->_btnSleepPressTime) >= 400) {
+                       (now - self->_btnSleepPressTime) >= BUTTON_LONG_PRESS_MS) {
                 Serial.println("INPUT: KEY2 Long Press -> STANDBY");
                 self->_btnSleepLongPressSent = true;
                 self->enterStandby();  // Does not return: deep sleep
@@ -147,15 +158,16 @@ void InputMgr::inputTask(void* parameter) {
             if (self->_btnSleepPressTime != 0) {
                 unsigned long pressDuration = now - self->_btnSleepPressTime;
 
-                // The 30ms floor mirrors setDebounceMs(30): KEY2 is read with a
-                // bare digitalRead(), so OneButton's debounce never runs on it
-                // and contact bounce would otherwise cost a ~2s full refresh.
+                // Same shared classifier as KEY1. The debounce floor matters
+                // here because contact bounce would otherwise cost a ~2s full
+                // refresh.
                 //
-                // The _btnSleepLongPressSent guard is unreachable today because
-                // enterStandby() never returns, but it's kept so that making
-                // standby cancellable later can't produce a stray refresh on
-                // button release.
-                if (!self->_btnSleepLongPressSent && pressDuration >= 30) {
+                // The long-press branch of the classifier is unreachable for
+                // KEY2 today because enterStandby() never returns, but it's
+                // kept so that making standby cancellable later can't produce
+                // a stray refresh on button release.
+                if (classifyButtonRelease(pressDuration, self->_btnSleepLongPressSent) ==
+                    BUTTON_RELEASE_CLICK) {
                     Serial.printf("KEY2: Button released after %lu ms -> REFRESH\n", pressDuration);
                     BatteryMgr::getInstance().resetIdleTimer();
                     self->enqueueAction(INPUT_REFRESH);
