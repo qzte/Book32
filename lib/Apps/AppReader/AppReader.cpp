@@ -6,6 +6,8 @@
 #include "icon_reader.h"
 #include "Book32FS.h"
 #include "BookOrderLogic.h"
+#include "BookMeta.h"
+#include "ProgressStore.h"
 #include "WebMgr.h"
 #include <WiFi.h>
 #include <LittleFS.h>
@@ -14,8 +16,6 @@
 // titles render correctly in the library list.
 #include "Fonts/FreeSans.h"
 #include <map>
-
-static const char* READER_PROGRESS_PATH = "/reader_progress.json";
 
 static String normalizedBookName(const String& path) {
     String name = path;
@@ -50,29 +50,6 @@ static String titleFromFilename(String name) {
     name.replace('_', ' ');
     name.trim();
     return name;
-}
-
-static void loadBookMetadata(std::map<String, String>& metadata) {
-    metadata.clear();
-
-    File file;
-    if (SystemFS.exists("/books_meta.json")) {
-        file = SystemFS.open("/books_meta.json", "r");
-    } else if (EbookFS.exists("/books_meta.json")) {
-        file = EbookFS.open("/books_meta.json", "r");
-    }
-
-    if (!file) return;
-
-    DynamicJsonDocument doc(4096);
-    DeserializationError error = deserializeJson(doc, file);
-    file.close();
-    if (error || !doc.is<JsonObject>()) return;
-
-    JsonObject obj = doc.as<JsonObject>();
-    for (JsonPair pair : obj) {
-        metadata[String(pair.key().c_str())] = pair.value().as<String>();
-    }
 }
 
 struct LibraryDirtyRect {
@@ -158,19 +135,11 @@ AppReader::~AppReader() {
 }
 
 bool AppReader::hasBootResume() {
-    if (!EbookFS.exists(READER_PROGRESS_PATH)) return false;
-
-    File file = EbookFS.open(READER_PROGRESS_PATH, "r");
-    if (!file) return false;
-
-    DynamicJsonDocument doc(2048);
-    DeserializationError error = deserializeJson(doc, file);
-    file.close();
-    if (error) return false;
-
-    String lastBook = doc["lastBook"] | "";
-    if (lastBook.length() == 0 || !doc["resumeOnBoot"]) return false;
-    return EbookFS.exists(lastBook);
+    ProgressStore& store = ProgressStore::getInstance();
+    if (!store.resumeOnBoot()) return false;
+    String last = store.lastBook();
+    if (last.length() == 0) return false;
+    return findFilenameForOriginal(last).length() > 0;
 }
 
 void AppReader::resumeSavedBookOnStart() {
@@ -235,13 +204,33 @@ void AppReader::scanBooks() {
             // measures these bytes directly (bypassing FontMgr::drawText), and
             // the WebUI reads titles from books_meta.json, so UTF-8 is
             // preserved where it matters and collapsed where the display needs it.
-            entry.title = FontMgr::utf8ToLatin1(titleFromFilename(meta != metadata.end() ? meta->second : fileName));
+            entry.originalName = (meta != metadata.end()) ? meta->second : fileName;
+            entry.title = FontMgr::utf8ToLatin1(titleFromFilename(entry.originalName));
             _books.push_back(entry);
         }
         file.close();
         file = root.openNextFile();
     }
     root.close();
+
+    // v1.8.0: one read of the progress store for the whole library (not one
+    // per book), plus pruning of entries whose .epub is gone and clearing of
+    // `pending` for imported entries whose file has now arrived.
+    {
+        ProgressStore& store = ProgressStore::getInstance();
+        std::vector<String> present;
+        present.reserve(_books.size());
+        for (const auto& b : _books) present.push_back(b.originalName);
+        store.reconcile(present);
+
+        for (auto& b : _books) {
+            BookProgress p;
+            if (store.get(b.originalName, p)) {
+                b.hasProgress = true;
+                b.globalPage = p.globalPage;
+            }
+        }
+    }
 
     // v1.2.0: apply manual order from SystemFS /book_order.json.
     // Same merge rule as WebMgr's /api/books: ordered entries that still
@@ -395,9 +384,17 @@ bool AppReader::openBook(const String& path, bool restoreProgress) {
     int restoreChapter = 0;
     PagePointer restorePointer = {0, 0};
     int restorePage = 1;
-    bool restored = restoreProgress && loadBookProgress(path, restoreChapter, restorePointer, restorePage);
+    String progressKey = getOriginalFilename(normalizedBookName(path));
+    bool restored = restoreProgress && loadBookProgress(progressKey, restoreChapter, restorePointer, restorePage);
 
     loadChapter(restored ? restoreChapter : 0);
+    // The saved chapter can be gone (book replaced by a different edition), in
+    // which case loadChapter fell through to a later one: restoring a pointer
+    // from another chapter would land anywhere, so start that chapter clean.
+    if (restored && restoreChapter != _currentChapter) {
+        Serial.printf("AppReader: saved chapter %d unavailable, starting at %d\n",
+                      restoreChapter, _currentChapter);
+    }
     if (restored && restoreChapter == _currentChapter) {
         int maxNode = (int)_currentRichContent.size();
         if (restorePointer.nodeIndex >= 0 && restorePointer.nodeIndex <= maxNode && restorePointer.charOffset >= 0) {
@@ -414,92 +411,48 @@ bool AppReader::openBook(const String& path, bool restoreProgress) {
 }
 
 bool AppReader::openSavedProgress() {
-    if (!EbookFS.exists(READER_PROGRESS_PATH)) return false;
+    ProgressStore& store = ProgressStore::getInstance();
+    String last = store.lastBook();
+    if (last.length() == 0) return false;
 
-    File file = EbookFS.open(READER_PROGRESS_PATH, "r");
-    if (!file) return false;
+    // The stored key is the original (untruncated) name; map it back to the
+    // file actually on flash.
+    String filename = findFilenameForOriginal(last);
+    if (filename.length() == 0) return false;
 
-    DynamicJsonDocument doc(2048);
-    DeserializationError error = deserializeJson(doc, file);
-    file.close();
-    if (error) return false;
-
-    String lastBook = doc["lastBook"] | "";
-    if (lastBook.length() == 0 || !EbookFS.exists(lastBook)) return false;
-
-    return openBook(lastBook, true);
+    return openBook("/" + filename, true);
 }
 
-bool AppReader::loadBookProgress(const String& path, int& chapter, PagePointer& pointer, int& globalPage) {
-    if (!EbookFS.exists(READER_PROGRESS_PATH)) return false;
+bool AppReader::loadBookProgress(const String& originalName, int& chapter, PagePointer& pointer, int& globalPage) {
+    BookProgress saved;
+    if (!ProgressStore::getInstance().get(originalName, saved)) return false;
 
-    File file = EbookFS.open(READER_PROGRESS_PATH, "r");
-    if (!file) return false;
-
-    DynamicJsonDocument doc(4096);
-    DeserializationError error = deserializeJson(doc, file);
-    file.close();
-    if (error) return false;
-
-    JsonObject books = doc["books"].as<JsonObject>();
-    if (books.isNull() || !books.containsKey(path)) return false;
-
-    JsonObject saved = books[path];
-    chapter = saved["chapter"] | 0;
-    pointer.nodeIndex = saved["nodeIndex"] | 0;
-    pointer.charOffset = saved["charOffset"] | 0;
-    globalPage = saved["globalPage"] | 1;
+    chapter = saved.chapter;
+    pointer.nodeIndex = saved.nodeIndex;
+    pointer.charOffset = saved.charOffset;
+    globalPage = saved.globalPage;
     return true;
 }
 
 void AppReader::saveReadingProgress(bool resumeOnBoot) {
     if (_currentBookPath.length() == 0 || _state != VIEW_READING) return;
 
-    DynamicJsonDocument doc(4096);
-    if (EbookFS.exists(READER_PROGRESS_PATH)) {
-        File existing = EbookFS.open(READER_PROGRESS_PATH, "r");
-        if (existing) {
-            deserializeJson(doc, existing);
-            existing.close();
-        }
-    }
+    String key = getOriginalFilename(normalizedBookName(_currentBookPath));
+    if (key.length() == 0) return;
 
-    doc["lastBook"] = _currentBookPath;
-    doc["resumeOnBoot"] = resumeOnBoot;
-    JsonObject books = doc["books"].is<JsonObject>() ? doc["books"].as<JsonObject>() : doc.createNestedObject("books");
-    JsonObject saved = books[_currentBookPath].is<JsonObject>() ? books[_currentBookPath].as<JsonObject>() : books.createNestedObject(_currentBookPath);
-    saved["chapter"] = _currentChapter;
-    saved["nodeIndex"] = _currentPagePointer.nodeIndex;
-    saved["charOffset"] = _currentPagePointer.charOffset;
-    saved["globalPage"] = _globalPageNumber;
-    saved["updatedAt"] = millis();
+    BookProgress p;
+    p.chapter = _currentChapter;
+    p.nodeIndex = _currentPagePointer.nodeIndex;
+    p.charOffset = _currentPagePointer.charOffset;
+    p.globalPage = _globalPageNumber;
 
-    File file = EbookFS.open(READER_PROGRESS_PATH, FILE_WRITE);
-    if (file) {
-        serializeJson(doc, file);
-        file.close();
-    } else {
-        Serial.println("AppReader: Failed to save reading progress");
-    }
+    ProgressStore& store = ProgressStore::getInstance();
+    store.set(key, p);
+    store.setLast(key, resumeOnBoot);
 }
 
 void AppReader::markProgressInactive() {
-    if (!EbookFS.exists(READER_PROGRESS_PATH)) return;
-
-    File file = EbookFS.open(READER_PROGRESS_PATH, "r");
-    if (!file) return;
-
-    DynamicJsonDocument doc(4096);
-    DeserializationError error = deserializeJson(doc, file);
-    file.close();
-    if (error) return;
-
-    doc["resumeOnBoot"] = false;
-    File out = EbookFS.open(READER_PROGRESS_PATH, FILE_WRITE);
-    if (out) {
-        serializeJson(doc, out);
-        out.close();
-    }
+    ProgressStore::getInstance().setResumeOnBoot(false);
 }
 
 void AppReader::closeBook(bool markInactive) {
@@ -737,6 +690,16 @@ void AppReader::drawLibrary() {
                     drawTextWithFont(display, line.c_str(), textX, textY, titleFont, textColor);
                     textY += LINE_HEIGHT;
                     lineCount++;
+                }
+
+                // v1.8.0: saved position. No percentage: calculateTotalPages()
+                // is disabled (too slow on large books), so a percentage would
+                // be made up.
+                if (book.hasProgress) {
+                    char pageLabel[24];
+                    snprintf(pageLabel, sizeof(pageLabel), "pag. %d", book.globalPage);
+                    drawTextWithFont(display, pageLabel, textX, y + ITEM_HEIGHT - 22,
+                                     &FreeSans9pt8b, textColor);
                 }
 
                 y += ITEM_HEIGHT;

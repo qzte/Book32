@@ -93,6 +93,15 @@
                 </div>
 
                 <div class="card">
+                    <h3>Library State</h3>
+                    <p class="hint">Reading positions, book names and manual order. Does not include the .epub files.</p>
+                    <button class="btn secondary" onclick="exportLibraryState()">Export State</button>
+                    <input type="file" id="import-state-file" accept=".json,application/json" style="display:none" onchange="importLibraryState(this)">
+                    <button class="btn secondary" onclick="document.getElementById('import-state-file').click()">Import State</button>
+                    <div id="library-state-status" class="status-msg"></div>
+                </div>
+
+                <div class="card">
                     <h3>Upload Book</h3>
                     <p class="hint">Upload EPUB books directly</p>
                     <input type="file" id="book-file" accept=".epub,.ttf">

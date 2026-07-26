@@ -443,6 +443,87 @@ function resetReaderProgress() {
         });
 }
 
+// === Library State (v1.8.0) ===
+// Export/import of reading progress + book metadata + manual order.
+function exportLibraryState() {
+    const status = document.getElementById('library-state-status');
+    status.style.color = '';
+    status.textContent = 'Preparing export...';
+
+    fetch('/api/library/export')
+        .then(response => {
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            return response.blob();
+        })
+        .then(blob => {
+            // The device has no RTC, so the date in the filename comes from the
+            // browser.
+            const stamp = new Date().toISOString().slice(0, 10);
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `book32-state-${stamp}.json`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+            status.textContent = 'State exported.';
+            status.style.color = 'green';
+            setTimeout(() => status.textContent = '', 4000);
+        })
+        .catch(error => {
+            console.error('Export failed', error);
+            status.textContent = 'Export failed.';
+            status.style.color = 'red';
+        });
+}
+
+function importLibraryState(input) {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    input.value = '';  // allow re-picking the same file after a failure
+
+    const status = document.getElementById('library-state-status');
+    status.style.color = '';
+
+    // The device caps the bundle at 64 KB; fail here rather than after the
+    // upload. The server remains the authority.
+    if (file.size > 64 * 1024) {
+        status.textContent = 'File too large (limit 64 KB).';
+        status.style.color = 'red';
+        return;
+    }
+    if (!confirm('Import reading state? For each book the furthest-ahead page wins.')) return;
+
+    status.textContent = 'Importing...';
+
+    const form = new FormData();
+    form.append('state', file, file.name);
+
+    fetch('/api/library/import', { method: 'POST', body: form, credentials: 'include' })
+        .then(response => response.json().then(body => ({ ok: response.ok, body })))
+        .then(({ ok, body }) => {
+            if (!ok || body.status !== 'ok') {
+                status.textContent = 'Import failed: ' + (body.message || 'unknown error');
+                status.style.color = 'red';
+                return;
+            }
+            let msg = `${body.merged} updated, ${body.added} added, ${body.skipped} already ahead`;
+            if (body.pending > 0) {
+                msg += `. ${body.pending} waiting for the .epub to be uploaded`;
+            }
+            status.textContent = msg + '.';
+            status.style.color = 'green';
+            getReaderProgress();
+            fetchBooks();
+        })
+        .catch(error => {
+            console.error('Import failed', error);
+            status.textContent = 'Connection error.';
+            status.style.color = 'red';
+        });
+}
+
 // === Sleep Settings ===
 function getSleepSettings() {
     fetch('/api/settings/sleep')

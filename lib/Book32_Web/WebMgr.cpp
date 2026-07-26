@@ -7,19 +7,20 @@
 #include <LittleFS.h>
 #include <esp_partition.h>
 #include <vector>
+#include <map>
 #include "../Book32_Core/Book32FS.h"
 #include "../Book32_Core/FileExt.h"
 #include "../Book32_Core/SafeName.h"
 #include "../Book32_Core/UploadGuard.h"
 #include "../Book32_Core/DeviceCred.h"
 #include "../Book32_Core/BookOrderLogic.h"
+#include "../Book32_Core/BookMeta.h"
+#include "../Book32_Core/ProgressStore.h"
 #include "../Book32_Update/GitHubMgr.h"
 #include "../Book32_Core/BatteryMgr.h"
 #include "../Book32_Core/AppMgr.h"
 #include "../Book32_Core/DisplayMgr.h"
 #include "../../include/Config.h"
-
-static const char* READER_PROGRESS_PATH = "/reader_progress.json";
 
 // v1.5.0 (security): HTTP Basic Auth.
 //
@@ -310,32 +311,6 @@ void WebMgr::update() {
     }
 }
 
-// Helper: Save original filename to metadata
-void saveBookMetadata(const String& truncatedName, const String& originalName) {
-    DynamicJsonDocument doc(4096);
-    
-    File metaFile = SystemFS.open("/books_meta.json", FILE_READ);
-    if (metaFile) {
-        DeserializationError error = deserializeJson(doc, metaFile);
-        metaFile.close();
-        if (error) {
-            Serial.println("Failed to parse metadata, creating new");
-            doc.clear();
-        }
-    }
-    
-    doc[truncatedName] = originalName;
-    
-    metaFile = SystemFS.open("/books_meta.json", FILE_WRITE);
-    if (metaFile) {
-        serializeJson(doc, metaFile);
-        metaFile.close();
-        Serial.printf("Saved metadata: %s -> %s\n", truncatedName.c_str(), originalName.c_str());
-    } else {
-        Serial.println("Failed to save metadata");
-    }
-}
-
 // === Manual book ordering (v1.2.0) ===
 // Order persisted in SystemFS /book_order.json as {"order":["a.epub","b.epub"]}.
 // Merge rule: files present in the order list come first (in list order);
@@ -413,73 +388,9 @@ static String jsonEscape(const String& s) {
     return out;
 }
 
-String getOriginalFilename(const String& truncatedName) {
-    File metaFile = SystemFS.open("/books_meta.json", FILE_READ);
-    if (!metaFile) {
-        return truncatedName;
-    }
-    
-    DynamicJsonDocument doc(4096);
-    DeserializationError error = deserializeJson(doc, metaFile);
-    metaFile.close();
-    
-    if (error) {
-        return truncatedName;
-    }
-    
-    if (doc.containsKey(truncatedName)) {
-        return doc[truncatedName].as<String>();
-    }
-    return truncatedName;
-}
-
-void removeBookMetadata(const String& truncatedName) {
-    File metaFile = SystemFS.open("/books_meta.json", FILE_READ);
-    if (!metaFile) return;
-    
-    DynamicJsonDocument doc(4096);
-    DeserializationError error = deserializeJson(doc, metaFile);
-    metaFile.close();
-    
-    if (error) return;
-    
-    doc.remove(truncatedName);
-    
-    metaFile = SystemFS.open("/books_meta.json", FILE_WRITE);
-    if (metaFile) {
-        serializeJson(doc, metaFile);
-        metaFile.close();
-    }
-}
-
+// v1.8.0: progress lives behind ProgressStore, keyed by original filename.
 void removeBookProgress(const String& filename) {
-    if (!EbookFS.exists(READER_PROGRESS_PATH)) return;
-
-    File file = EbookFS.open(READER_PROGRESS_PATH, "r");
-    if (!file) return;
-
-    DynamicJsonDocument doc(4096);
-    DeserializationError error = deserializeJson(doc, file);
-    file.close();
-    if (error) return;
-
-    String path = "/" + filename;
-    JsonObject books = doc["books"].as<JsonObject>();
-    if (!books.isNull()) {
-        books.remove(path);
-    }
-
-    String lastBook = doc["lastBook"] | "";
-    if (lastBook == path) {
-        doc["lastBook"] = "";
-        doc["resumeOnBoot"] = false;
-    }
-
-    File out = EbookFS.open(READER_PROGRESS_PATH, FILE_WRITE);
-    if (out) {
-        serializeJson(doc, out);
-        out.close();
-    }
+    ProgressStore::getInstance().remove(getOriginalFilename(filename));
 }
 
 // Estado de um upload em curso. Partilhado entre o body handler (que decide) e
@@ -511,6 +422,107 @@ struct UploadState {
 };
 
 static UploadState g_uploadState;
+
+// === Library state import (v1.8.0) ===
+static const char* IMPORT_TMP_PATH = "/import.tmp";
+static const size_t IMPORT_MAX_BYTES = 64 * 1024;
+
+// Single-flight, same reasoning as the ebook upload: LittleFS is a single
+// writer and the state is global.
+struct ImportState {
+    AsyncWebServerRequest* owner = nullptr;
+    File file;
+    size_t size = 0;
+    bool received = false;
+    bool tooBig = false;
+
+    void reset() {
+        if (file) file.close();
+        owner = nullptr;
+        size = 0;
+        received = false;
+        tooBig = false;
+    }
+};
+
+static ImportState g_importState;
+
+struct ImportOutcome {
+    bool ok = false;
+    ImportReport report;
+    int metaAdded = 0;
+    bool orderApplied = false;
+    String error;
+};
+
+static ImportOutcome applyImportBundle(const char* path) {
+    ImportOutcome outcome;
+
+    File f = EbookFS.open(path, FILE_READ);
+    if (!f) {
+        outcome.error = "ficheiro temporario ilegivel";
+        return outcome;
+    }
+
+    DynamicJsonDocument doc(f.size() * 2 + 2048);
+    DeserializationError err = deserializeJson(doc, f);
+    f.close();
+    if (err) {
+        outcome.error = String("JSON invalido: ") + err.c_str();
+        return outcome;
+    }
+
+    // An unrecognised schema is refused whole: half-applying a bundle written
+    // by a future firmware would be worse than rejecting it.
+    int schema = doc["book32"]["schema"] | 0;
+    if (!isSupportedSchema(schema)) {
+        outcome.error = "schema do bundle nao suportado";
+        return outcome;
+    }
+
+    outcome.report = ProgressStore::getInstance().applyImportedJson(
+        doc["progress"].as<JsonObjectConst>());
+    if (!outcome.report.ok) {
+        outcome.error = outcome.report.error;
+        return outcome;
+    }
+
+    // Metadata is only applied to files that exist here and have no entry yet:
+    // importing another device's mapping for absent files would invent wrong
+    // associations.
+    JsonObjectConst meta = doc["meta"].as<JsonObjectConst>();
+    if (!meta.isNull()) {
+        std::map<String, String> local;
+        loadBookMetadata(local);
+        for (JsonPairConst kv : meta) {
+            String original = kv.value().as<String>();
+            if (original.length() == 0) continue;
+            String filename = findFilenameForOriginal(original);
+            if (filename.length() == 0) continue;
+            if (local.find(filename) != local.end()) continue;
+            saveBookMetadata(filename, original);
+            outcome.metaAdded++;
+        }
+    }
+
+    // Order arrives as original names; store it as local filenames, dropping
+    // books that are not on this device.
+    JsonArrayConst order = doc["order"].as<JsonArrayConst>();
+    if (!order.isNull()) {
+        std::vector<String> localOrder;
+        for (JsonVariantConst v : order) {
+            String filename = findFilenameForOriginal(v.as<String>());
+            if (filename.length() > 0) localOrder.push_back(filename);
+        }
+        if (!localOrder.empty()) {
+            saveBookOrder(localOrder);
+            outcome.orderApplied = true;
+        }
+    }
+
+    outcome.ok = true;
+    return outcome;
+}
 
 void WebMgr::setupEndpoints() {
     // API: Status
@@ -957,31 +969,18 @@ void WebMgr::setupEndpoints() {
         AsyncResponseStream *response = request->beginResponseStream("application/json");
         DynamicJsonDocument doc(1024);
 
-        doc["exists"] = false;
-        doc["resumeOnBoot"] = false;
+        ProgressStore& store = ProgressStore::getInstance();
+        String last = store.lastBook();
 
-        if (EbookFS.exists(READER_PROGRESS_PATH)) {
-            File file = EbookFS.open(READER_PROGRESS_PATH, "r");
-            if (file) {
-                DynamicJsonDocument savedDoc(4096);
-                DeserializationError error = deserializeJson(savedDoc, file);
-                file.close();
+        doc["exists"] = last.length() > 0;
+        doc["lastBook"] = last;
+        doc["displayName"] = last;   // v1.8.0: the key already is the original name
+        doc["resumeOnBoot"] = store.resumeOnBoot();
 
-                if (!error) {
-                    String lastBook = savedDoc["lastBook"] | "";
-                    doc["exists"] = lastBook.length() > 0;
-                    doc["lastBook"] = lastBook;
-                    doc["displayName"] = lastBook.length() > 1 ? getOriginalFilename(lastBook.substring(1)) : "";
-                    doc["resumeOnBoot"] = savedDoc["resumeOnBoot"] | false;
-
-                    JsonObject books = savedDoc["books"].as<JsonObject>();
-                    if (!books.isNull() && books.containsKey(lastBook)) {
-                        JsonObject progress = books[lastBook];
-                        doc["chapter"] = progress["chapter"] | 0;
-                        doc["page"] = progress["globalPage"] | 1;
-                    }
-                }
-            }
+        BookProgress p;
+        if (last.length() > 0 && store.get(last, p)) {
+            doc["chapter"] = p.chapter;
+            doc["page"] = p.globalPage;
         }
 
         serializeJson(doc, *response);
@@ -991,14 +990,148 @@ void WebMgr::setupEndpoints() {
     // API: Reader Progress - DELETE
     server->on("/api/reader/progress", HTTP_DELETE, [](AsyncWebServerRequest *request) {
         if (!requireAuth(request)) return;
-        if (EbookFS.exists(READER_PROGRESS_PATH)) {
-            if (!EbookFS.remove(READER_PROGRESS_PATH)) {
-                request->send(500, "application/json", "{\"status\":\"error\",\"message\":\"Failed to reset progress\"}");
-                return;
-            }
-        }
+        ProgressStore::getInstance().clearAll();
         request->send(200, "application/json", "{\"status\":\"ok\"}");
     });
+
+    // API (v1.8.0): Export library state — reading progress, original-name
+    // metadata and the manual order. No .epub files: those go through /send.
+    //
+    // Keyed by original filename throughout, so importing on a device that
+    // truncated the names differently still matches the right books.
+    //
+    // Left unauthenticated, like /api/books and the progress GET: it exposes
+    // nothing those two do not already expose.
+    server->on("/api/library/export", HTTP_GET, [](AsyncWebServerRequest *request) {
+        std::map<String, String> metadata;
+        loadBookMetadata(metadata);
+
+        std::vector<String> order;
+        loadBookOrder(order);
+
+        // Sized from the actual entry counts rather than a fixed buffer — the
+        // same lesson as the /api/books truncation fixed in v1.2.0.
+        size_t capacity = 1024
+                        + ProgressStore::getInstance().count() * 224
+                        + metadata.size() * 160
+                        + order.size() * 96;
+        DynamicJsonDocument doc(capacity);
+
+        JsonObject header = doc.createNestedObject("book32");
+        header["schema"] = PROGRESS_SCHEMA_CURRENT;
+        header["version"] = SYSTEM_VERSION;
+
+        ProgressStore::getInstance().fillExportJson(doc.createNestedObject("progress"));
+
+        JsonObject meta = doc.createNestedObject("meta");
+        for (const auto& kv : metadata) {
+            // key = original name, value = original name, so the bundle stays
+            // readable on a device that truncates differently.
+            meta[kv.second] = kv.second;
+        }
+
+        JsonArray arr = doc.createNestedArray("order");
+        for (const String& filename : order) arr.add(getOriginalFilename(filename));
+
+        AsyncResponseStream *response = request->beginResponseStream("application/json");
+        response->addHeader("Content-Disposition", "attachment; filename=\"book32-state.json\"");
+        serializeJson(doc, *response);
+        request->send(response);
+    });
+
+    // API (v1.8.0): Import library state.
+    //
+    // Streamed to a temp file instead of AsyncCallbackJsonWebHandler: that
+    // handler buffers the whole body in RAM before the callback runs, and a
+    // library-sized bundle risks exhausting the heap mid-request.
+    server->on("/api/library/import", HTTP_POST,
+        [](AsyncWebServerRequest *request) {
+            if (!requireAuth(request)) return;
+
+            if (g_importState.owner != nullptr && g_importState.owner != request) {
+                request->send(409, "application/json",
+                              "{\"status\":\"error\",\"message\":\"import em curso\"}");
+                return;
+            }
+            if (g_importState.tooBig) {
+                g_importState.reset();
+                request->send(413, "application/json",
+                              "{\"status\":\"error\",\"message\":\"bundle acima de 64 KB\"}");
+                return;
+            }
+            if (!g_importState.received) {
+                g_importState.reset();
+                request->send(400, "application/json",
+                              "{\"status\":\"error\",\"message\":\"nenhum ficheiro recebido\"}");
+                return;
+            }
+
+            ImportOutcome outcome = applyImportBundle(IMPORT_TMP_PATH);
+            g_importState.reset();
+            EbookFS.remove(IMPORT_TMP_PATH);
+
+            if (!outcome.ok) {
+                AsyncResponseStream *r = request->beginResponseStream("application/json");
+                DynamicJsonDocument doc(256);
+                doc["status"] = "error";
+                doc["message"] = outcome.error;
+                serializeJson(doc, *r);
+                request->send(r);
+                return;
+            }
+
+            AsyncResponseStream *response = request->beginResponseStream("application/json");
+            DynamicJsonDocument doc(256);
+            doc["status"] = "ok";
+            doc["merged"] = outcome.report.merged;
+            doc["added"] = outcome.report.added;
+            doc["pending"] = outcome.report.pending;
+            doc["skipped"] = outcome.report.skipped;
+            doc["orderApplied"] = outcome.orderApplied;
+            doc["metaAdded"] = outcome.metaAdded;
+            serializeJson(doc, *response);
+            request->send(response);
+        },
+        [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
+            // The body handler runs before the response handler, so it must
+            // reject unauthenticated requests itself or we would write to flash
+            // before sending the 401.
+            if (!request->authenticate(BOOK32_AUTH_USER, WebMgr::devicePassword())) return;
+
+            if (index == 0) {
+                if (g_importState.owner != nullptr && g_importState.owner != request) return;
+                g_importState.reset();
+                g_importState.owner = request;
+
+                request->onDisconnect([request]() {
+                    if (g_importState.owner == request) {
+                        if (g_importState.file) g_importState.file.close();
+                        EbookFS.remove(IMPORT_TMP_PATH);
+                        g_importState.reset();
+                    }
+                });
+
+                EbookFS.remove(IMPORT_TMP_PATH);
+                g_importState.file = EbookFS.open(IMPORT_TMP_PATH, FILE_WRITE);
+            }
+
+            if (g_importState.owner != request) return;
+
+            g_importState.size += len;
+            if (g_importState.size > IMPORT_MAX_BYTES) {
+                g_importState.tooBig = true;
+                if (g_importState.file) g_importState.file.close();
+                EbookFS.remove(IMPORT_TMP_PATH);
+                return;
+            }
+
+            if (g_importState.file && len) g_importState.file.write(data, len);
+
+            if (final) {
+                if (g_importState.file) g_importState.file.close();
+                g_importState.received = !g_importState.tooBig;
+            }
+        });
 
     // API: Sleep Settings - GET
     server->on("/api/settings/sleep", HTTP_GET, [](AsyncWebServerRequest *request) {

@@ -14,8 +14,13 @@ enum ReaderState {
 };
 
 struct BookEntry {
-    String path;  // Full path to file
-    String title; // Display title
+    String path;         // Full path to file
+    String title;        // Display title
+    String originalName; // v1.8.0: key used by ProgressStore (original filename)
+    bool hasProgress;    // v1.8.0: true when a saved position exists
+    int globalPage;      // v1.8.0: saved page, shown in the library list
+
+    BookEntry() : hasProgress(false), globalPage(1) {}
 };
 
 class AppReader : public App {
@@ -93,7 +98,8 @@ private:
     
     bool openBook(const String& path, bool restoreProgress = true);
     bool openSavedProgress();
-    bool loadBookProgress(const String& path, int& chapter, PagePointer& pointer, int& globalPage);
+    // v1.8.0: keyed by original filename via ProgressStore, not by path.
+    bool loadBookProgress(const String& originalName, int& chapter, PagePointer& pointer, int& globalPage);
     void saveReadingProgress(bool resumeOnBoot);
     void markProgressInactive();
     void closeBook(bool markInactive = true);

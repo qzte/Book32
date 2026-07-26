@@ -1,3 +1,10 @@
 Auto Scroll, a hands-free mode that scrolls the page for you at an adjustable pace, use key2 to open a menu adjuste the pace of the scroll. 5 tipes of speed if possible 
 adicionar um menu de configuração similar ao do webserver 
 usar a key2 para standby
+
+=== v1.8.0 — a verificar no dispositivo (nao coberto pelos testes de host) ===
+Atomicidade do .tmp + rename do reader_progress.json (cortar energia a meio de um virar de pagina).
+Tecto de 64 KB no POST /api/library/import (deve responder 413, nao 500).
+Poda no scanBooks(): apagar um .epub fora da web UI e confirmar que a entrada desaparece.
+Importar o estado ANTES de enviar os .epub: as entradas ficam pending e sobrevivem ao scan seguinte.
+Migracao v1->v2: gravar um reader_progress.json antigo (chaves com "/") e confirmar que as posicoes se mantem.
