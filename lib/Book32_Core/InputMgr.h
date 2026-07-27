@@ -44,6 +44,12 @@ private:
     unsigned long _btnBackPressTime = 0;
     bool _btnBackLongPressSent = false;
 
+    // v1.9.1 diagnostics: last raw snapshot of the three button pins, so the
+    // polling task only logs on an edge instead of every 5ms tick.
+    // bit0 = KEY1/PIN_BUTTON_BACK, bit1 = KEY2/PIN_BUTTON_SLEEP,
+    // bit2 = KEY3/PIN_BUTTON. 0xFF = nothing sampled yet.
+    uint8_t _lastPinSnapshot = 0xFF;
+
     // KEY2 manual tracking (manual polling, same pattern as KEY1, so both
     // buttons behave identically rather than mixing OneButton callbacks in)
     unsigned long _btnSleepPressTime = 0;

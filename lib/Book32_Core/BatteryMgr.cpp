@@ -125,8 +125,12 @@ void BatteryMgr::update() {
         unsigned long idleTime = now - _lastActivityTime;
         unsigned long timeoutMs = (unsigned long)_sleepTimeoutMinutes * 60 * 1000;
         if (idleTime >= timeoutMs) {
+            // v1.9.1 diagnostics: distinguishes this path from the KEY2
+            // long press in the serial log.
+            Serial.printf("SLEEPDIAG: path=IDLE_TIMEOUT  idle=%lums  timeout=%lums\n",
+                          idleTime, timeoutMs);
             Serial.printf("Idle timeout reached (%d minutes). Entering sleep...\n", _sleepTimeoutMinutes);
-            enterIdleSleep();
+            enterIdleSleep("idle_timeout");
         }
     }
 }
@@ -297,7 +301,13 @@ void BatteryMgr::resetIdleTimer() {
     _lastActivityTime = millis();
 }
 
-void BatteryMgr::enterIdleSleep() {
+// Signature must match the declaration in BatteryMgr.h, which carries the
+// default argument (a default may only appear in the declaration).
+void BatteryMgr::enterIdleSleep(const char* reason) {
+    // v1.9.1 diagnostics: single funnel for both sleep paths. The reason
+    // string identifies which caller decided to sleep.
+    Serial.printf("SLEEPDIAG: enterIdleSleep() reached  reason=%s\n",
+                  reason ? reason : "null");
     Serial.println("Entering idle sleep...");
     Serial.printf("Sleep message: %s\n", _sleepMessage.c_str());
     Serial.flush();

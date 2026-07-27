@@ -92,6 +92,27 @@ void InputMgr::inputTask(void* parameter) {
     while (true) {
         self->btn.tick();
         // btnBack.tick() removed - using manual polling instead
+
+        // v1.9.1 diagnostics (PINDIAG). A user reported KEY1 and KEY3 entering
+        // standby, but no code path in this file connects those buttons to
+        // sleep: standby is only reached from the KEY2 long press below, and
+        // idle sleep only from BatteryMgr's timeout. Before changing any
+        // behaviour we need to see what the pins actually read, so log a raw
+        // snapshot of all three on every edge. 1 = released (pull-up),
+        // 0 = pressed (active low).
+        {
+            uint8_t snapshot = (uint8_t)((digitalRead(PIN_BUTTON_BACK)  ? 0x01 : 0) |
+                                         (digitalRead(PIN_BUTTON_SLEEP) ? 0x02 : 0) |
+                                         (digitalRead(PIN_BUTTON)       ? 0x04 : 0));
+            if (snapshot != self->_lastPinSnapshot) {
+                self->_lastPinSnapshot = snapshot;
+                Serial.printf("PINDIAG: KEY1/GPIO%d=%d  KEY2/GPIO%d=%d  KEY3/GPIO%d=%d\n",
+                              PIN_BUTTON_BACK,  (snapshot & 0x01) ? 1 : 0,
+                              PIN_BUTTON_SLEEP, (snapshot & 0x02) ? 1 : 0,
+                              PIN_BUTTON,       (snapshot & 0x04) ? 1 : 0);
+            }
+        }
+
         
         // Manual KEY1 long press detection (PIN_BUTTON_BACK)
         // Read the button state directly
@@ -183,6 +204,15 @@ void InputMgr::inputTask(void* parameter) {
 }
 
 void InputMgr::enterStandby() {
+    // v1.9.1 diagnostics: record which pins were actually held at the moment
+    // standby was decided. If KEY2/GPIO3 reads 1 (released) here, the LOW that
+    // triggered the long press was transient or came from another pin.
+    Serial.printf("SLEEPDIAG: path=KEY2_LONG_PRESS  KEY1/GPIO%d=%d  KEY2/GPIO%d=%d  KEY3/GPIO%d=%d\n",
+                  PIN_BUTTON_BACK,  digitalRead(PIN_BUTTON_BACK),
+                  PIN_BUTTON_SLEEP, digitalRead(PIN_BUTTON_SLEEP),
+                  PIN_BUTTON,       digitalRead(PIN_BUTTON));
+    Serial.flush();
+
     // Give the active app a chance to persist state first. The reader already
     // saves progress on stop(); the settings menu would otherwise lose an
     // unsaved draft to the deep sleep reset.
@@ -195,7 +225,7 @@ void InputMgr::enterStandby() {
     // Reuses the existing idle-sleep path: e-ink message, ext0 wake on KEY3,
     // then deep sleep. Wake still happens on KEY3 because ext0 supports a
     // single pin; adding KEY2 would require switching to ext1 with a pin mask.
-    BatteryMgr::getInstance().enterIdleSleep();
+    BatteryMgr::getInstance().enterIdleSleep("key2_long_press");
 }
 
 void InputMgr::enqueueAction(InputAction action) {

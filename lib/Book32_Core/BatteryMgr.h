@@ -35,7 +35,10 @@ public:
     // Idle sleep management
     void loadSleepSettings();             // Load from EbookFS
     void resetIdleTimer();                // Call when user interacts
-    void enterIdleSleep();                // Display message and sleep
+    // reason: etiqueta do caminho que pediu o sleep ("IDLE-TIMEOUT",
+    // "KEY2-LONGPRESS", ...). Fica no log imediatamente antes do deep sleep, o
+    // que permite distinguir no serial qual dos caminhos disparou.
+    void enterIdleSleep(const char* reason = "unspecified");
 
     // Status indicator on e-ink display (partial update)
     void drawStatusIndicator();           // Draw charging indicator if state changed
