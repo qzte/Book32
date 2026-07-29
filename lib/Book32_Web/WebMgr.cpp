@@ -352,6 +352,45 @@ static void applyBookOrder(const std::vector<String>& order, std::vector<String>
         [](const String& item, const String& key) { return item == key; });
 }
 
+static String jsonEscape(const String& s);
+
+// Diagnóstico (/api/fs): percorre a partição inteira, não só os ficheiros que
+// /api/books mostra. O indicador de espaço vem de usedBytes(), que conta tudo —
+// covers órfãos, .part em subpastas, import.tmp — por isso a lista de livros
+// pode mostrar 3 entradas com a partição quase cheia.
+//
+// A recursão fecha o handle do directório antes de descer: o LittleFS do ESP32
+// tem poucos handles simultâneos e uma árvore funda esgotava-os.
+static void streamFsTree(AsyncResponseStream* out, fs::FS& fs, const String& dir,
+                         uint8_t depth, bool& first, size_t& totalSize, size_t& count) {
+    File root = fs.open(dir);
+    if (!root) return;
+    if (!root.isDirectory()) { root.close(); return; }
+
+    std::vector<String> subdirs;
+    File f = root.openNextFile();
+    while (f) {
+        String path = f.path();
+        if (f.isDirectory()) {
+            if (depth) subdirs.push_back(path);
+        } else {
+            size_t sz = f.size();
+            totalSize += sz;
+            count++;
+            if (!first) out->print(",");
+            first = false;
+            out->printf("{\"path\":\"%s\",\"size\":%u}", jsonEscape(path).c_str(), (unsigned)sz);
+        }
+        f.close();
+        f = root.openNextFile();
+    }
+    root.close();
+
+    for (const String& sub : subdirs) {
+        streamFsTree(out, fs, sub, depth - 1, first, totalSize, count);
+    }
+}
+
 // Minimal JSON string escaping for streaming serialization.
 static String jsonEscape(const String& s) {
     String out;
@@ -542,6 +581,39 @@ void WebMgr::setupEndpoints() {
         doc["systemFree"] = SystemFS.totalBytes() - SystemFS.usedBytes();
 
         serializeJson(doc, *response);
+        request->send(response);
+    });
+
+    // API: diagnóstico de armazenamento. Lista *todos* os ficheiros das duas
+    // partições com o tamanho real, ao contrário de /api/books, que só mostra
+    // .epub e .ttf na raiz. `used` menos `accounted` é o custo de metadados e
+    // arredondamento do LittleFS; uma diferença grande entre `accounted` e o
+    // que se vê na lista de livros é espaço preso em ficheiros órfãos.
+    server->on("/api/fs", HTTP_GET, [](AsyncWebServerRequest *request) {
+        AsyncResponseStream *response = request->beginResponseStream("application/json");
+
+        struct Target { const char* key; fs::FS* fs; size_t used; size_t total; };
+        Target targets[] = {
+            { "ebooks", &EbookFS,  EbookFS.usedBytes(),  EbookFS.totalBytes()  },
+            { "system", &SystemFS, SystemFS.usedBytes(), SystemFS.totalBytes() },
+        };
+
+        response->print("{");
+        bool firstTarget = true;
+        for (Target& t : targets) {
+            if (!firstTarget) response->print(",");
+            firstTarget = false;
+            response->printf("\"%s\":{\"total\":%u,\"used\":%u,\"files\":[",
+                             t.key, (unsigned)t.total, (unsigned)t.used);
+            bool first = true;
+            size_t accounted = 0;
+            size_t count = 0;
+            streamFsTree(response, *t.fs, "/", 4, first, accounted, count);
+            response->printf("],\"accounted\":%u,\"fileCount\":%u}",
+                             (unsigned)accounted, (unsigned)count);
+        }
+        response->print("}");
+
         request->send(response);
     });
 
