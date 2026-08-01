@@ -405,7 +405,10 @@ bool AppReader::openBook(const String& path, bool restoreProgress) {
     }
 
     _state = VIEW_READING;
+    // Abrir um livro grava já: é o que marca o livro como "último aberto" para
+    // o resume no arranque, e acontece uma vez por livro, não por página.
     saveReadingProgress(true);
+    flushProgress();
     _needsRedraw = true;
     return true;
 }
@@ -437,6 +440,18 @@ bool AppReader::loadBookProgress(const String& originalName, int& chapter, PageP
 void AppReader::saveReadingProgress(bool resumeOnBoot) {
     if (_currentBookPath.length() == 0 || _state != VIEW_READING) return;
 
+    // Só marca; quem grava é flushProgress().
+    _progressDirty = true;
+    _progressResumeOnBoot = resumeOnBoot;
+    _lastProgressChangeMs = millis();
+}
+
+void AppReader::flushProgress() {
+    if (!_progressDirty) return;
+    _progressDirty = false;
+
+    if (_currentBookPath.length() == 0 || _state != VIEW_READING) return;
+
     String key = getOriginalFilename(normalizedBookName(_currentBookPath));
     if (key.length() == 0) return;
 
@@ -448,7 +463,7 @@ void AppReader::saveReadingProgress(bool resumeOnBoot) {
 
     ProgressStore& store = ProgressStore::getInstance();
     store.set(key, p);
-    store.setLast(key, resumeOnBoot);
+    store.setLast(key, _progressResumeOnBoot);
 }
 
 void AppReader::markProgressInactive() {
@@ -459,6 +474,10 @@ void AppReader::closeBook(bool markInactive) {
     if (markInactive && _state == VIEW_READING) {
         saveReadingProgress(false);
     }
+    // Fechar o livro é o momento em que a posição diferida tem mesmo de ir
+    // para o flash: a seguir o estado da página desaparece. Cobre também o
+    // standby e o regresso ao menu, que passam por stop().
+    flushProgress();
     if (_epubLoader) { _epubLoader->close(); delete _epubLoader; _epubLoader = nullptr; }
     if (_textRenderer) { delete _textRenderer; _textRenderer = nullptr; }
     _pageHistory.clear(); _chapterPageCounts.clear(); _totalBookPages = 0;
@@ -759,6 +778,13 @@ void AppReader::drawReading() {
 
 void AppReader::update() {
     // Library rendering is static unless input changes selection.
+
+    // Commit a deferred reading position once the page has been still for a
+    // while. Page turns only mark it dirty (see saveReadingProgress), so a
+    // burst of turns costs one write instead of one per page.
+    if (_progressDirty && (millis() - _lastProgressChangeMs) >= PROGRESS_FLUSH_DELAY_MS) {
+        flushProgress();
+    }
 }
 
 void AppReader::applyFontSize(int pt) {

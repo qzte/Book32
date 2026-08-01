@@ -144,5 +144,17 @@ void loop() {
     AppMgr::getInstance().draw();  // Trigger app rendering
     WebMgr::getInstance().update();
     BatteryMgr::getInstance().update();  // Check charging state and critical battery
-    BatteryMgr::getInstance().drawStatusIndicator();  // Update charging indicator on e-ink (partial)
+
+    // Charging indicator (partial refresh, top-right). Apps that own the whole
+    // screen opt out — in the reader this used to land on top of the page text.
+    App* currentApp = AppMgr::getInstance().getCurrentApp();
+    if (!currentApp || currentApp->allowsSystemStatusIndicator()) {
+        BatteryMgr::getInstance().drawStatusIndicator();
+    }
+
+    // Yield a tick: without it this loop never blocks, the idle task on this
+    // core is starved and the CPU stays pinned at 100% (which the battery
+    // pays for). Input arrives through its own task and its own queue, so
+    // this costs no responsiveness.
+    delay(1);
 }

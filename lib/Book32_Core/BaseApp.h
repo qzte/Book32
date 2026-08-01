@@ -27,6 +27,12 @@ public:
     virtual void applyFontSize(int pt) {}
     virtual void applyFontFamily(int family) {}
 
+    // O indicador de bateria do sistema faz um refresh parcial no canto
+    // superior direito, a partir do loop principal e sem passar pelo app.
+    // Ecrãs que ocupam a área toda (a página do leitor) devolvem false para
+    // que não lhes apareça um ícone por cima do conteúdo.
+    virtual bool allowsSystemStatusIndicator() { return true; }
+
     // Metadata
     virtual const char* getName() = 0;
     // Returns font icon char (if using font) or empty
