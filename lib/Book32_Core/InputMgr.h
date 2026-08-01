@@ -72,7 +72,19 @@ private:
 
     // Handled inside InputMgr rather than dispatched to the active app, so
     // standby works everywhere including modal screens.
+    //
+    // Só é chamado a partir de update(), ou seja do loop principal: escreve a
+    // mensagem de suspensão no e-ink e chama o stop() do app activo, e o
+    // display não tem dono único — fazê-lo na tarefa de input punha-o a
+    // desenhar ao mesmo tempo que o AppMgr::draw().
     void enterStandby();
+
+    // Pedido de standby vindo da tarefa de input (KEY2 longo), consumido pelo
+    // loop principal. É um sinalizador em vez de uma acção na fila porque não
+    // se pode perder: a fila descarta quando está cheia, e um comando de
+    // energia que o utilizador tem de repetir é pior do que um que chega um
+    // ciclo mais tarde.
+    volatile bool _standbyRequested = false;
     
     static void staticClick(void *ptr);
     static void staticDoubleClick(void *ptr);
