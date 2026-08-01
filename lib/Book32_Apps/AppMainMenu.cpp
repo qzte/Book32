@@ -59,8 +59,11 @@ void AppMainMenu::updateCheckTask(void* parameter) {
     if (WiFi.status() == WL_CONNECTED) {
         UpdateInfo info = GitHubMgr::getInstance().checkUpdate(SYSTEM_VERSION);
         if (info.available) {
-            self->_updateAvailable = true;
-            self->_updateVersion = info.version;
+            {
+                Book32Guard guard(self->_updateMutex);
+                self->_updateAvailable = true;
+                self->_updateVersion = info.version;
+            }
             self->_needsRedraw = true; // Trigger redraw to show icon
         }
     }
@@ -322,6 +325,15 @@ void AppMainMenu::draw() {
     int16_t screenW = display.width();   // 480
     int16_t screenH = display.height();  // 800
 
+    // Cópia coerente do estado que a tarefa de verificação de updates escreve.
+    bool updateAvailable;
+    String updateVersion;
+    {
+        Book32Guard guard(_updateMutex);
+        updateAvailable = _updateAvailable;
+        updateVersion = _updateVersion;
+    }
+
     // Layout constants
     const int ICON_SIZE = 160;
     const int COLS = 2;
@@ -417,7 +429,7 @@ void AppMainMenu::draw() {
         }
         
         // Render Update Icon if available
-        if (_updateAvailable) {
+        if (updateAvailable) {
             int i = apps.size(); // Index for update app (virtual index)
             int idx = i - 1;
             int col = idx % COLS;
@@ -434,7 +446,7 @@ void AppMainMenu::draw() {
             
             display.drawBitmap(x, y, icon_update_160x160, ICON_SIZE, ICON_SIZE, GxEPD_BLACK);
             
-            String updateText = "Update " + _updateVersion;
+            String updateText = "Update " + updateVersion;
             int nameWidth = fontMgr.getTextWidth(updateText.c_str(), FONT_SIZE_MENU);
             int nameX = x + (ICON_SIZE - nameWidth) / 2;
             fontMgr.drawText(display, updateText.c_str(), nameX, y + ICON_SIZE + 25, FONT_SIZE_MENU, GxEPD_BLACK);

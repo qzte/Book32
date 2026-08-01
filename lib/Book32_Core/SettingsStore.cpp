@@ -11,6 +11,16 @@ SettingsStore& SettingsStore::getInstance() {
     return instance;
 }
 
+// Todos os métodos abaixo tomam o mesmo mutex recursivo, directamente ou
+// através de uma Transaction que já o detém.
+SettingsStore::Transaction::Transaction() {
+    SettingsStore::getInstance()._mutex.lock();
+}
+
+SettingsStore::Transaction::~Transaction() {
+    SettingsStore::getInstance()._mutex.unlock();
+}
+
 // --- Clamping ---------------------------------------------------------------
 // The reading fonts are only generated at three sizes, so anything else would
 // fall back to a missing glyph set. Snap to the nearest supported size.
@@ -44,6 +54,7 @@ int SettingsStore::clampSleepTimeout(int minutes) {
 
 // --- Load -------------------------------------------------------------------
 ReaderSettings SettingsStore::loadReader() {
+    Book32Guard guard(_mutex);
     ReaderSettings s;
 
     // EbookFS is primary. SystemFS is a legacy fallback kept so devices
@@ -69,6 +80,7 @@ ReaderSettings SettingsStore::loadReader() {
 }
 
 DisplaySettings SettingsStore::loadDisplay() {
+    Book32Guard guard(_mutex);
     DisplaySettings s;
 
     if (EbookFS.exists(DISPLAY_CONFIG_PATH)) {
@@ -86,6 +98,7 @@ DisplaySettings SettingsStore::loadDisplay() {
 }
 
 SleepSettings SettingsStore::loadSleep() {
+    Book32Guard guard(_mutex);
     SleepSettings s;
 
     if (EbookFS.exists(SLEEP_CONFIG_PATH)) {
@@ -105,6 +118,7 @@ SleepSettings SettingsStore::loadSleep() {
 
 // --- Save -------------------------------------------------------------------
 bool SettingsStore::saveReader(const ReaderSettings& s) {
+    Book32Guard guard(_mutex);
     DynamicJsonDocument doc(256);
     doc["refreshFrequency"] = clampRefreshFrequency(s.refreshFrequency);
     doc["fontSize"] = clampFontSize(s.fontSize);
@@ -125,6 +139,7 @@ bool SettingsStore::saveReader(const ReaderSettings& s) {
 }
 
 bool SettingsStore::saveDisplay(const DisplaySettings& s) {
+    Book32Guard guard(_mutex);
     DynamicJsonDocument doc(128);
     doc["rotation"] = clampRotation(s.rotation);
 
@@ -141,6 +156,7 @@ bool SettingsStore::saveDisplay(const DisplaySettings& s) {
 }
 
 bool SettingsStore::saveSleep(const SleepSettings& s) {
+    Book32Guard guard(_mutex);
     DynamicJsonDocument doc(512);
     doc["sleepTimeout"] = clampSleepTimeout(s.timeout);
     doc["sleepMessage"] = s.message;

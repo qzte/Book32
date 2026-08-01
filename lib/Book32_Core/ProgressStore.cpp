@@ -2,6 +2,11 @@
 #include "Book32FS.h"
 #include "BookMeta.h"
 
+// Todos os métodos públicos abrem com um Book32Guard. load() e save() ficam
+// sem guarda de propósito: são privados e só são alcançados a partir de um
+// método público que já detém o mutex (que é recursivo, por isso mesmo que
+// voltasse a tomá-lo não haveria bloqueio).
+
 static const char* PROGRESS_PATH = "/reader_progress.json";
 static const char* PROGRESS_TMP_PATH = "/reader_progress.tmp";
 
@@ -24,6 +29,7 @@ ProgressStore& ProgressStore::getInstance() {
 }
 
 void ProgressStore::begin() {
+    Book32Guard guard(_mutex);
     if (_loaded) return;
     _loaded = true;  // set first: a failed load leaves an empty, usable store
     load();
@@ -148,6 +154,7 @@ bool ProgressStore::save() {
 }
 
 bool ProgressStore::get(const String& originalName, BookProgress& out) {
+    Book32Guard guard(_mutex);
     begin();
     auto it = _books.find(originalName);
     if (it == _books.end()) return false;
@@ -156,6 +163,7 @@ bool ProgressStore::get(const String& originalName, BookProgress& out) {
 }
 
 void ProgressStore::set(const String& originalName, const BookProgress& progress) {
+    Book32Guard guard(_mutex);
     begin();
     if (originalName.length() == 0) return;
     BookProgress p = progress;
@@ -166,6 +174,7 @@ void ProgressStore::set(const String& originalName, const BookProgress& progress
 }
 
 void ProgressStore::remove(const String& originalName) {
+    Book32Guard guard(_mutex);
     begin();
     bool changed = _books.erase(originalName) > 0;
     if (_lastBook == originalName) {
@@ -177,6 +186,7 @@ void ProgressStore::remove(const String& originalName) {
 }
 
 void ProgressStore::setLast(const String& originalName, bool resumeOnBoot) {
+    Book32Guard guard(_mutex);
     begin();
     if (_lastBook == originalName && _resumeOnBoot == resumeOnBoot) return;
     _lastBook = originalName;
@@ -185,6 +195,7 @@ void ProgressStore::setLast(const String& originalName, bool resumeOnBoot) {
 }
 
 void ProgressStore::setResumeOnBoot(bool resume) {
+    Book32Guard guard(_mutex);
     begin();
     if (_resumeOnBoot == resume) return;
     _resumeOnBoot = resume;
@@ -192,16 +203,19 @@ void ProgressStore::setResumeOnBoot(bool resume) {
 }
 
 String ProgressStore::lastBook() {
+    Book32Guard guard(_mutex);
     begin();
     return _lastBook;
 }
 
 bool ProgressStore::resumeOnBoot() {
+    Book32Guard guard(_mutex);
     begin();
     return _resumeOnBoot;
 }
 
 void ProgressStore::reconcile(const std::vector<String>& presentOriginalNames) {
+    Book32Guard guard(_mutex);
     begin();
     bool changed = false;
 
@@ -236,6 +250,7 @@ void ProgressStore::reconcile(const std::vector<String>& presentOriginalNames) {
 }
 
 void ProgressStore::clearAll() {
+    Book32Guard guard(_mutex);
     begin();
     _books.clear();
     _lastBook = "";
@@ -245,11 +260,13 @@ void ProgressStore::clearAll() {
 }
 
 size_t ProgressStore::count() {
+    Book32Guard guard(_mutex);
     begin();
     return _books.size();
 }
 
 void ProgressStore::fillExportJson(JsonObject dest) {
+    Book32Guard guard(_mutex);
     begin();
     for (const auto& kv : _books) {
         JsonObject entry = dest.createNestedObject(kv.first);
@@ -289,6 +306,7 @@ static void collectPresentOriginalNames(std::map<String, bool>& present) {
 }
 
 ImportReport ProgressStore::applyImportedJson(JsonObjectConst src) {
+    Book32Guard guard(_mutex);
     begin();
     ImportReport report;
 

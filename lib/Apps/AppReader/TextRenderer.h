@@ -47,7 +47,6 @@ class TextRenderer {
 public:
     TextRenderer(int width, int height, int fontSize = 26);
     
-    bool loadFont(const uint8_t* data, size_t size);
     // Body text size in points. Supported: 9 (small), 12 (medium), 18 (large).
     // Invalidates caches so word-wrap and pagination recompute at the new size.
     void setFontSize(int size);
@@ -66,23 +65,13 @@ public:
 
     void clearCache();
 
-    // Keep legacy for now to avoid breaking AppReader during transition
-    std::vector<String> paginate(const String& text);
-    void renderPage(Book32Display& display, const String& pageText, int pageNum, int totalPages);
-    
-    std::vector<String> paginateRich(std::vector<ContentNode>& content);
-    void renderRichPage(Book32Display& display, const String& pageData, int pageNum, int totalPages);
-
 private:
     int _width;
     int _height;
     int _fontSize;
     int _fontFamily = READER_FONT_SANS;
-    int _charsPerLine;
-    int _linesPerPage;
-    int _lineHeight; 
+    int _lineHeight;
     
-    bool _fontLoaded = true; // GFX fonts are always "loaded"
     std::vector<RenderedLine> _lineCache;
     int _cachedPage = -1;
     RenderResult _cachedResult = {0, 0, false, 0, 0};
@@ -95,10 +84,6 @@ private:
     const GFXfont* _lastGFXFont = nullptr;
 
     const GFXfont* getGFXFont(TextStyle style, int& lineHeight);
-
-    std::vector<String> wrapText(const String& text);
-    void renderTextNode(Book32Display& display, RichTextNode& node, int& y, int maxY);
-    void renderTable(Book32Display& display, Table& table, int& y, int maxY);
 };
 
 #endif

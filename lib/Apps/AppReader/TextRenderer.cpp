@@ -8,15 +8,10 @@ TextRenderer::TextRenderer(int width, int height, int fontSize) {
     if (fontSize >= 18) _fontSize = 18;
     else if (fontSize >= 12) _fontSize = 12;
     else _fontSize = 9;
-    _fontLoaded = true;
     _cachedPage = -1;
     _lastGFXFont = nullptr;
     memset(_gfxCharWidths, 0, sizeof(_gfxCharWidths));
     calculateDimensions();
-}
-
-bool TextRenderer::loadFont(const uint8_t* data, size_t size) {
-    return true;
 }
 
 void TextRenderer::setFontSize(int size) {
@@ -44,7 +39,6 @@ void TextRenderer::calculateDimensions() {
     int lh = 0;
     getGFXFont(STYLE_NORMAL, lh);
     _lineHeight = lh > 0 ? lh : 24;
-    _linesPerPage = (_height - 70) / _lineHeight;
 }
 
 void TextRenderer::clearCache() {
@@ -363,10 +357,3 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
     return result;
 }
 
-std::vector<String> TextRenderer::wrapText(const String& text) { return std::vector<String>(); }
-std::vector<String> TextRenderer::paginate(const String& text) { return std::vector<String>(); }
-void TextRenderer::renderPage(Book32Display& display, const String& pageText, int pageNum, int totalPages) {}
-std::vector<String> TextRenderer::paginateRich(std::vector<ContentNode>& content) { return std::vector<String>(); }
-void TextRenderer::renderRichPage(Book32Display& display, const String& pageData, int pageNum, int totalPages) {}
-void TextRenderer::renderTextNode(Book32Display& display, RichTextNode& node, int& y, int maxY) {}
-void TextRenderer::renderTable(Book32Display& display, Table& table, int& y, int maxY) {}

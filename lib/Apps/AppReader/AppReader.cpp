@@ -80,7 +80,6 @@ static LibraryDirtyRect unionLibraryRect(LibraryDirtyRect a, LibraryDirtyRect b)
 AppReader::AppReader() {
     _state = VIEW_LIBRARY;
     _selectedBookIndex = 0;
-    _scrollOffset = 0;
     _booksScanned = false;
     _librarySelectionOnlyRedraw = false;
     _resumeSavedBookOnStart = false;
@@ -88,12 +87,10 @@ AppReader::AppReader() {
     _epubLoader = nullptr;
     _textRenderer = nullptr;
     _currentChapter = 0;
-    _currentPage = 0;
     _needsRedraw = true;
     _currentPageRender = {0, 0, false, 0, 0};
     _currentPageRenderValid = false;
     _pageTurnsSinceRefresh = 0;
-    _totalBookPages = 0;
     _refreshEveryNPages = 10; // Default to full refresh every 10 pages
     _fontSizePt = 9;          // Default body size (small)
     _fontFamily = READER_FONT_SANS; // Default family (system sans-serif)
@@ -336,27 +333,6 @@ void AppReader::handleInput(InputAction action) {
     }
 }
 
-void AppReader::calculateTotalPages() {
-    _totalBookPages = 0;
-    _chapterPageCounts.clear();
-    for (int i = 0; i < _epubLoader->getChapterCount(); i++) {
-        std::vector<ContentNode> richContent = _epubLoader->getChapterContentRich(i);
-        std::vector<String> pages;
-        if(richContent.size() > 0) pages = _textRenderer->paginateRich(richContent);
-        else pages = _textRenderer->paginate(_epubLoader->getChapterContent(i));
-        _chapterPageCounts.push_back(pages.size());
-        _totalBookPages += pages.size();
-    }
-}
-
-int AppReader::getGlobalPageNumber() {
-    int page = 0;
-    if (_chapterPageCounts.size() > (size_t)_currentChapter) {
-        for (int i = 0; i < _currentChapter; i++) page += _chapterPageCounts[i];
-    }
-    return page + _pageHistory.size() + 1;
-}
-
 bool AppReader::openBook(const String& path, bool restoreProgress) {
     String fullPath = "/ebooks" + path;
     closeBook(false);
@@ -376,8 +352,8 @@ bool AppReader::openBook(const String& path, bool restoreProgress) {
 
     _textRenderer->calculateDimensions();
 
-    // calculateTotalPages(); // DISABLING: This takes forever on large books
-    _totalBookPages = 0; // Show simplified pagination for now
+    // Sem contagem total de paginas: pagina-las todas a cada abertura demora
+    // demasiado num livro grande. O numero de pagina e seguido em runtime.
     _globalPageNumber = 1; // Start at page 1
     _currentPageRenderValid = false;
     
@@ -480,7 +456,7 @@ void AppReader::closeBook(bool markInactive) {
     flushProgress();
     if (_epubLoader) { _epubLoader->close(); delete _epubLoader; _epubLoader = nullptr; }
     if (_textRenderer) { delete _textRenderer; _textRenderer = nullptr; }
-    _pageHistory.clear(); _chapterPageCounts.clear(); _totalBookPages = 0;
+    _pageHistory.clear();
     _currentPageRenderValid = false;
 }
 
@@ -711,9 +687,9 @@ void AppReader::drawLibrary() {
                     lineCount++;
                 }
 
-                // v1.8.0: saved position. No percentage: calculateTotalPages()
-                // is disabled (too slow on large books), so a percentage would
-                // be made up.
+                // v1.8.0: saved position. No percentage: paginating the whole
+                // book is too slow to do on open, so a percentage would be
+                // made up.
                 if (book.hasProgress) {
                     char pageLabel[24];
                     snprintf(pageLabel, sizeof(pageLabel), "pag. %d", book.globalPage);

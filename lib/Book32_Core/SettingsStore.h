@@ -2,6 +2,7 @@
 #define SETTINGS_STORE_H
 
 #include <Arduino.h>
+#include "Lock.h"
 
 // =============================================================================
 // SettingsStore
@@ -56,8 +57,29 @@ public:
     static int clampRefreshFrequency(int n);
     static int clampSleepTimeout(int minutes);
 
+    // Ler-modificar-gravar como uma única operação. Os handlers HTTP fazem
+    // exactamente isso (carregam, alteram uma chave, gravam) sobre os mesmos
+    // ficheiros que o menu de definições no dispositivo: sem isto, a última
+    // gravação apaga a alteração da outra tarefa. O mutex é recursivo, por
+    // isso os load*/save* podem ser chamados de dentro da transacção.
+    //
+    //     SettingsStore::Transaction tx;
+    //     ReaderSettings s = store.loadReader();
+    //     s.fontSize = ...;
+    //     store.saveReader(s);
+    class Transaction {
+    public:
+        Transaction();
+        ~Transaction();
+    };
+
 private:
     SettingsStore() {}
+
+    // Serializa o acesso aos ficheiros de configuração entre o loop principal
+    // e a tarefa do servidor web. Ver Lock.h.
+    // (Transaction é uma classe aninhada, por isso já tem acesso a isto.)
+    Book32Mutex _mutex;
 };
 
 #endif

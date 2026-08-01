@@ -3,3 +3,14 @@
 .idea
 *.log
 include/Secrets.h
+
+# Imagens produzidas pelo build. O workflow de release constroi-as a partir do
+# codigo e publica-as como assets; versiona-las so acrescenta ~2,7 MB ao
+# historico a cada release e deixa artefactos velhos a espreita na arvore.
+firmware.bin
+littlefs.bin
+dist/
+
+# Copias de seguranca deixadas por editores
+*.bk
+*.orig

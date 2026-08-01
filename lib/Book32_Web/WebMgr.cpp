@@ -959,6 +959,12 @@ void WebMgr::setupEndpoints() {
             // Merge into the existing config so one setting doesn't wipe the
             // other. Clamping lives in SettingsStore, shared with the
             // on-device settings menu.
+            //
+            // A transacção cobre o ler-modificar-gravar inteiro: o menu de
+            // definições no dispositivo escreve o mesmo ficheiro a partir do
+            // loop principal, e sem isto a última gravação apagava a
+            // alteração da outra tarefa.
+            SettingsStore::Transaction tx;
             SettingsStore& store = SettingsStore::getInstance();
             ReaderSettings s = store.loadReader();
 
@@ -1192,17 +1198,26 @@ void WebMgr::setupEndpoints() {
     AsyncCallbackJsonWebHandler* sleepSettingsHandler = new AsyncCallbackJsonWebHandler("/api/settings/sleep",
         [](AsyncWebServerRequest *request, JsonVariant &json) {
             // Merge, so posting only one key doesn't blank the other.
-            SettingsStore& store = SettingsStore::getInstance();
-            SleepSettings s = store.loadSleep();
+            // Transacção pela mesma razão do handler do leitor, fechada antes
+            // de avisar o BatteryMgr: assim nunca se detêm dois bloqueios ao
+            // mesmo tempo e não há ordem de aquisição para respeitar.
+            bool saved;
+            {
+                SettingsStore::Transaction tx;
+                SettingsStore& store = SettingsStore::getInstance();
+                SleepSettings s = store.loadSleep();
 
-            if (json.containsKey("sleepTimeout")) {
-                s.timeout = json["sleepTimeout"].as<int>();
-            }
-            if (json.containsKey("sleepMessage")) {
-                s.message = json["sleepMessage"].as<String>();
+                if (json.containsKey("sleepTimeout")) {
+                    s.timeout = json["sleepTimeout"].as<int>();
+                }
+                if (json.containsKey("sleepMessage")) {
+                    s.message = json["sleepMessage"].as<String>();
+                }
+
+                saved = store.saveSleep(s);
             }
 
-            if (store.saveSleep(s)) {
+            if (saved) {
                 // Notify BatteryMgr to reload settings
                 BatteryMgr::getInstance().loadSleepSettings();
                 request->send(200, "application/json", "{\"status\":\"ok\"}");

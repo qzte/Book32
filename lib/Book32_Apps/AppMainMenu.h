@@ -2,6 +2,7 @@
 #include "BaseApp.h"
 #include "../Book32_Core/InputMgr.h"
 #include "../Book32_Core/BatteryMgr.h"
+#include "../Book32_Core/Lock.h"
 
 class AppMainMenu : public App {
 public:
@@ -37,7 +38,12 @@ private:
     unsigned long _lastBatteryPoll = 0;
     BatteryStatus _lastBatteryStatus = {0.0f, -1, false};
     
-    // Update Notification
+    // Update Notification.
+    // Escritos pela tarefa updateCheckTask e lidos pelo draw() no loop
+    // principal. _updateVersion é uma String: uma escrita a meio de uma
+    // leitura é um ponteiro a mudar debaixo do leitor, não apenas um valor
+    // desactualizado. Ver Lock.h.
+    Book32Mutex _updateMutex;
     bool _updateAvailable = false;
     String _updateVersion = "";
     TaskHandle_t _updateTaskHandle = nullptr;

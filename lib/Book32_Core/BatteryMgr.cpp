@@ -41,6 +41,7 @@ BatteryMgr& BatteryMgr::getInstance() {
 }
 
 void BatteryMgr::init() {
+    Book32Guard guard(_mutex);
     pinMode(PIN_BAT_VOLT, INPUT);
 #ifdef PIN_VBAT_SWITCH
     pinMode(PIN_VBAT_SWITCH, OUTPUT);
@@ -71,6 +72,11 @@ void BatteryMgr::init() {
 
 void BatteryMgr::update() {
     unsigned long now = millis();
+
+    // Bloco de tendência: fecha o bloqueio antes das verificações que podem
+    // acabar em desenho no e-ink.
+    {
+    Book32Guard guard(_mutex);
 
     // Update voltage history periodically for trend analysis
     if (now - _lastHistoryUpdate >= HISTORY_INTERVAL_MS) {
@@ -113,6 +119,7 @@ void BatteryMgr::update() {
             }
         }
     }
+    }  // fim do bloco com bloqueio
 
     // Check for critical low battery
     if (isCriticallyLow()) {
@@ -120,22 +127,38 @@ void BatteryMgr::update() {
         shutdownLowBattery();
     }
 
-    // Check for idle timeout (only if enabled and not charging)
-    if (_sleepTimeoutMinutes > 0 && !_cachedStatus.charging) {
-        unsigned long idleTime = now - _lastActivityTime;
-        unsigned long timeoutMs = (unsigned long)_sleepTimeoutMinutes * 60 * 1000;
+    // Check for idle timeout (only if enabled and not charging). Os valores
+    // são copiados sob bloqueio e a decisão é tomada fora dele: enterIdleSleep
+    // desenha no e-ink, e segurar o mutex durante esse tempo travaria
+    // /api/status e a tarefa de input.
+    int sleepTimeoutMinutes;
+    bool charging;
+    unsigned long lastActivity;
+    {
+        Book32Guard guard(_mutex);
+        sleepTimeoutMinutes = _sleepTimeoutMinutes;
+        charging = _cachedStatus.charging;
+        lastActivity = _lastActivityTime;
+    }
+
+    if (sleepTimeoutMinutes > 0 && !charging) {
+        unsigned long idleTime = now - lastActivity;
+        unsigned long timeoutMs = (unsigned long)sleepTimeoutMinutes * 60 * 1000;
         if (idleTime >= timeoutMs) {
             // v1.9.1 diagnostics: distinguishes this path from the KEY2
             // long press in the serial log.
             Serial.printf("SLEEPDIAG: path=IDLE_TIMEOUT  idle=%lums  timeout=%lums\n",
                           idleTime, timeoutMs);
-            Serial.printf("Idle timeout reached (%d minutes). Entering sleep...\n", _sleepTimeoutMinutes);
+            Serial.printf("Idle timeout reached (%d minutes). Entering sleep...\n", sleepTimeoutMinutes);
             enterIdleSleep("idle_timeout");
         }
     }
 }
 
 void BatteryMgr::updateCache(bool clearStaleCharging) {
+    // Cobre o interruptor de medição, as 30 leituras do ADC e a actualização
+    // da cache como uma só operação.
+    Book32Guard guard(_mutex);
 #ifdef PIN_VBAT_SWITCH
     digitalWrite(PIN_VBAT_SWITCH, VBAT_SWITCH_LEVEL); // Turn on measurement
     delay(5); // Wait for stabilization
@@ -208,6 +231,7 @@ void BatteryMgr::updateCache(bool clearStaleCharging) {
 }
 
 bool BatteryMgr::isCriticallyLow() {
+    Book32Guard guard(_mutex);
     // Make sure we have a fresh reading
     if (millis() - _lastReadTime >= CACHE_DURATION_MS) {
         updateCache();
@@ -251,6 +275,7 @@ void BatteryMgr::shutdownLowBattery() {
 }
 
 BatteryStatus BatteryMgr::getStatus() {
+    Book32Guard guard(_mutex);
     // Refresh cache if expired
     if (millis() - _lastReadTime >= CACHE_DURATION_MS) {
         updateCache();
@@ -259,6 +284,7 @@ BatteryStatus BatteryMgr::getStatus() {
 }
 
 BatteryStatus BatteryMgr::refreshNow() {
+    Book32Guard guard(_mutex);
     updateCache(true);
     return _cachedStatus;
 }
@@ -276,6 +302,7 @@ bool BatteryMgr::isCharging() {
 }
 
 void BatteryMgr::loadSleepSettings() {
+    Book32Guard guard(_mutex);
     // Load from EbookFS partition
     if (EbookFS.exists("/sleep_config.json")) {
         File file = EbookFS.open("/sleep_config.json", "r");
@@ -298,18 +325,28 @@ void BatteryMgr::loadSleepSettings() {
 }
 
 void BatteryMgr::resetIdleTimer() {
+    Book32Guard guard(_mutex);
     _lastActivityTime = millis();
 }
 
 // Signature must match the declaration in BatteryMgr.h, which carries the
 // default argument (a default may only appear in the declaration).
 void BatteryMgr::enterIdleSleep(const char* reason) {
+    // Cópia da mensagem sob bloqueio; o desenho que se segue é lento e não
+    // pode segurar o mutex. Também é chamado a partir da tarefa de input
+    // (standby no KEY2), não só do loop principal.
+    String sleepMessage;
+    {
+        Book32Guard guard(_mutex);
+        sleepMessage = _sleepMessage;
+    }
+
     // v1.9.1 diagnostics: single funnel for both sleep paths. The reason
     // string identifies which caller decided to sleep.
     Serial.printf("SLEEPDIAG: enterIdleSleep() reached  reason=%s\n",
                   reason ? reason : "null");
     Serial.println("Entering idle sleep...");
-    Serial.printf("Sleep message: %s\n", _sleepMessage.c_str());
+    Serial.printf("Sleep message: %s\n", sleepMessage.c_str());
     Serial.flush();
 
     // Display sleep message on e-ink
@@ -324,14 +361,14 @@ void BatteryMgr::enterIdleSleep(const char* reason) {
         // Calculate text bounds for centering
         int16_t tbx, tby;
         uint16_t tbw, tbh;
-        display.getTextBounds(_sleepMessage.c_str(), 0, 0, &tbx, &tby, &tbw, &tbh);
+        display.getTextBounds(sleepMessage.c_str(), 0, 0, &tbx, &tby, &tbw, &tbh);
 
         // Center the text on screen
         int16_t x = (display.width() - tbw) / 2 - tbx;
         int16_t y = (display.height() - tbh) / 2 - tby;
 
         display.setCursor(x, y);
-        display.print(_sleepMessage);
+        display.print(sleepMessage);
     } while (display.nextPage());
 
     // Wait for display to finish updating
@@ -349,12 +386,19 @@ void BatteryMgr::enterIdleSleep(const char* reason) {
 }
 
 void BatteryMgr::drawStatusIndicator() {
-    // Only update if charging state actually changed
-    bool currentCharging = _cachedStatus.charging;
+    // Estado copiado sob bloqueio; o refresh parcial que se segue demora e não
+    // pode segurá-lo (a tarefa do servidor web também lê este estado).
+    bool currentCharging;
+    int percentage;
+    {
+        Book32Guard guard(_mutex);
+        currentCharging = _cachedStatus.charging;
+        percentage = _cachedStatus.percentage;
 
-    // Only refresh display when charging state changes (plugged in or unplugged)
-    if (currentCharging == _lastDisplayedCharging) {
-        return;  // No change, no update needed
+        // Only refresh display when charging state changes (plugged in or unplugged)
+        if (currentCharging == _lastDisplayedCharging) {
+            return;  // No change, no update needed
+        }
     }
 
     // Get display reference
@@ -384,7 +428,7 @@ void BatteryMgr::drawStatusIndicator() {
         display.fillRect(batX + batW, batY + 5, 3, 10, GxEPD_BLACK);  // Battery tip
 
         // Battery fill based on percentage
-        int fillWidth = (_cachedStatus.percentage * (batW - 4)) / 100;
+        int fillWidth = (percentage * (batW - 4)) / 100;
         if (fillWidth > 0) {
             display.fillRect(batX + 2, batY + 2, fillWidth, batH - 4, GxEPD_BLACK);
         }
@@ -403,7 +447,10 @@ void BatteryMgr::drawStatusIndicator() {
     } while (display.nextPage());
 
     // Update tracking
-    _lastDisplayedCharging = currentCharging;
+    {
+        Book32Guard guard(_mutex);
+        _lastDisplayedCharging = currentCharging;
+    }
 
     Serial.printf("Battery indicator updated: %s\n", currentCharging ? "Charging" : "Not charging");
 }

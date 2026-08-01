@@ -23,6 +23,7 @@
 #include <map>
 #include <vector>
 #include "ProgressMergeLogic.h"
+#include "Lock.h"
 
 struct ImportReport {
     bool ok = false;
@@ -73,6 +74,12 @@ private:
     ProgressStore() {}
     bool load();
     bool save();
+
+    // Serializa todo o acesso ao estado abaixo. O leitor grava a posição a
+    // partir do loop principal enquanto os endpoints /api/reader/progress,
+    // /api/library/* e /api/books/delete mexem no mesmo mapa a partir da
+    // tarefa do servidor. Ver Lock.h.
+    Book32Mutex _mutex;
 
     std::map<String, BookProgress> _books;
     String _lastBook;
