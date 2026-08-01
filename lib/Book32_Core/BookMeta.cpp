@@ -1,8 +1,19 @@
 #include "BookMeta.h"
 #include "Book32FS.h"
+#include "Lock.h"
 #include <ArduinoJson.h>
 
 static const char* BOOKS_META_PATH = "/books_meta.json";
+
+// O ficheiro é lido pelo leitor (loop principal) e escrito pelo handler de
+// upload e pelo de apagar (tarefa do servidor web). Cada função abaixo é um
+// ler-modificar-gravar completo, por isso o bloqueio cobre a função inteira e
+// não apenas as operações de ficheiro. Recursivo porque
+// findFilenameForOriginal() chama loadBookMetadata(). Ver Lock.h.
+//
+// Ordem de aquisição: quem já detém o ProgressStore pode tomar este (é o que
+// acontece no import); o inverso nunca acontece.
+static Book32Mutex g_metaMutex;
 
 // Capacity derived from the file, not a fixed 4096: a large library used to
 // overflow the fixed document, and a save on top of a truncated document threw
@@ -24,6 +35,7 @@ static bool openMetaForRead(File& file) {
 }
 
 void loadBookMetadata(std::map<String, String>& metadata) {
+    Book32Guard guard(g_metaMutex);
     metadata.clear();
 
     File file;
@@ -41,6 +53,7 @@ void loadBookMetadata(std::map<String, String>& metadata) {
 }
 
 String getOriginalFilename(const String& truncatedName) {
+    Book32Guard guard(g_metaMutex);
     File file;
     if (!openMetaForRead(file)) return truncatedName;
 
@@ -56,6 +69,7 @@ String getOriginalFilename(const String& truncatedName) {
 }
 
 String findFilenameForOriginal(const String& originalName) {
+    Book32Guard guard(g_metaMutex);
     std::map<String, String> metadata;
     loadBookMetadata(metadata);
 
@@ -128,6 +142,7 @@ static bool writeMetaDoc(const DynamicJsonDocument& doc) {
 }
 
 void saveBookMetadata(const String& truncatedName, const String& originalName) {
+    Book32Guard guard(g_metaMutex);
     size_t extra = truncatedName.length() + originalName.length() + 64;
     DynamicJsonDocument doc(metaCapacityFor(existingMetaSize()) + extra);
     loadMetaDoc(doc);  // ficheiro ausente ou ilegível: começa vazio
@@ -140,6 +155,7 @@ void saveBookMetadata(const String& truncatedName, const String& originalName) {
 }
 
 void removeBookMetadata(const String& truncatedName) {
+    Book32Guard guard(g_metaMutex);
     size_t existingSize = existingMetaSize();
     if (existingSize == 0) return;  // nada gravado ainda
 

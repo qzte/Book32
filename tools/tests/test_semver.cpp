@@ -36,6 +36,10 @@ int main() {
     // Numeric comparison, not lexicographic: 1.10.0 > 1.9.0.
     assert(semverIsNewer(string("1.10.0"), string("1.9.0")));
     assert(!semverIsNewer(string("1.9.0"), string("1.10.0")));
+    // O salto real 1.9.1 -> 1.10.0: um aparelho na versao anterior tem de ver
+    // esta como mais recente, e nao o contrario.
+    assert(semverIsNewer(string("1.10.0"), string("1.9.1")));
+    assert(!semverIsNewer(string("1.9.1"), string("1.10.0")));
 
     // Pre-release suffix is ignored for ordering of the numeric core.
     assert(semverIsNewer(string("1.5.0-rc1"), string("1.4.0")));

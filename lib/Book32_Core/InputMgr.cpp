@@ -63,6 +63,14 @@ void InputMgr::init() {
 }
 
 void InputMgr::update() {
+    // Standby pedido pela tarefa de input. Tratado primeiro: se houver acções
+    // em fila, adormecer é melhor do que virar mais uma página (dois segundos
+    // de refresh) antes de o fazer.
+    if (_standbyRequested) {
+        _standbyRequested = false;
+        enterStandby();  // não regressa: deep sleep
+    }
+
     if (!_taskRunning) {
         btn.tick();
         // Don't tick btnBack - using manual polling in inputTask
@@ -158,9 +166,10 @@ void InputMgr::inputTask(void* parameter) {
         }
         
         // Manual KEY2 detection (PIN_BUTTON_SLEEP): short click -> full
-        // refresh, long press -> standby. Standby is handled inline rather
-        // than dispatched through the callback so it works in every app and on
-        // modal screens like the unsaved-changes prompt.
+        // refresh, long press -> standby. Standby é consumido pelo InputMgr no
+        // loop principal, e não despachado pelo callback, para funcionar em
+        // todos os apps e em ecrãs modais como o aviso de alterações por
+        // guardar.
         int sleepState = digitalRead(PIN_BUTTON_SLEEP);
         bool sleepPressed = (sleepState == LOW);  // Active low
 
@@ -171,9 +180,11 @@ void InputMgr::inputTask(void* parameter) {
                 Serial.println("KEY2: Button pressed");
             } else if (!self->_btnSleepLongPressSent &&
                        (now - self->_btnSleepPressTime) >= BUTTON_LONG_PRESS_MS) {
-                Serial.println("INPUT: KEY2 Long Press -> STANDBY");
+                Serial.println("INPUT: KEY2 Long Press -> STANDBY requested");
                 self->_btnSleepLongPressSent = true;
-                self->enterStandby();  // Does not return: deep sleep
+                // Só marca: quem adormece é o loop principal, em update().
+                // Aqui não se pode desenhar no e-ink (ver enterStandby).
+                self->_standbyRequested = true;
             }
         } else {
             if (self->_btnSleepPressTime != 0) {
@@ -183,10 +194,11 @@ void InputMgr::inputTask(void* parameter) {
                 // here because contact bounce would otherwise cost a ~2s full
                 // refresh.
                 //
-                // The long-press branch of the classifier is unreachable for
-                // KEY2 today because enterStandby() never returns, but it's
-                // kept so that making standby cancellable later can't produce
-                // a stray refresh on button release.
+                // O ramo de long press do classificador passou a ser
+                // alcançável: o standby já não corre aqui, por isso o
+                // largar do botão chega a esta linha antes de o loop
+                // principal adormecer. Sem ele, soltar o botão depois de um
+                // long press custava um refresh completo de ~2 s.
                 if (classifyButtonRelease(pressDuration, self->_btnSleepLongPressSent) ==
                     BUTTON_RELEASE_CLICK) {
                     Serial.printf("KEY2: Button released after %lu ms -> REFRESH\n", pressDuration);
@@ -203,6 +215,7 @@ void InputMgr::inputTask(void* parameter) {
     }
 }
 
+// Corre no loop principal (ver update()), nunca na tarefa de input.
 void InputMgr::enterStandby() {
     // v1.9.1 diagnostics: record which pins were actually held at the moment
     // standby was decided. If KEY2/GPIO3 reads 1 (released) here, the LOW that

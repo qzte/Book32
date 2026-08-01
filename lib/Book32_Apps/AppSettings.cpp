@@ -339,9 +339,18 @@ void AppSettings::handleInput(InputAction action) {
 bool AppSettings::applyAndSave() {
     SettingsStore& store = SettingsStore::getInstance();
 
-    bool ok = store.saveReader(_reader);
-    ok = store.saveDisplay(_display) && ok;
-    ok = store.saveSleep(_sleep) && ok;
+    bool ok;
+    {
+        // As três gravações valem como uma só operação face aos handlers HTTP,
+        // que escrevem os mesmos ficheiros a partir da tarefa do servidor. A
+        // transacção fecha já a seguir: manter o bloqueio durante o repintar
+        // abaixo (um refresh completo do e-ink, com segundos de duração)
+        // travaria o servidor web sem necessidade.
+        SettingsStore::Transaction tx;
+        ok = store.saveReader(_reader);
+        ok = store.saveDisplay(_display) && ok;
+        ok = store.saveSleep(_sleep) && ok;
+    }
 
     if (!ok) {
         // Keep the draft intact so the user's edits aren't thrown away.

@@ -1,5 +1,6 @@
 #pragma once
 #include <Arduino.h>
+#include "Lock.h"
 
 // Combined battery status to avoid multiple ADC reads
 struct BatteryStatus {
@@ -48,6 +49,17 @@ private:
 
     // Internal: performs actual ADC read and updates cache
     void updateCache(bool clearStaleCharging = false);
+
+    // Serializa o ADC e o estado abaixo. São três as tarefas envolvidas: o
+    // loop principal (update/getStatus), a tarefa do servidor web
+    // (GET /api/status, POST /api/settings/sleep) e a tarefa de input
+    // (resetIdleTimer). A medição liga um interruptor num GPIO, faz 30
+    // leituras e volta a desligá-lo — duas tarefas a fazê-lo ao mesmo tempo
+    // desligavam o interruptor a meio da leitura da outra. Ver Lock.h.
+    //
+    // O bloqueio nunca é mantido durante desenho no e-ink: os métodos que
+    // desenham tiram uma cópia do estado e largam-no antes.
+    Book32Mutex _mutex;
 
     // Cached values
     BatteryStatus _cachedStatus;

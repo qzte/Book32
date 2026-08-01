@@ -61,7 +61,6 @@ private:
     // Library
     std::vector<BookEntry> _books;
     int _selectedBookIndex;
-    int _scrollOffset; // For list scrolling
     bool _booksScanned;
     bool _librarySelectionOnlyRedraw;
     bool _resumeSavedBookOnStart;
@@ -69,12 +68,6 @@ private:
     void scanBooks();
     void drawLibrary();
     void drawBookTile(Book32Display& display, int x, int y, int w, int h, bool selected);
-    
-    // Global Pagination
-    int _totalBookPages;
-    std::vector<int> _chapterPageCounts;
-    void calculateTotalPages();
-    int getGlobalPageNumber();
     
     // Settings
     int _refreshEveryNPages;
@@ -89,7 +82,6 @@ private:
     TextRenderer* _textRenderer;
     String _currentBookPath;
     int _currentChapter;
-    int _currentPage; // Current page number within the whole book
     int _globalPageNumber; // Runtime tracking of global page (1-indexed)
     bool _needsRedraw;
     

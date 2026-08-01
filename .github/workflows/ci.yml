@@ -1,0 +1,76 @@
+name: CI
+
+# Compilação e testes em cada push para main e em cada pull request.
+#
+# Até aqui o único workflow era o release.yml, que corre em tags: uma regressão
+# só aparecia no momento de publicar, que é precisamente quando é mais caro
+# descobri-la — uma tag falhada não instala, porque o dispositivo recusa um
+# asset sem digest válido.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # Trabalho separado e sem toolchain: a lógica pura compila e corre em
+  # segundos, por isso dá resposta mesmo que a instalação do PlatformIO
+  # demore ou falhe.
+  host-tests:
+    name: Testes de host
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Correr testes de host
+        run: |
+          set -e
+          for t in tools/tests/test_*.cpp; do
+            echo "=== $t ==="
+            g++ -std=c++17 -Wall -Werror -I lib/Book32_Core "$t" -o "/tmp/$(basename "$t" .cpp)"
+            "/tmp/$(basename "$t" .cpp)"
+          done
+
+  build:
+    name: Compilar firmware
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: Build firmware
+        run: pio run
+
+      - name: Build filesystem image
+        run: pio run --target buildfs
+
+  web-ui:
+    name: Sintaxe da web UI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # A web UI é servida a partir do LittleFS tal como está: um erro de
+      # sintaxe só apareceria no browser, depois de um uploadfs.
+      - name: Verificar script.js
+        run: node --check data/script.js
