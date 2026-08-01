@@ -1,4 +1,5 @@
 #include "TextRenderer.h"
+#include "WordFitLogic.h"
 
 TextRenderer::TextRenderer(int width, int height, int fontSize) {
     _width = width;
@@ -260,13 +261,35 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
                         spaceWidth = 0; 
                     }
 
+                    // Space left in lineBuf, recomputed before every write: the
+                    // appends below are clamped to it. Without the clamp a
+                    // single token longer than the buffer (a URL, or text the
+                    // HTML parser failed to split) ran past the end of this
+                    // stack buffer — the wrap branch above only fires once the
+                    // line already holds something, so the first word of a
+                    // line was always copied whole.
+                    int bufLeft = (int)sizeof(lineBuf) - 1 - (int)strlen(lineBuf);
+
                     if (segment_width > 0 || line_width > 0) {
+                        if (bufLeft <= 0) break;  // no room even for a separator
                         strcat(lineBuf, " ");
                         segment_width += spaceWidth;
+                        bufLeft--;
                     }
-                    strncat(lineBuf, text + wordStart, wordEnd - wordStart);
-                    segment_width += wordWidth;
-                    line_chars = wordEnd - pos;
+
+                    // A word still too wide here cannot fit a line of its own
+                    // either, so it is broken by character (see WordFitLogic.h,
+                    // host test tools/tests/test_word_fit.cpp).
+                    int wordLen = wordEnd - wordStart;
+                    int pixelBudget = usableWidth - (currentX + line_width + segment_width);
+                    WordFit fit = fitWordIntoLine(text + wordStart, wordLen, wordWidth,
+                                                  bufLeft, pixelBudget, _gfxCharWidths);
+                    if (fit.take <= 0) break;  // buffer full: commit this line
+
+                    strncat(lineBuf, text + wordStart, fit.take);
+                    segment_width += fit.width;
+                    line_chars = wordStart + fit.take - pos;
+                    if (fit.take < wordLen) break;  // remainder goes on the next line
                 }
 
                 if (strlen(lineBuf) > 0) {

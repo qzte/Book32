@@ -38,6 +38,10 @@ public:
     const uint8_t* getIconImage() override; 
     const char* getName() override { return "eReader"; }
 
+    // A página do leitor ocupa o ecrã todo: o indicador de bateria do sistema
+    // aterrava por cima do texto. Na biblioteca não há conflito.
+    bool allowsSystemStatusIndicator() override { return _state != VIEW_READING; }
+
     bool hasBootResume();
     void resumeSavedBookOnStart();
     void handleInput(InputAction action);
@@ -100,7 +104,19 @@ private:
     bool openSavedProgress();
     // v1.8.0: keyed by original filename via ProgressStore, not by path.
     bool loadBookProgress(const String& originalName, int& chapter, PagePointer& pointer, int& globalPage);
+    // Marca a posição actual como por gravar. A escrita em si acontece em
+    // flushProgress(), chamado pelo update() quando o leitor fica parado e
+    // sempre que o livro é fechado (o que inclui o standby, que passa por
+    // stop()). Gravar a cada virar de página reescrevia o reader_progress.json
+    // inteiro centenas de vezes por sessão de leitura, sempre nos mesmos
+    // blocos do LittleFS.
     void saveReadingProgress(bool resumeOnBoot);
+    void flushProgress();
+    bool _progressDirty = false;
+    bool _progressResumeOnBoot = false;
+    unsigned long _lastProgressChangeMs = 0;
+    static const unsigned long PROGRESS_FLUSH_DELAY_MS = 4000;
+
     void markProgressInactive();
     void closeBook(bool markInactive = true);
     void loadChapter(int chapterIndex);

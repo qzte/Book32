@@ -43,6 +43,15 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+// escapeHtml() serve para texto: escapa & < > mas deixa passar aspas e plicas,
+// que é precisamente o que parte um valor dentro de um atributo. Nomes de
+// ficheiro e títulos de EPUB contêm plicas com frequência ("O'Brien"), por isso
+// tudo o que vai para um atributo passa por aqui.
+function escapeAttr(text) {
+    const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+    return String(text).replace(/[&<>"']/g, c => map[c]);
+}
+
 async function fetchStatus() {
     try {
         const res = await fetch('/api/status');
@@ -115,12 +124,14 @@ async function checkUpdate() {
             if (data.hasFirmware) updateParts.push("firmware");
             if (data.hasFilesystem) updateParts.push("web interface");
 
-            msg.innerHTML = `<strong>New version available: ${data.latest}</strong>`;
+            // A tag e o corpo do release são texto de fora do dispositivo:
+            // entram como conteúdo, não como marcação.
+            msg.innerHTML = `<strong>New version available: ${escapeHtml(data.latest)}</strong>`;
             if (updateParts.length > 0) {
                 msg.innerHTML += `<br><small>Includes: ${updateParts.join(" and ")}</small>`;
             }
             if (data.release_notes) {
-                msg.innerHTML += `<br><small>${data.release_notes}</small>`;
+                msg.innerHTML += `<br><small>${escapeHtml(data.release_notes)}</small>`;
             }
             msg.style.color = "var(--success)";
             updateBtn.classList.remove('hidden');
@@ -181,15 +192,20 @@ function renderBooks() {
         return;
     }
     const epubs = currentBooks.filter(b => isEpub(b.filename));
+    // Nomes de ficheiro e títulos vêm dos EPUB enviados. Interpolá-los num
+    // atributo onclick partia o handler ao primeiro título com plica e deixava
+    // um nome escolhido a dedo executar código nesta página; agora viajam em
+    // data-* (com escape de atributo) e o clique é tratado por delegação.
     bookList.innerHTML = currentBooks.map(book => {
         const bookIsFont = isFont(book.filename);
+        const nameAttr = escapeAttr(book.filename);
         let orderBtns = '';
         if (!bookIsFont && epubs.length > 1) {
             const idx = epubs.indexOf(book);
             orderBtns = `
                 <span class="order-btns">
-                    <button class="btn-order" ${idx === 0 ? 'disabled' : ''} onclick="moveBook('${book.filename}', -1)" title="Move up">▲</button>
-                    <button class="btn-order" ${idx === epubs.length - 1 ? 'disabled' : ''} onclick="moveBook('${book.filename}', 1)" title="Move down">▼</button>
+                    <button class="btn-order" ${idx === 0 ? 'disabled' : ''} data-action="move" data-dir="-1" data-filename="${nameAttr}" title="Move up">▲</button>
+                    <button class="btn-order" ${idx === epubs.length - 1 ? 'disabled' : ''} data-action="move" data-dir="1" data-filename="${nameAttr}" title="Move down">▼</button>
                 </span>`;
         }
         return `
@@ -197,9 +213,29 @@ function renderBooks() {
             ${orderBtns}
             <span class="book-title">${bookIsFont ? '📂 [Font] ' : '📖 '}${escapeHtml(book.name)}</span>
             <span class="book-size">${Math.round(book.size / 1024)} KB</span>
-            <button class="btn-delete" onclick="deleteBook('${book.filename}', '${escapeHtml(book.name)}')">Delete</button>
+            <button class="btn-delete" data-action="delete" data-filename="${nameAttr}" data-name="${escapeAttr(book.name)}">Delete</button>
         </div>
     `}).join('');
+    bindBookListActions();
+}
+
+// O ouvinte fica no contentor, que sobrevive à substituição do innerHTML, por
+// isso basta ligá-lo uma vez.
+let bookListBound = false;
+function bindBookListActions() {
+    if (bookListBound) return;
+    const bookList = document.getElementById('book-list');
+    if (!bookList) return;
+    bookList.addEventListener('click', e => {
+        const btn = e.target.closest('button[data-action]');
+        if (!btn) return;
+        if (btn.dataset.action === 'delete') {
+            deleteBook(btn.dataset.filename, btn.dataset.name);
+        } else if (btn.dataset.action === 'move') {
+            moveBook(btn.dataset.filename, Number(btn.dataset.dir));
+        }
+    });
+    bookListBound = true;
 }
 
 function moveBook(filename, dir) {
