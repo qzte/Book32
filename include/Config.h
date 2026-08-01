@@ -1,7 +1,10 @@
 #pragma once
 
 // System Information
-#define SYSTEM_VERSION "1.9.1"
+// Major.Minor.Patch, sempre com os tres componentes: o release.yml so dispara
+// em tags v[0-9]+.[0-9]+.[0-9]+ e compara a tag com este valor caractere a
+// caractere. "1.10" aqui (ou uma tag v1.10) nao publicaria release nenhum.
+#define SYSTEM_VERSION "1.10.0"
 #define DEVICE_NAME "Book32"
 
 // Offline management hotspot (SoftAP). When the device can't reach a known
