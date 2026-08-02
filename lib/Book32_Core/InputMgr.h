@@ -55,6 +55,16 @@ private:
     unsigned long _btnSleepPressTime = 0;
     bool _btnSleepLongPressSent = false;
 
+    // Premir de KEY2 recusado pelo guarda de standby (ver StandbyGuard.h).
+    // Mantém-se até KEY2 ser largado, para que o mesmo LOW não seja reavaliado
+    // ciclo após ciclo até calhar passar.
+    bool _btnSleepAborted = false;
+
+    // Intervalo mínimo entre resets do temporizador de inactividade feitos a
+    // partir da amostragem crua dos pinos (o ciclo corre a cada 5ms).
+    static const unsigned long IDLE_RESET_THROTTLE_MS = 250;
+    unsigned long _lastIdleResetTime = 0;
+
     static const uint8_t QUEUE_SIZE = 8;
     volatile uint8_t _queueHead = 0;
     volatile uint8_t _queueTail = 0;
