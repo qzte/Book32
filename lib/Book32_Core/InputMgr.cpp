@@ -3,6 +3,7 @@
 #include "BatteryMgr.h"
 #include "AppMgr.h"
 #include "ButtonPressLogic.h"
+#include "StandbyGuard.h"
 
 InputMgr::InputMgr() : btn(PIN_BUTTON, true, true), btnBack(PIN_BUTTON_BACK, true, true),
                        btnSleep(PIN_BUTTON_SLEEP, true, true) { // Active Low, Pullup
@@ -101,17 +102,24 @@ void InputMgr::inputTask(void* parameter) {
         self->btn.tick();
         // btnBack.tick() removed - using manual polling instead
 
-        // v1.9.1 diagnostics (PINDIAG). A user reported KEY1 and KEY3 entering
-        // standby, but no code path in this file connects those buttons to
-        // sleep: standby is only reached from the KEY2 long press below, and
-        // idle sleep only from BatteryMgr's timeout. Before changing any
-        // behaviour we need to see what the pins actually read, so log a raw
-        // snapshot of all three on every edge. 1 = released (pull-up),
-        // 0 = pressed (active low).
+        // Estado cru dos três botões, lido uma vez por ciclo e partilhado pelo
+        // diagnóstico e pelos blocos de detecção abaixo. KEY3 entra aqui porque
+        // o guarda de standby precisa de saber se está premido: é lido em bruto
+        // e não através do OneButton, que só reporta eventos já classificados.
+        bool key1Pressed = (digitalRead(PIN_BUTTON_BACK)  == LOW);  // Active low
+        bool key2Pressed = (digitalRead(PIN_BUTTON_SLEEP) == LOW);
+        bool key3Pressed = (digitalRead(PIN_BUTTON)       == LOW);
+        unsigned long now = millis();
+
+        // v1.9.1 diagnostics (PINDIAG): snapshot cru dos três pinos em cada
+        // transição. 1 = solto (pull-up), 0 = premido (activo a baixo).
+        // Mantém-se depois da correcção: é o que mostra se um premir de KEY3
+        // arrasta GPIO3 com ele, que é a hipótese que o guarda de standby
+        // defende.
         {
-            uint8_t snapshot = (uint8_t)((digitalRead(PIN_BUTTON_BACK)  ? 0x01 : 0) |
-                                         (digitalRead(PIN_BUTTON_SLEEP) ? 0x02 : 0) |
-                                         (digitalRead(PIN_BUTTON)       ? 0x04 : 0));
+            uint8_t snapshot = (uint8_t)((key1Pressed ? 0 : 0x01) |
+                                         (key2Pressed ? 0 : 0x02) |
+                                         (key3Pressed ? 0 : 0x04));
             if (snapshot != self->_lastPinSnapshot) {
                 self->_lastPinSnapshot = snapshot;
                 Serial.printf("PINDIAG: KEY1/GPIO%d=%d  KEY2/GPIO%d=%d  KEY3/GPIO%d=%d\n",
@@ -121,13 +129,27 @@ void InputMgr::inputTask(void* parameter) {
             }
         }
 
-        
+
+        // Qualquer botão em baixo é actividade do utilizador. O reset do
+        // temporizador de inactividade vivia só nos eventos já classificados,
+        // por isso um KEY3 mantido premido (ou premires que o OneButton ainda
+        // não fechou) não contava como actividade e o timeout podia disparar
+        // durante o uso — indistinguível, para quem está a ler, de "o KEY3
+        // mandou o leitor dormir".
+        //
+        // Limitado a uma vez por IDLE_RESET_THROTTLE_MS: resetIdleTimer() pega
+        // no mutex do BatteryMgr, que a leitura do ADC segura dezenas de ms, e
+        // não vale a pena arriscar bloquear a amostragem dos botões a cada 5ms.
+        if ((key1Pressed || key2Pressed || key3Pressed) &&
+            (self->_lastIdleResetTime == 0 ||
+             (now - self->_lastIdleResetTime) >= IDLE_RESET_THROTTLE_MS)) {
+            self->_lastIdleResetTime = now;
+            BatteryMgr::getInstance().resetIdleTimer();
+        }
+
         // Manual KEY1 long press detection (PIN_BUTTON_BACK)
-        // Read the button state directly
-        int btnState = digitalRead(PIN_BUTTON_BACK);
-        bool btnPressed = (btnState == LOW);  // Active low
-        unsigned long now = millis();
-        
+        bool btnPressed = key1Pressed;
+
         if (btnPressed) {
             // Button is pressed
             if (self->_btnBackPressTime == 0) {
@@ -170,21 +192,42 @@ void InputMgr::inputTask(void* parameter) {
         // loop principal, e não despachado pelo callback, para funcionar em
         // todos os apps e em ecrãs modais como o aviso de alterações por
         // guardar.
-        int sleepState = digitalRead(PIN_BUTTON_SLEEP);
-        bool sleepPressed = (sleepState == LOW);  // Active low
+        bool sleepPressed = key2Pressed;
 
         if (sleepPressed) {
             if (self->_btnSleepPressTime == 0) {
                 self->_btnSleepPressTime = now;
                 self->_btnSleepLongPressSent = false;
+                self->_btnSleepAborted = false;
                 Serial.println("KEY2: Button pressed");
-            } else if (!self->_btnSleepLongPressSent &&
+            } else if (!self->_btnSleepLongPressSent && !self->_btnSleepAborted &&
                        (now - self->_btnSleepPressTime) >= BUTTON_LONG_PRESS_MS) {
-                Serial.println("INPUT: KEY2 Long Press -> STANDBY requested");
-                self->_btnSleepLongPressSent = true;
-                // Só marca: quem adormece é o loop principal, em update().
-                // Aqui não se pode desenhar no e-ink (ver enterStandby).
-                self->_standbyRequested = true;
+                // Guarda de standby: relê os três pinos e só aceita o pedido se
+                // KEY2 estiver mesmo premido e mais nenhum botão estiver em
+                // baixo. Sem isto, um LOW induzido em GPIO3 por premir KEY3
+                // valia um standby (ver StandbyGuard.h).
+                StandbyDecision decision = classifyStandbyRequest(
+                    digitalRead(PIN_BUTTON_SLEEP) == LOW,
+                    digitalRead(PIN_BUTTON_BACK)  == LOW,
+                    digitalRead(PIN_BUTTON)       == LOW,
+                    now - self->_btnSleepPressTime);
+
+                if (decision == STANDBY_ALLOW) {
+                    Serial.println("INPUT: KEY2 Long Press -> STANDBY requested");
+                    self->_btnSleepLongPressSent = true;
+                    // Só marca: quem adormece é o loop principal, em update().
+                    // Aqui não se pode desenhar no e-ink (ver enterStandby).
+                    self->_standbyRequested = true;
+                } else {
+                    // Recusa definitiva para este premir: sem o travão, o ciclo
+                    // seguinte voltaria a testar e um único instante com os
+                    // outros botões soltos deixava passar o standby espúrio.
+                    // O premir só volta a contar depois de KEY2 ser largado.
+                    self->_btnSleepAborted = true;
+                    Serial.printf("SLEEPDIAG: standby denied  reason=%s  held=%lums\n",
+                                  standbyDecisionName(decision),
+                                  now - self->_btnSleepPressTime);
+                }
             }
         } else {
             if (self->_btnSleepPressTime != 0) {
@@ -199,7 +242,13 @@ void InputMgr::inputTask(void* parameter) {
                 // largar do botão chega a esta linha antes de o loop
                 // principal adormecer. Sem ele, soltar o botão depois de um
                 // long press custava um refresh completo de ~2 s.
-                if (classifyButtonRelease(pressDuration, self->_btnSleepLongPressSent) ==
+                //
+                // Um premir recusado pelo guarda conta como consumido: se o
+                // LOW em GPIO3 veio de outro botão, também não é um pedido de
+                // refresh, e um refresh completo de ~2 s é caro demais para se
+                // dar a ruído.
+                if (classifyButtonRelease(pressDuration,
+                                          self->_btnSleepLongPressSent || self->_btnSleepAborted) ==
                     BUTTON_RELEASE_CLICK) {
                     Serial.printf("KEY2: Button released after %lu ms -> REFRESH\n", pressDuration);
                     BatteryMgr::getInstance().resetIdleTimer();
@@ -208,6 +257,7 @@ void InputMgr::inputTask(void* parameter) {
 
                 self->_btnSleepPressTime = 0;
                 self->_btnSleepLongPressSent = false;
+                self->_btnSleepAborted = false;
             }
         }
 
