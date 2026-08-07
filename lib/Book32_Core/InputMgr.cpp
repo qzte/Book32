@@ -38,11 +38,12 @@ void InputMgr::init() {
     btnBack.setPressMs(BUTTON_LONG_PRESS_MS);
 
     // KEY2 - short click triggers a manual full display refresh; long press
-    // enters standby. Standby stays on the long press so a brush against the
-    // button never drops the device into deep sleep mid-page. Polled manually
-    // for the same reason as KEY1.
+    // enters standby. Standby needs STANDBY_HOLD_MS held (see StandbyGuard.h),
+    // well beyond the ordinary BUTTON_LONG_PRESS_MS, so a brush against the
+    // button - or against KEY1/KEY3 - never drops the device into deep sleep
+    // mid-page. Polled manually for the same reason as KEY1.
     btnSleep.setDebounceMs(BUTTON_DEBOUNCE_MIN_MS);
-    btnSleep.setPressMs(BUTTON_LONG_PRESS_MS);
+    btnSleep.setPressMs(STANDBY_HOLD_MS);
     pinMode(PIN_BUTTON_SLEEP, INPUT_PULLUP);
 
     if (!_taskHandle) {
@@ -201,11 +202,14 @@ void InputMgr::inputTask(void* parameter) {
                 self->_btnSleepAborted = false;
                 Serial.println("KEY2: Button pressed");
             } else if (!self->_btnSleepLongPressSent && !self->_btnSleepAborted &&
-                       (now - self->_btnSleepPressTime) >= BUTTON_LONG_PRESS_MS) {
+                       (now - self->_btnSleepPressTime) >= STANDBY_HOLD_MS) {
                 // Guarda de standby: relê os três pinos e só aceita o pedido se
                 // KEY2 estiver mesmo premido e mais nenhum botão estiver em
                 // baixo. Sem isto, um LOW induzido em GPIO3 por premir KEY3
-                // valia um standby (ver StandbyGuard.h).
+                // valia um standby (ver StandbyGuard.h). O limiar é
+                // STANDBY_HOLD_MS (bem acima do BUTTON_LONG_PRESS_MS que KEY1
+                // e KEY3 usam) de propósito: um long press comum de
+                // navegação não pode passar por um pedido de standby.
                 StandbyDecision decision = classifyStandbyRequest(
                     digitalRead(PIN_BUTTON_SLEEP) == LOW,
                     digitalRead(PIN_BUTTON_BACK)  == LOW,

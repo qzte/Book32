@@ -87,3 +87,48 @@ Se o sintoma reaparecer **sem** essa linha e **com**
 ```
 g++ -std=c++17 -I ../../lib/Book32_Core -o test_standby_guard test_standby_guard.cpp && ./test_standby_guard
 ```
+
+## Correcção (v1.10.2) — limiar de standby separado
+
+O sintoma foi relatado uma terceira vez, com a v1.9.2 já em main. Reler o
+guarda com atenção: `classifyStandbyRequest()` relê os três pinos no instante
+da decisão, e KEY3 é lido do seu próprio GPIO (5), não inferido a partir de
+GPIO3. Enquanto o utilizador estiver mesmo a premir KEY3 nesse instante, a
+leitura tem de mostrar `key3Held=true` e o guarda tem de recusar — isso não
+mudou e continua verdadeiro. O que ficou por corrigir foi o **limiar**: o
+guarda só é avaliado quando `now - _btnSleepPressTime` atinge
+`BUTTON_LONG_PRESS_MS`, que são uns meros 400ms — o mesmo valor que KEY1 e
+KEY3 usam para os seus próprios long press (ir ao menu principal, SELECT).
+400ms é fácil de atingir sem intenção de standby nenhuma, e é uma janela
+curta a mais para um LOW espúrio em GPIO3 (ruído, solda marginal, terra
+partilhado) coincidir por acaso com o instante exacto da amostra.
+
+Introduzido `STANDBY_HOLD_MS` (1500ms) em `StandbyGuard.h`, um limiar só para
+o standby, bem acima do `BUTTON_LONG_PRESS_MS` que as outras acções
+continuam a usar. `InputMgr::inputTask()` só chama
+`classifyStandbyRequest()` depois de KEY2 estar premido por
+`STANDBY_HOLD_MS`, não por `BUTTON_LONG_PRESS_MS`. Efeitos:
+
+- Um long press normal de KEY1/KEY3 (400ms) deixa de conseguir, por si só,
+  aproximar-se sequer do limiar de standby — já não são a mesma duração.
+- Qualquer ruído em GPIO3 tem de se sustentar por 1.5s inteiros, não só
+  400ms, para ter alguma hipótese de ser mal interpretado como long press de
+  KEY2 — o que reduz bastante a janela para coincidir com a amostra única do
+  guarda.
+- Um KEY2 largado entre 400ms e 1500ms não faz nada (nem refresh, nem
+  standby): passou da janela de clique mas não chegou à de standby. Isto é
+  intencional — um premir "a meio" não deve ter efeito nenhum.
+
+Continua por confirmar em hardware real: nenhuma sessão até agora teve
+acesso ao dispositivo físico, apenas aos testes de host
+(`tools/tests/test_standby_guard.cpp`, 9 casos) e à leitura do código. Se o
+sintoma for relatado uma quarta vez com esta versão em campo, os únicos
+caminhos que sobram são (a) o LOW em GPIO3 realmente se sustenta por mais de
+1.5s a par de KEY3 solto — o que já não é uma janela de amostragem
+infeliz, é um curto-circuito ou ligação eléctrica persistente entre os dois
+pinos — ou (b) o botão fisicamente rotulado "KEY3" na caixa não está de
+facto ligado a GPIO5/`PIN_BUTTON`, e o que o utilizador prime é
+electricamente GPIO3. Nenhuma das duas tem correcção por software: a
+instrumentação `PINDIAG`/`SLEEPDIAG` já existente no código é o que
+distingue as duas, e é isso que é preciso capturar do dispositivo real antes
+de continuar a especular.
