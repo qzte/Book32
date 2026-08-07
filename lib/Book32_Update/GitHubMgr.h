@@ -31,4 +31,13 @@ public:
 
 private:
     GitHubMgr();
+
+    // Corpo partilhado pelos dois performXxxUpdate(). As duas variantes eram
+    // 130 linhas copiadas que só diferiam na partição de destino e nos textos
+    // do ecrã — e cada correcção (paragem do stream, verificação do digest)
+    // teve de ser feita duas vezes, com o risco óbvio de ficar só numa.
+    // `partition` é U_FLASH ou U_SPIFFS.
+    bool downloadAndFlash(const char* url, int partition, const char* label,
+                          bool restartAfter, int step, int totalSteps,
+                          const char* expectedSha256);
 };

@@ -717,6 +717,16 @@ void AppReader::drawLibrary() {
 }
 
 void AppReader::drawReading() {
+    // Sem renderizador não há página: acontece se um livro falhar a abrir
+    // depois de closeBook() já ter libertado o estado. Cair para a biblioteca
+    // é o comportamento visível correcto — desreferenciar era um reset.
+    if (!_textRenderer) {
+        _state = VIEW_LIBRARY;
+        _librarySelectionOnlyRedraw = false;
+        drawLibrary();
+        return;
+    }
+
     DisplayMgr& dispMgr = DisplayMgr::getInstance();
     Book32Display& display = dispMgr.getDisplay();
     

@@ -274,6 +274,18 @@ void WebMgr::update() {
         }
     }
 
+    // Trocar de app a partir do loop principal. switchTo() corre stop(), start()
+    // e um draw() completo do e-ink; feito na tarefa do servidor, isso conduzia
+    // o mesmo SPI que o loop principal está a usar. Pior ainda no caso do
+    // leitor, cujo start() faz WebMgr::stop() + WiFi.mode(WIFI_OFF) — ou seja,
+    // desligava o servidor a partir de dentro do handler, antes de a resposta
+    // chegar ao cliente. Aqui a resposta já saiu.
+    if (_pendingAppSwitch >= 0) {
+        int index = _pendingAppSwitch;
+        _pendingAppSwitch = -1;
+        AppMgr::getInstance().switchTo(index);
+    }
+
     // Check if OTA was requested from web UI
     if (_otaPending) {
         _otaPending = false;
@@ -886,17 +898,19 @@ void WebMgr::setupEndpoints() {
                 removeBookMetadata(filename);
                 removeBookProgress(filename);
                 removeFromBookOrder(filename);
-                String thumbPath = "/covers/" + filename;
-                thumbPath.replace(".epub", ".thumb");
-                if (EbookFS.exists(thumbPath)) EbookFS.remove(thumbPath);
-                String coverPath = "/covers/" + filename;
-                coverPath.replace(".epub", ".cover");
-                coverPath.replace(".EPUB", ".cover");
-                if (EbookFS.exists(coverPath)) EbookFS.remove(coverPath);
-                String cover2Path = "/covers/" + filename;
-                cover2Path.replace(".epub", ".cover2");
-                cover2Path.replace(".EPUB", ".cover2");
-                if (EbookFS.exists(cover2Path)) EbookFS.remove(cover2Path);
+                // Ficheiros derivados em /covers. A extensão é retirada pela
+                // posição do último ponto, não por String::replace(".epub"):
+                // esse substituía a primeira ocorrência em qualquer sítio do
+                // nome ("a.epub.v2.epub" perdia a errada) e só cobria o caso
+                // minúsculas para o .thumb, deixando lixo para trás nos
+                // ficheiros ".EPUB".
+                int dot = filename.lastIndexOf('.');
+                String base = (dot > 0) ? filename.substring(0, dot) : filename;
+                const char* derivedExts[] = { ".thumb", ".cover", ".cover2" };
+                for (const char* ext : derivedExts) {
+                    String derived = "/covers/" + base + ext;
+                    if (EbookFS.exists(derived)) EbookFS.remove(derived);
+                }
                 request->send(200, "text/plain", "Deleted");
             } else {
                 request->send(500, "text/plain", "Delete failed");
@@ -1249,9 +1263,10 @@ void WebMgr::setupEndpoints() {
         }
 
         if (appIndex >= 0) {
-            appMgr.switchTo(appIndex);
+            // Só agenda: a troca é executada por update(), no loop principal.
+            WebMgr::getInstance()._pendingAppSwitch = appIndex;
             request->send(200, "application/json", "{\"status\":\"ok\"}");
-            Serial.printf("Switched to app: %s\n", appName.c_str());
+            Serial.printf("App switch scheduled: %s\n", appName.c_str());
         } else {
             request->send(404, "application/json", "{\"error\":\"App not found\"}");
         }
