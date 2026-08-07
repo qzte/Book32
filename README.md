@@ -1,5 +1,8 @@
 # Book32
 
+[![CI](https://github.com/qzte/Book32/actions/workflows/ci.yml/badge.svg)](https://github.com/qzte/Book32/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/qzte/Book32)](https://github.com/qzte/Book32/releases/latest)
+
 Book32 is a custom E-Ink application OS for the Seeed Studio XIAO ESP32-S3
 TRMNL 7.5 inch OG DIY kit. It includes an EPUB reader and a local web
 interface for books, settings, and OTA updates.
@@ -125,19 +128,25 @@ device to an untrusted network or forward port 80 to it.
 
 ## OTA Updates
 
-Book32 now uses the public GitHub release feed:
+Book32 uses the public GitHub release feed:
 
 ```text
 https://github.com/qzte/Book32/releases/latest
 ```
 
-No GitHub personal access token is required. Releases should include:
+No GitHub personal access token is required. Every release published by
+`.github/workflows/release.yml` includes:
 
 - `firmware.bin`
 - `littlefs.bin`
+- a SHA-256 checksum for each asset in the release notes
 
 The device downloads those public release assets directly when you run an update
-from the web interface or the device menu.
+from the web interface or the device menu, and refuses to install an asset
+whose checksum is missing or does not match — see [Releases](https://github.com/qzte/Book32/releases)
+for the published versions. A brand-new board flashed by USB with an older
+firmware picks up subsequent releases over the air automatically; there is no
+separate bootstrap step.
 
 ## Useful PlatformIO Commands
 
