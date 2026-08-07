@@ -164,6 +164,12 @@ bool EpubLoader::parseOpf() {
         int itemStart = manifestBlock.indexOf("<item", pos);
         if(itemStart == -1) break;
         int itemEnd = manifestBlock.indexOf(">", itemStart);
+        // Um '<item' sem '>' (OPF truncado ou mal formado) devolvia -1 aqui:
+        // substring(itemStart, 0) trocava os limites e, sobretudo, pos ficava
+        // a -1, o que faz o indexOf seguinte ler fora do buffer e o ciclo
+        // nunca terminar. O ficheiro vem de um EPUB do utilizador, por isso
+        // tem de falhar em silêncio e não travar o leitor.
+        if(itemEnd == -1) break;
         String itemTag = manifestBlock.substring(itemStart, itemEnd+1);
         String id = extractAttribute(itemTag, "item", "id");
         String href = extractAttribute(itemTag, "item", "href");
@@ -186,7 +192,7 @@ bool EpubLoader::parseOpf() {
                 fonts.push_back(font);
             }
         }
-        pos = itemEnd;
+        pos = itemEnd + 1;
     }
     int spineStart = xml.indexOf("<spine"), spineEnd = xml.indexOf("</spine>");
     if(spineStart == -1 || spineEnd == -1) return false;
@@ -196,13 +202,14 @@ bool EpubLoader::parseOpf() {
         int itemRefStart = spineBlock.indexOf("<itemref", pos);
         if(itemRefStart == -1) break;
         int itemRefEnd = spineBlock.indexOf(">", itemRefStart);
+        if(itemRefEnd == -1) break;  // mesma razão do ciclo do manifest
         String itemRefTag = spineBlock.substring(itemRefStart, itemRefEnd+1);
         String idref = extractAttribute(itemRefTag, "itemref", "idref");
         if(idref.length() > 0 && manifest.count(idref)) {
             SpineItem item; item.id = idref; item.href = manifest[idref];
             spine.push_back(item);
         }
-        pos = itemRefEnd;
+        pos = itemRefEnd + 1;
     }
 
     return true;
@@ -249,6 +256,13 @@ String EpubLoader::extractMetadata(const String& xml, const String& tag) {
     return content;
 }
 
+// Tecto para o que se carrega de dentro do ZIP para uma String. O tamanho vem
+// do cabeçalho do EPUB, ou seja, de um ficheiro do utilizador: sem tecto, um
+// capítulo gigante (ou um cabeçalho a mentir) pedia esse tamanho à heap
+// interna, que tem umas centenas de KB, e o leitor morria a abrir o livro.
+// Truncar deixa o capítulo incompleto mas o dispositivo de pé.
+static const int BOOK32_MAX_ZIP_TEXT_BYTES = 256 * 1024;
+
 String EpubLoader::readFileFromZip(const char* path) {
     if (zip->locateFile(path) != ZIP_SUCCESS) return "";
     if (zip->openCurrentFile() != ZIP_SUCCESS) return "";
@@ -256,6 +270,11 @@ String EpubLoader::readFileFromZip(const char* path) {
     char szName[256];
     zip->getFileInfo(&fileInfo, szName, sizeof(szName), NULL, 0, NULL, 0);
     int size = fileInfo.uncompressed_size;
+    if (size > BOOK32_MAX_ZIP_TEXT_BYTES) {
+        Serial.printf("EpubLoader: %s tem %d bytes; a truncar em %d\n",
+                      path, size, BOOK32_MAX_ZIP_TEXT_BYTES);
+        size = BOOK32_MAX_ZIP_TEXT_BYTES;
+    }
 
     String str;
     str.reserve(size + 1);

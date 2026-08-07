@@ -673,8 +673,13 @@ function scanWifi() {
                     status.style.color = 'var(--text-secondary)';
                     return;
                 }
+                // O SSID vai para dentro de um atributo, por isso passa por
+                // escapeAttr: escapeHtml deixa passar aspas, e um SSID é
+                // texto que qualquer aparelho ao alcance pode escolher —
+                // bastava chamar-lhe `"><img onerror=...>` para injectar
+                // markup nesta página.
                 sel.innerHTML = nets.map(n =>
-                    `<option value="${escapeHtml(n.ssid)}">${escapeHtml(n.ssid)} (${n.rssi} dBm)${n.secure ? ' 🔒' : ''}</option>`
+                    `<option value="${escapeAttr(n.ssid)}">${escapeHtml(n.ssid)} (${n.rssi} dBm)${n.secure ? ' 🔒' : ''}</option>`
                 ).join('');
                 status.textContent = `Found ${nets.length} network(s).`;
                 status.style.color = 'var(--success)';

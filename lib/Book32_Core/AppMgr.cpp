@@ -12,7 +12,7 @@ void AppMgr::registerApp(App* app) {
 }
 
 void AppMgr::switchTo(int index) {
-    if (index >= 0 && index < apps.size()) {
+    if (index >= 0 && index < (int)apps.size()) {
         if (currentApp) currentApp->stop();
         currentApp = apps[index];
         currentApp->start(); // Use start() instead of setup()
