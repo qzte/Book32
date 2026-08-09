@@ -132,3 +132,52 @@ electricamente GPIO3. Nenhuma das duas tem correcção por software: a
 instrumentação `PINDIAG`/`SLEEPDIAG` já existente no código é o que
 distingue as duas, e é isso que é preciso capturar do dispositivo real antes
 de continuar a especular.
+
+## Resolvido (v1.10.3) — era a hipótese B, confirmada por log real
+
+Primeiro log real do dispositivo, capturado a pedido depois de uma quarta
+ocorrência (desta vez KEY3 a click normal, a meio de virar página em vez de
+long press). Duas capturas:
+
+1. Utilização normal (KEY3 → NEXT, KEY2 → REFRESH, KEY1 → PREV): cada
+   `PINDIAG` mostra **um único** pino a mudar por evento. Sem coincidência
+   nenhuma entre pinos — a hipótese A (acoplamento eléctrico) fica
+   directamente desmentida pela primeira vez que há dados reais para a testar.
+2. O momento do sintoma:
+   ```
+   PINDIAG: KEY1/GPIO2=1  KEY2/GPIO3=0  KEY3/GPIO5=1
+   KEY2: Button pressed
+   INPUT: KEY2 Long Press -> STANDBY requested
+   SLEEPDIAG: path=KEY2_LONG_PRESS  KEY1/GPIO2=1  KEY2/GPIO3=0  KEY3/GPIO5=1
+   SLEEPDIAG: enterIdleSleep() reached  reason=key2_long_press
+   ```
+   Sem nenhuma linha `PINDIAG` intermédia entre o premir e a decisão, ou seja
+   nenhum pino mudou de estado durante o hold inteiro (≥1.5s, já com o
+   `STANDBY_HOLD_MS` da v1.10.2). GPIO3 sozinho, sustentado, KEY1 e KEY3
+   soltos do princípio ao fim. Isto não é ruído nem acoplamento — é um long
+   press limpo e genuíno em GPIO3. O guarda (`StandbyGuard.h`) e o limiar
+   (`STANDBY_HOLD_MS`) fizeram exactamente o que foram desenhados para
+   fazer.
+
+O que estava errado não era o código: era a hipótese B, que tinha sido
+descartada cedo demais (nota da v1.9.1: "GPIO3 é o botão do meio em
+qualquer das duas ordens possíveis, pelo que uma simples inversão de
+etiquetas não explica o sintoma" — verdade para uma troca KEY1↔KEY3, mas
+não cobre uma troca KEY2↔KEY3). Este é um kit DIY montado à mão; o botão que
+o utilizador usa fisicamente para virar página está ligado ao pino que o
+`Config.h` chamava GPIO3/`PIN_BUTTON_SLEEP` (KEY2), não ao GPIO5/`PIN_BUTTON`
+(KEY3) que a wiki do kit assume.
+
+### Correcção
+`include/Config.h`: `PIN_BUTTON` e `PIN_BUTTON_SLEEP` trocados (3 ↔ 5), para
+corresponder à fiação real deste aparelho. Todo o resto do código lê os
+pinos só através destas macros — confirmado por grep, sem nenhum número de
+GPIO em bruto em `lib/` — por isso a troca não pediu mais nenhuma alteração
+funcional. O aviso de acordar por KEY3 (`esp_sleep_enable_ext0_wakeup`) usa a
+mesma macro `PIN_BUTTON`, por isso continua a acordar com o botão que o
+utilizador já usa para tudo o resto.
+
+O guarda de standby e o `STANDBY_HOLD_MS` da v1.10.2 ficam no código: não
+fizeram mal nenhum, e continuam a ser uma defesa razoável contra ruído
+genuíno se algum dia aparecer. Só deixam de ser, sozinhos, a explicação do
+sintoma relatado.
