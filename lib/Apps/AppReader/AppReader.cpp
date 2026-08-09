@@ -8,6 +8,7 @@
 #include "BookOrderLogic.h"
 #include "BookMeta.h"
 #include "ProgressStore.h"
+#include "PageCountStore.h"
 #include "WebMgr.h"
 #include <WiFi.h>
 #include <LittleFS.h>
@@ -88,6 +89,12 @@ AppReader::AppReader() {
     _textRenderer = nullptr;
     _currentChapter = 0;
     _needsRedraw = true;
+    _totalPages = 0;
+    _countingActive = false;
+    _countRenderer = nullptr;
+    _countChapter = 0;
+    _countPointer = {0, 0};
+    _countPagesSoFar = 0;
     _currentPageRender = {0, 0, false, 0, 0};
     _currentPageRenderValid = false;
     _pageTurnsSinceRefresh = 0;
@@ -226,6 +233,11 @@ void AppReader::scanBooks() {
                 b.hasProgress = true;
                 b.globalPage = p.globalPage;
             }
+            // Only known once a book has been read all the way through at the
+            // current font settings (see startTotalPagesCounting) — scanning
+            // every unread book here would be exactly the slow-open problem
+            // this feature is careful to avoid.
+            b.totalPages = PageCountStore::getInstance().get(b.originalName, _fontSizePt, _fontFamily);
         }
     }
 
@@ -352,8 +364,9 @@ bool AppReader::openBook(const String& path, bool restoreProgress) {
 
     _textRenderer->calculateDimensions();
 
-    // Sem contagem total de paginas: pagina-las todas a cada abertura demora
-    // demasiado num livro grande. O numero de pagina e seguido em runtime.
+    // Paginating the whole book here would stall opening a large one, so only
+    // the running position is known immediately; startTotalPagesCounting()
+    // below fills in the total a little at a time instead.
     _globalPageNumber = 1; // Start at page 1
     _currentPageRenderValid = false;
     
@@ -381,6 +394,7 @@ bool AppReader::openBook(const String& path, bool restoreProgress) {
     }
 
     _state = VIEW_READING;
+    startTotalPagesCounting();
     // Abrir um livro grava já: é o que marca o livro como "último aberto" para
     // o resume no arranque, e acontece uma vez por livro, não por página.
     saveReadingProgress(true);
@@ -458,6 +472,88 @@ void AppReader::closeBook(bool markInactive) {
     if (_textRenderer) { delete _textRenderer; _textRenderer = nullptr; }
     _pageHistory.clear();
     _currentPageRenderValid = false;
+
+    _countingActive = false;
+    _countChapterContent.clear();
+    if (_countRenderer) { delete _countRenderer; _countRenderer = nullptr; }
+}
+
+// Kicks off (or resumes from cache) the total page count for the book that
+// just opened in _epubLoader/_currentBookPath. A cached total from a previous
+// full count at the same font settings resolves this instantly; otherwise
+// updateTotalPagesCount() walks the book from update(), a bounded slice at a
+// time, until it reaches the end.
+void AppReader::startTotalPagesCounting() {
+    _totalPages = 0;
+    _countingActive = false;
+    _countChapterContent.clear();
+    _countChapter = 0;
+    _countPointer = {0, 0};
+    _countPagesSoFar = 0;
+    if (_countRenderer) { delete _countRenderer; _countRenderer = nullptr; }
+
+    if (!_epubLoader || _currentBookPath.length() == 0) return;
+
+    String key = getOriginalFilename(normalizedBookName(_currentBookPath));
+    int cached = PageCountStore::getInstance().get(key, _fontSizePt, _fontFamily);
+    if (cached > 0) {
+        _totalPages = cached;
+        return;
+    }
+    _countingActive = true;
+}
+
+// Advances the total-page count by a time-boxed slice. Uses its own
+// EpubLoader chapter reads and its own TextRenderer (_countRenderer) so it
+// never touches the line cache or content the reading view is showing —
+// paginating a chapter for counting is otherwise the exact same measurement
+// nextPage() already does with draw=false.
+void AppReader::updateTotalPagesCount() {
+    if (!_epubLoader) { _countingActive = false; return; }
+
+    DisplayMgr& dispMgr = DisplayMgr::getInstance();
+    Book32Display& display = dispMgr.getDisplay();
+
+    if (!_countRenderer) {
+        _countRenderer = new TextRenderer(display.width(), display.height(), _fontSizePt);
+        _countRenderer->setFontFamily(_fontFamily);
+    }
+
+    unsigned long budgetEnd = millis() + TOTAL_PAGES_BUDGET_MS;
+    while (millis() < budgetEnd) {
+        if (_countChapterContent.empty()) {
+            if (_countChapter >= _epubLoader->getChapterCount()) {
+                int total = max(1, _countPagesSoFar);
+                _totalPages = total;
+                PageCountStore::getInstance().set(
+                    getOriginalFilename(normalizedBookName(_currentBookPath)),
+                    _fontSizePt, _fontFamily, total);
+                _countingActive = false;
+                delete _countRenderer;
+                _countRenderer = nullptr;
+                return;
+            }
+            _countChapterContent = _epubLoader->getChapterContentRich(_countChapter);
+            _countPointer = {0, 0};
+            if (_countChapterContent.empty()) {
+                _countChapter++;
+                continue;
+            }
+            _countPagesSoFar++; // First page of this chapter begins
+        }
+
+        RenderResult r = _countRenderer->renderRichPageDynamic(display, _countChapterContent,
+                                                                _countPointer.nodeIndex, _countPointer.charOffset,
+                                                                0, 0, false);
+        if (r.pageFull) {
+            _countPagesSoFar++;
+            _countPointer.nodeIndex = r.nextNodeIndex;
+            _countPointer.charOffset = r.nextCharOffset;
+        } else {
+            _countChapterContent.clear();
+            _countChapter++;
+        }
+    }
 }
 
 void AppReader::loadChapter(int chapterIndex) {
@@ -691,8 +787,12 @@ void AppReader::drawLibrary() {
                 // book is too slow to do on open, so a percentage would be
                 // made up.
                 if (book.hasProgress) {
-                    char pageLabel[24];
-                    snprintf(pageLabel, sizeof(pageLabel), "pag. %d", book.globalPage);
+                    char pageLabel[32];
+                    if (book.totalPages > 0) {
+                        snprintf(pageLabel, sizeof(pageLabel), "pag. %d/%d", book.globalPage, book.totalPages);
+                    } else {
+                        snprintf(pageLabel, sizeof(pageLabel), "pag. %d", book.globalPage);
+                    }
                     drawTextWithFont(display, pageLabel, textX, y + ITEM_HEIGHT - 22,
                                      &FreeSans9pt8b, textColor);
                 }
@@ -757,13 +857,26 @@ void AppReader::drawReading() {
         // Draw page number directly here for consistent display
         display.setFont(NULL);
         display.setTextColor(GxEPD_BLACK);
-        display.setCursor(display.width()/2 - 20, display.height() - 15);
-        display.printf("Page %d", _globalPageNumber);
+        char footerText[40];
+        if (_totalPages > 0) {
+            snprintf(footerText, sizeof(footerText), "Page %d of %d", _globalPageNumber, _totalPages);
+        } else {
+            snprintf(footerText, sizeof(footerText), "Page %d", _globalPageNumber);
+        }
+        int16_t fx1, fy1; uint16_t fw, fh;
+        display.getTextBounds(footerText, 0, 0, &fx1, &fy1, &fw, &fh);
+        display.setCursor(display.width()/2 - (int)fw/2, display.height() - 15);
+        display.print(footerText);
     } while (display.nextPage());
 }
 
 void AppReader::update() {
     // Library rendering is static unless input changes selection.
+
+    // Spend a small time-boxed slice counting more of the open book's total
+    // pages, if it isn't already known. Runs between draw() calls only (see
+    // updateTotalPagesCount), so it never overlaps an actual page render.
+    if (_countingActive) updateTotalPagesCount();
 
     // Commit a deferred reading position once the page has been still for a
     // while. Page turns only mark it dirty (see saveReadingProgress), so a
@@ -786,6 +899,10 @@ void AppReader::applyFontSize(int pt) {
     _readingFirstDraw = true;     // Full refresh to clear the old layout cleanly
     _pageTurnsSinceRefresh = 0;
     _needsRedraw = true;
+
+    // The total page count is font-size dependent; re-derive it for the new
+    // size (a no-op if a cached total already exists at this size).
+    startTotalPagesCounting();
 }
 
 void AppReader::applyFontFamily(int family) {
@@ -800,6 +917,9 @@ void AppReader::applyFontFamily(int family) {
     _readingFirstDraw = true;     // Full refresh to clear the old layout cleanly
     _pageTurnsSinceRefresh = 0;
     _needsRedraw = true;
+
+    // Same reasoning as applyFontSize: the total is specific to this family.
+    startTotalPagesCounting();
 }
 
 void AppReader::forceRedraw() {

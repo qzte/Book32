@@ -19,8 +19,9 @@ struct BookEntry {
     String originalName; // v1.8.0: key used by ProgressStore (original filename)
     bool hasProgress;    // v1.8.0: true when a saved position exists
     int globalPage;      // v1.8.0: saved page, shown in the library list
+    int totalPages;      // Cached total page count; 0 when not yet known
 
-    BookEntry() : hasProgress(false), globalPage(1) {}
+    BookEntry() : hasProgress(false), globalPage(1), totalPages(0) {}
 };
 
 class AppReader : public App {
@@ -84,7 +85,22 @@ private:
     int _currentChapter;
     int _globalPageNumber; // Runtime tracking of global page (1-indexed)
     bool _needsRedraw;
-    
+
+    // Total page count, for the reading footer and the library list. Paginating
+    // a whole book up front would stall opening a large one, so it's counted a
+    // little at a time from update() instead, using a renderer of its own so it
+    // never disturbs the page actually on screen. See startTotalPagesCounting().
+    int _totalPages;      // 0 until known for the currently open book
+    bool _countingActive;
+    TextRenderer* _countRenderer;
+    int _countChapter;
+    std::vector<ContentNode> _countChapterContent;
+    PagePointer _countPointer;
+    int _countPagesSoFar;
+    static const unsigned long TOTAL_PAGES_BUDGET_MS = 15;
+    void startTotalPagesCounting();
+    void updateTotalPagesCount();
+
     // Dynamic Pagination
     std::vector<ContentNode> _currentRichContent;
     PagePointer _currentPagePointer;
