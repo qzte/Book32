@@ -4,7 +4,7 @@
 // Major.Minor.Patch, sempre com os tres componentes: o release.yml so dispara
 // em tags v[0-9]+.[0-9]+.[0-9]+ e compara a tag com este valor caractere a
 // caractere. "1.10" aqui (ou uma tag v1.10) nao publicaria release nenhum.
-#define SYSTEM_VERSION "1.10.3"
+#define SYSTEM_VERSION "1.10.4"
 #define DEVICE_NAME "Book32"
 
 // Offline management hotspot (SoftAP). When the device can't reach a known
@@ -16,18 +16,14 @@
 #define PIN_BAT_VOLT 1
 #define PIN_VBAT_SWITCH 6
 #define VBAT_SWITCH_LEVEL HIGH
-// v1.10.3: GPIO3 and GPIO5 swapped from the kit wiki's nominal KEY2/KEY3
-// assignment. Serial log evidence (SLEEPDIAG) on this unit: pressing the
-// button used for page turns produces a clean, sustained LOW on GPIO3 alone
-// - no other pin moves for the whole hold - which the firmware read as a
-// deliberate KEY2 long press and correctly, faithfully, put the device to
-// sleep. This is a hand-wired DIY kit; KEY2 and KEY3 were swapped during
-// assembly on this specific board. Below matches this board's actual wiring
-// rather than the kit wiki, so the button the user reaches for to turn pages
-// is the one the firmware treats as KEY3.
-#define PIN_BUTTON   3  // "KEY3" button
+// v1.10.4: reverts the v1.10.3 swap. That swap was a mistake - see the
+// postmortem in docs/plans/2026-07-26-key1-key3-standby-diagnostics.md. This
+// is the kit wiki's nominal assignment (KEY1=GPIO2, KEY2=GPIO3, KEY3=GPIO5),
+// confirmed correct by the user's own first log capture: a clean KEY3/GPIO5
+// press producing INPUT_NEXT, captured before any pin change ever shipped.
+#define PIN_BUTTON   5  // "KEY3" button
 #define PIN_BUTTON_BACK 2  // "KEY1" button - dedicated Back button
-#define PIN_BUTTON_SLEEP 5  // "KEY2" button - full refresh (click), standby (long press)
+#define PIN_BUTTON_SLEEP 3  // "KEY2" button - full refresh (click), standby (long press)
 
 // Display Pins (TRMNL 7.5" OG DIY Kit)
 #define EPD_SCK     7

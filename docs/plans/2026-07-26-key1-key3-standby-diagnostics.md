@@ -181,3 +181,62 @@ O guarda de standby e o `STANDBY_HOLD_MS` da v1.10.2 ficam no código: não
 fizeram mal nenhum, e continuam a ser uma defesa razoável contra ruído
 genuíno se algum dia aparecer. Só deixam de ser, sozinhos, a explicação do
 sintoma relatado.
+
+## Revertido (v1.10.4) — a v1.10.3 estava errada
+
+A troca de pinos partiu o KEY3, que já funcionava. Log enviado pelo
+utilizador depois de instalar a v1.10.3, a testar KEY3 isoladamente:
+
+```
+PINDIAG: KEY1/GPIO2=1  KEY2/GPIO5=1  KEY3/GPIO3=1
+KEY2: Button released after 155 ms -> REFRESH
+INPUT: KEY2 Click -> FULL REFRESH
+```
+
+Notar os rótulos: com a v1.10.3 em execução, `PIN_BUTTON_SLEEP` (KEY2) já é
+GPIO5. O utilizador premiu o botão físico a que chama "KEY3" e o firmware
+respondeu com um refresh (acção do KEY2), não com a próxima página. A troca
+tinha invertido o problema para o outro botão.
+
+### Onde a análise da v1.10.3 falhou
+
+A captura decisiva daquela versão (long press limpo, sustentado, só em
+GPIO3) provava só isto: **naquele instante, foi GPIO3 que esteve premido.**
+Não provava qual botão físico o utilizador *pretendia* premir. A conclusão
+"o botão de virar página está ligado a GPIO3" foi um salto — bastava que o
+utilizador tivesse, sem querer, premido o KEY2 físico (adjacente a KEY3
+neste kit) a tentar chegar ao KEY3, o que explica igualmente bem um
+incidente ocasional ("por vezes") sem exigir fiação nenhuma trocada.
+
+O que devia ter sido conferido primeiro, e não foi: o **primeiríssimo** log
+desta investigação inteira, enviado antes de qualquer alteração de pinos,
+já continha a resposta:
+
+```
+PINDIAG: KEY1/GPIO2=1  KEY2/GPIO3=1  KEY3/GPIO5=0
+PINDIAG: KEY1/GPIO2=1  KEY2/GPIO3=1  KEY3/GPIO5=1
+INPUT: Click -> NEXT
+```
+
+Um clique genuíno em KEY3/GPIO5, sob o mapeamento **original**, a produzir
+`INPUT_NEXT` correctamente. GPIO5 já era o KEY3 que funcionava. A v1.10.3
+devia ter cruzado esta captura com a nova antes de mexer no `Config.h`, e
+não cruzou.
+
+### Correcção
+`include/Config.h` volta ao mapeamento original (`PIN_BUTTON`=5,
+`PIN_BUTTON_SLEEP`=3), que é o da wiki do kit e o que o primeiro log já
+tinha confirmado como correcto. `SYSTEM_VERSION` sobe para 1.10.4.
+
+### Onde isto fica
+
+Sem fiação trocada, o long press espúrio em GPIO3 volta a ficar por
+explicar com certeza — a hipótese mais provável, dado tudo o que já se viu,
+é um premir por engano no botão físico adjacente (KEY2) a tentar chegar ao
+KEY3, não um defeito de código nem de fiação. O guarda de standby e o
+`STANDBY_HOLD_MS` (1500ms, v1.10.2) já ajudam contra isto: um toque
+acidental breve não chega ao limiar. Se o sintoma for relatado de novo,
+**não voltar a mexer em `Config.h` sem antes confirmar, por log, qual botão
+físico foi mesmo premido** — idealmente pedindo ao utilizador que descreva
+a posição do botão (esquerda/meio/direita, ou por tacto) no momento da
+captura, não só o nome que lhe chama.

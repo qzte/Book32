@@ -26,16 +26,22 @@
 // — STANDBY_HOLD_MS — para que nem ruído breve nem um long press comum de
 // navegação o atinjam por acidente.
 //
-// v1.10.3: a hipótese A (acoplamento eléctrico) foi finalmente descartada por
-// log real do dispositivo — ver docs/plans/2026-07-26-key1-key3-standby-diagnostics.md.
-// A causa era outra: neste kit montado à mão, o botão físico que o
-// utilizador usa para virar página está ligado ao pino que o Config.h desta
-// altura chamava GPIO3/KEY2, não ao GPIO5/KEY3 assumido. Não havia ruído
-// nenhum a "arrastar" GPIO3 — era mesmo esse pino, sozinho, sustentado, sem
-// qualquer outro botão em baixo. Corrigido trocando PIN_BUTTON com
-// PIN_BUTTON_SLEEP no Config.h para corresponder à fiação real. Este guarda
-// e o STANDBY_HOLD_MS ficam como defesa adicional — não fazem mal a mais —
-// mas já não são a correcção do sintoma relatado.
+// v1.10.3 (revertida em v1.10.4): a hipótese A (acoplamento eléctrico) foi
+// descartada por log real — um long press limpo e sustentado só em GPIO3,
+// sem nenhum outro pino a mexer. Concluiu-se, errada e apressadamente, que a
+// fiação de KEY2/KEY3 estava trocada, e trocou-se PIN_BUTTON com
+// PIN_BUTTON_SLEEP no Config.h. Essa troca partiu o KEY3 que já funcionava:
+// o primeiríssimo log desta investigação (antes de qualquer alteração de
+// pinos) já mostrava um clique genuíno em KEY3/GPIO5 a produzir INPUT_NEXT
+// correctamente. O long press em GPIO3 sozinho não provava que o botão de
+// virar página estivesse ligado a GPIO3 — só provava que, naquele instante,
+// foi GPIO3 que esteve premido, o que é perfeitamente compatível com o
+// utilizador ter premido sem querer o KEY2 físico (adjacente) a tentar
+// chegar ao KEY3. Ver a secção "Revertido" em
+// docs/plans/2026-07-26-key1-key3-standby-diagnostics.md para o historial
+// completo. O mapeamento de pinos voltou ao original em v1.10.4; este guarda
+// e o STANDBY_HOLD_MS ficam como defesa contra esse tipo de premir por
+// engano, que continua a ser a explicação mais provável do sintoma.
 //
 // Header puro, sem dependências do Arduino — testável no host
 // (tools/tests/test_standby_guard.cpp).
