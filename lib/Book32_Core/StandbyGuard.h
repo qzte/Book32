@@ -26,6 +26,17 @@
 // — STANDBY_HOLD_MS — para que nem ruído breve nem um long press comum de
 // navegação o atinjam por acidente.
 //
+// v1.10.3: a hipótese A (acoplamento eléctrico) foi finalmente descartada por
+// log real do dispositivo — ver docs/plans/2026-07-26-key1-key3-standby-diagnostics.md.
+// A causa era outra: neste kit montado à mão, o botão físico que o
+// utilizador usa para virar página está ligado ao pino que o Config.h desta
+// altura chamava GPIO3/KEY2, não ao GPIO5/KEY3 assumido. Não havia ruído
+// nenhum a "arrastar" GPIO3 — era mesmo esse pino, sozinho, sustentado, sem
+// qualquer outro botão em baixo. Corrigido trocando PIN_BUTTON com
+// PIN_BUTTON_SLEEP no Config.h para corresponder à fiação real. Este guarda
+// e o STANDBY_HOLD_MS ficam como defesa adicional — não fazem mal a mais —
+// mas já não são a correcção do sintoma relatado.
+//
 // Header puro, sem dependências do Arduino — testável no host
 // (tools/tests/test_standby_guard.cpp).
 
