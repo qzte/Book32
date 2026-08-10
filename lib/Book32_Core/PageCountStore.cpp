@@ -49,15 +49,33 @@ void PageCountStore::load() {
             _totals[String(pair.key().c_str())] = pair.value() | 0;
         }
     }
+
+    JsonObject checkpoints = doc["checkpoints"].as<JsonObject>();
+    if (!checkpoints.isNull()) {
+        for (JsonPair pair : checkpoints) {
+            JsonObject entry = pair.value().as<JsonObject>();
+            PageCountCheckpoint c;
+            c.chapter = entry["chapter"] | 0;
+            c.pagesSoFar = entry["pagesSoFar"] | 0;
+            _checkpoints[String(pair.key().c_str())] = c;
+        }
+    }
 }
 
 bool PageCountStore::save() {
-    DynamicJsonDocument doc(writeCapacityFor(_totals.size()));
+    DynamicJsonDocument doc(writeCapacityFor(_totals.size() + _checkpoints.size()));
     doc["fontSize"] = _fontSize;
     doc["fontFamily"] = _fontFamily;
 
     JsonObject totals = doc.createNestedObject("totals");
     for (const auto& kv : _totals) totals[kv.first] = kv.second;
+
+    JsonObject checkpoints = doc.createNestedObject("checkpoints");
+    for (const auto& kv : _checkpoints) {
+        JsonObject entry = checkpoints.createNestedObject(kv.first);
+        entry["chapter"] = kv.second.chapter;
+        entry["pagesSoFar"] = kv.second.pagesSoFar;
+    }
 
     if (doc.overflowed()) return false;
 
@@ -66,6 +84,17 @@ bool PageCountStore::save() {
     serializeJson(doc, file);
     file.close();
     return true;
+}
+
+// (fontSize, fontFamily) mismatching what's on disk means every stored total
+// and checkpoint was measured at a font no longer in use, so the whole cache
+// is stale — drop it and adopt the new signature.
+void PageCountStore::resetIfFontChanged(int fontSize, int fontFamily) {
+    if (_fontSize == fontSize && _fontFamily == fontFamily) return;
+    _totals.clear();
+    _checkpoints.clear();
+    _fontSize = fontSize;
+    _fontFamily = fontFamily;
 }
 
 int PageCountStore::get(const String& originalName, int fontSize, int fontFamily) {
@@ -77,11 +106,26 @@ int PageCountStore::get(const String& originalName, int fontSize, int fontFamily
 
 void PageCountStore::set(const String& originalName, int fontSize, int fontFamily, int totalPages) {
     load();
-    if (_fontSize != fontSize || _fontFamily != fontFamily) {
-        _totals.clear();
-        _fontSize = fontSize;
-        _fontFamily = fontFamily;
-    }
+    resetIfFontChanged(fontSize, fontFamily);
     _totals[originalName] = totalPages;
+    _checkpoints.erase(originalName);
+    save();
+}
+
+bool PageCountStore::getCheckpoint(const String& originalName, int fontSize, int fontFamily,
+                                   PageCountCheckpoint& out) {
+    load();
+    if (_fontSize != fontSize || _fontFamily != fontFamily) return false;
+    auto it = _checkpoints.find(originalName);
+    if (it == _checkpoints.end()) return false;
+    out = it->second;
+    return true;
+}
+
+void PageCountStore::setCheckpoint(const String& originalName, int fontSize, int fontFamily,
+                                   const PageCountCheckpoint& checkpoint) {
+    load();
+    resetIfFontChanged(fontSize, fontFamily);
+    _checkpoints[originalName] = checkpoint;
     save();
 }
