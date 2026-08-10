@@ -562,8 +562,10 @@ void AppReader::updateTotalPagesCount() {
             _countPointer = {0, 0};
             if (_countChapterContent.empty()) {
                 _countChapter++;
-                PageCountStore::getInstance().setCheckpoint(
-                    key, _fontSizePt, _fontFamily, {_countChapter, _countPagesSoFar});
+                PageCountCheckpoint checkpoint;
+                checkpoint.chapter = _countChapter;
+                checkpoint.pagesSoFar = _countPagesSoFar;
+                PageCountStore::getInstance().setCheckpoint(key, _fontSizePt, _fontFamily, checkpoint);
                 continue;
             }
             _countPagesSoFar++; // First page of this chapter begins
@@ -579,8 +581,10 @@ void AppReader::updateTotalPagesCount() {
         } else {
             _countChapterContent.clear();
             _countChapter++;
-            PageCountStore::getInstance().setCheckpoint(
-                key, _fontSizePt, _fontFamily, {_countChapter, _countPagesSoFar});
+            PageCountCheckpoint checkpoint;
+            checkpoint.chapter = _countChapter;
+            checkpoint.pagesSoFar = _countPagesSoFar;
+            PageCountStore::getInstance().setCheckpoint(key, _fontSizePt, _fontFamily, checkpoint);
         }
     }
 }
