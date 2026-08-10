@@ -60,14 +60,31 @@ struct LibraryDirtyRect {
     int h;
 };
 
-static LibraryDirtyRect libraryItemRect(int index, int screenW) {
+static LibraryDirtyRect libraryItemRect(int index, int scrollOffset, int screenW) {
     const int HEADER_H = 76;
     const int BACK_ITEM_HEIGHT = 48;
     const int ITEM_HEIGHT = 110;
     if (index < 0) {
         return {14, HEADER_H, screenW - 28, BACK_ITEM_HEIGHT + 4};
     }
-    return {14, HEADER_H + BACK_ITEM_HEIGHT + (index * ITEM_HEIGHT), screenW - 28, ITEM_HEIGHT + 4};
+    int visibleRow = index - scrollOffset;
+    return {14, HEADER_H + BACK_ITEM_HEIGHT + (visibleRow * ITEM_HEIGHT), screenW - 28, ITEM_HEIGHT + 4};
+}
+
+// How many book rows fit below the header/back item, given the same vertical
+// budget the draw loop in drawLibrary() uses. Kept in sync with that loop's
+// "if (y > display.height() - 70) break;" condition.
+static int libraryItemsPerPage(int screenHeight) {
+    const int HEADER_H = 76;
+    const int BACK_ITEM_HEIGHT = 48;
+    const int ITEM_HEIGHT = 110;
+    int y = HEADER_H + BACK_ITEM_HEIGHT;
+    int count = 0;
+    while (y <= screenHeight - 70) {
+        count++;
+        y += ITEM_HEIGHT;
+    }
+    return count;
 }
 
 static LibraryDirtyRect unionLibraryRect(LibraryDirtyRect a, LibraryDirtyRect b) {
@@ -85,6 +102,7 @@ AppReader::AppReader() {
     _librarySelectionOnlyRedraw = false;
     _resumeSavedBookOnStart = false;
     _previousBookIndex = 0;
+    _libraryScrollOffset = 0;
     _epubLoader = nullptr;
     _textRenderer = nullptr;
     _currentChapter = 0;
@@ -295,12 +313,14 @@ void AppReader::handleInput(InputAction action) {
             _selectedBookIndex++;
             if (_selectedBookIndex > maxIndex) _selectedBookIndex = -1;  // Wrap to Back option
             _librarySelectionOnlyRedraw = _booksScanned;
+            updateLibraryScroll();
             _needsRedraw = true;
         } else if (action == INPUT_PREV) {
             _previousBookIndex = _selectedBookIndex;
             _selectedBookIndex--;
             if (_selectedBookIndex < -1) _selectedBookIndex = maxIndex;  // Wrap to last book
             _librarySelectionOnlyRedraw = _booksScanned;
+            updateLibraryScroll();
             _needsRedraw = true;
         } else if (action == INPUT_SELECT) {
             if (_selectedBookIndex == -1) {
@@ -704,8 +724,33 @@ void AppReader::draw() {
     else drawReading();
 }
 
+// Keeps the selected book row inside the visible window, scrolling the list
+// when the selection moves past its top or bottom edge. The "Back to Menu"
+// row (-1) sits above the scrolling area and is always visible, so it leaves
+// the current window untouched.
+void AppReader::updateLibraryScroll() {
+    if (_selectedBookIndex < 0) return;
+
+    DisplayMgr& dispMgr = DisplayMgr::getInstance();
+    Book32Display& display = dispMgr.getDisplay();
+    int itemsPerPage = libraryItemsPerPage(display.height());
+    if (itemsPerPage <= 0) return;
+
+    if (_selectedBookIndex < _libraryScrollOffset) {
+        _libraryScrollOffset = _selectedBookIndex;
+        _librarySelectionOnlyRedraw = false;  // Window shifted: repaint the whole list
+    } else if (_selectedBookIndex >= _libraryScrollOffset + itemsPerPage) {
+        _libraryScrollOffset = _selectedBookIndex - itemsPerPage + 1;
+        _librarySelectionOnlyRedraw = false;
+    }
+}
+
 void AppReader::drawLibrary() {
     if (!_booksScanned) { scanBooks(); _booksScanned = true; }
+    // The book count can shrink between scans (book deleted via web UI while
+    // the reader was open); keep the scroll window from pointing past the end.
+    int maxOffset = max(0, (int)_books.size() - 1);
+    if (_libraryScrollOffset > maxOffset) _libraryScrollOffset = 0;
     DisplayMgr& dispMgr = DisplayMgr::getInstance();
     Book32Display& display = dispMgr.getDisplay();
     FontMgr& fontMgr = FontMgr::getInstance();
@@ -719,8 +764,8 @@ void AppReader::drawLibrary() {
 
     // Use Partial Refresh for Library interactions
     if (_librarySelectionOnlyRedraw) {
-        LibraryDirtyRect dirty = unionLibraryRect(libraryItemRect(_previousBookIndex, display.width()),
-                                                 libraryItemRect(_selectedBookIndex, display.width()));
+        LibraryDirtyRect dirty = unionLibraryRect(libraryItemRect(_previousBookIndex, _libraryScrollOffset, display.width()),
+                                                 libraryItemRect(_selectedBookIndex, _libraryScrollOffset, display.width()));
         LibraryDirtyRect footer = {18, display.height() - 48, display.width() - 36, 46};
         dirty = unionLibraryRect(dirty, footer);
         dirty.x = max(0, dirty.x);
@@ -762,11 +807,11 @@ void AppReader::drawLibrary() {
             drawTextWithFont(display, "No books found.", 28, y + 54, &FreeSansBold12pt8b, GxEPD_BLACK);
             fontMgr.drawText(display, "Upload EPUBs via web.", 28, y + 88, FONT_SIZE_BODY, GxEPD_BLACK);
         } else {
-            int idx = 0;
-            for (const auto& book : _books) {
+            for (size_t idx = (size_t)_libraryScrollOffset; idx < _books.size(); idx++) {
                 if (y > display.height() - 70) break;
 
-                bool isSelected = (idx == _selectedBookIndex);
+                const auto& book = _books[idx];
+                bool isSelected = ((int)idx == _selectedBookIndex);
                 if (isSelected) {
                     display.fillRect(20, y + 12, 5, ITEM_HEIGHT - 24, GxEPD_BLACK);
                     display.drawRoundRect(16, y + 4, display.width() - 32, ITEM_HEIGHT - 8, 6, GxEPD_BLACK);
@@ -831,7 +876,6 @@ void AppReader::drawLibrary() {
                 }
 
                 y += ITEM_HEIGHT;
-                idx++;
             }
         }
 

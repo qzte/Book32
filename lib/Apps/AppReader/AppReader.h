@@ -66,8 +66,13 @@ private:
     bool _librarySelectionOnlyRedraw;
     bool _resumeSavedBookOnStart;
     int _previousBookIndex;
+    // Index of the first book drawn in the list. The list only shows as many
+    // items as fit on screen, so moving selection past the visible window
+    // scrolls it (see updateLibraryScroll()).
+    int _libraryScrollOffset;
     void scanBooks();
     void drawLibrary();
+    void updateLibraryScroll();
     void drawBookTile(Book32Display& display, int x, int y, int w, int h, bool selected);
     
     // Settings
