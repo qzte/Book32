@@ -324,12 +324,22 @@ void AppReader::handleInput(InputAction action) {
     } else if (_state == VIEW_READING) {
         if (action == INPUT_NEXT) nextPage();
         else if (action == INPUT_PREV) prevPage();
-        else if (action == INPUT_SELECT) { closeBook(); _state = VIEW_LIBRARY; _librarySelectionOnlyRedraw = false; _needsRedraw = true; }
+        else if (action == INPUT_SELECT) {
+            closeBook();
+            _state = VIEW_LIBRARY;
+            // Force drawLibrary() to rescan: the book just closed may have
+            // finished its total page count while it was open, and the list
+            // scanned on the way in here is now stale for it.
+            _booksScanned = false;
+            _librarySelectionOnlyRedraw = false;
+            _needsRedraw = true;
+        }
         else if (action == INPUT_BACK) {
             // KEY3: dedicated Back button. Return to the library from the
             // reading view, same destination as INPUT_SELECT here.
             closeBook();
             _state = VIEW_LIBRARY;
+            _booksScanned = false;
             _librarySelectionOnlyRedraw = false;
             _needsRedraw = true;
         } else if (action == INPUT_GO_TO_MAIN_MENU) {
@@ -337,6 +347,7 @@ void AppReader::handleInput(InputAction action) {
             Serial.println("AppReader: INPUT_GO_TO_MAIN_MENU from READING -> switching to main menu");
             closeBook();
             _state = VIEW_LIBRARY;
+            _booksScanned = false;
             _librarySelectionOnlyRedraw = false;
             _needsRedraw = true;
             markProgressInactive();
@@ -482,7 +493,8 @@ void AppReader::closeBook(bool markInactive) {
 // just opened in _epubLoader/_currentBookPath. A cached total from a previous
 // full count at the same font settings resolves this instantly; otherwise
 // updateTotalPagesCount() walks the book from update(), a bounded slice at a
-// time, until it reaches the end.
+// time, until it reaches the end — resuming from the last completed chapter
+// if an earlier session left a checkpoint (see updateTotalPagesCount).
 void AppReader::startTotalPagesCounting() {
     _totalPages = 0;
     _countingActive = false;
@@ -500,6 +512,12 @@ void AppReader::startTotalPagesCounting() {
         _totalPages = cached;
         return;
     }
+
+    PageCountCheckpoint checkpoint;
+    if (PageCountStore::getInstance().getCheckpoint(key, _fontSizePt, _fontFamily, checkpoint)) {
+        _countChapter = checkpoint.chapter;
+        _countPagesSoFar = checkpoint.pagesSoFar;
+    }
     _countingActive = true;
 }
 
@@ -508,6 +526,13 @@ void AppReader::startTotalPagesCounting() {
 // never touches the line cache or content the reading view is showing —
 // paginating a chapter for counting is otherwise the exact same measurement
 // nextPage() already does with draw=false.
+//
+// Standby (long-press KEY2) and the idle-sleep timeout both go straight to
+// esp_deep_sleep_start() (see BatteryMgr::enterIdleSleep) without running
+// closeBook() first, so a count in progress can be cut off at any moment with
+// no chance to save. A checkpoint is written after every completed chapter
+// instead, so the next session resumes close to where this one left off
+// rather than recounting the whole book from chapter 0 again.
 void AppReader::updateTotalPagesCount() {
     if (!_epubLoader) { _countingActive = false; return; }
 
@@ -519,15 +544,15 @@ void AppReader::updateTotalPagesCount() {
         _countRenderer->setFontFamily(_fontFamily);
     }
 
+    String key = getOriginalFilename(normalizedBookName(_currentBookPath));
+
     unsigned long budgetEnd = millis() + TOTAL_PAGES_BUDGET_MS;
     while (millis() < budgetEnd) {
         if (_countChapterContent.empty()) {
             if (_countChapter >= _epubLoader->getChapterCount()) {
                 int total = max(1, _countPagesSoFar);
                 _totalPages = total;
-                PageCountStore::getInstance().set(
-                    getOriginalFilename(normalizedBookName(_currentBookPath)),
-                    _fontSizePt, _fontFamily, total);
+                PageCountStore::getInstance().set(key, _fontSizePt, _fontFamily, total);
                 _countingActive = false;
                 delete _countRenderer;
                 _countRenderer = nullptr;
@@ -537,6 +562,10 @@ void AppReader::updateTotalPagesCount() {
             _countPointer = {0, 0};
             if (_countChapterContent.empty()) {
                 _countChapter++;
+                PageCountCheckpoint checkpoint;
+                checkpoint.chapter = _countChapter;
+                checkpoint.pagesSoFar = _countPagesSoFar;
+                PageCountStore::getInstance().setCheckpoint(key, _fontSizePt, _fontFamily, checkpoint);
                 continue;
             }
             _countPagesSoFar++; // First page of this chapter begins
@@ -552,6 +581,10 @@ void AppReader::updateTotalPagesCount() {
         } else {
             _countChapterContent.clear();
             _countChapter++;
+            PageCountCheckpoint checkpoint;
+            checkpoint.chapter = _countChapter;
+            checkpoint.pagesSoFar = _countPagesSoFar;
+            PageCountStore::getInstance().setCheckpoint(key, _fontSizePt, _fontFamily, checkpoint);
         }
     }
 }
