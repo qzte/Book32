@@ -1,0 +1,7 @@
+# Generated files: reformatting them just churns the diff on the next
+# regeneration and provides no readability benefit. See the header comment in
+# each for how it's produced.
+lib/Book32_Core/Fonts/*
+lib/Apps/AppReader/icon_reader.h
+lib/Book32_Apps/icon_settings.h
+lib/Book32_Apps/icon_update.h

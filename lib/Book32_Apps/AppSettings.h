@@ -19,11 +19,12 @@
 // =============================================================================
 
 enum SettingsScreen {
-    SCREEN_MAIN,      // Top-level settings list
-    SCREEN_FONT,      // Font family picker (too many entries to cycle blind)
-    SCREEN_NETWORK,   // Read-only network status
-    SCREEN_SYSTEM,    // Version/space/battery plus OTA and restart actions
-    SCREEN_CONFIRM    // "Unsaved changes" prompt on exit
+    SCREEN_MAIN,               // Top-level settings list
+    SCREEN_FONT,               // Font family picker (too many entries to cycle blind)
+    SCREEN_NETWORK,            // Read-only network status
+    SCREEN_SYSTEM,             // Version/space/battery plus OTA and restart actions
+    SCREEN_CONFIRM,            // "Unsaved changes" prompt on exit
+    SCREEN_CONFIRM_FORGET_WIFI // "Erase Wi-Fi credentials?" prompt
 };
 
 class AppSettings : public App {
@@ -77,12 +78,14 @@ private:
 
     void toggleWifi();
     bool isWifiOn() const;
+    void forgetNetwork();
 
     void drawMainScreen();
     void drawFontScreen();
     void drawNetworkScreen();
     void drawSystemScreen();
     void drawConfirmScreen();
+    void drawConfirmForgetWifiScreen();
     void drawHeader(const char* title);
     void drawFooter(const char* hint);
 

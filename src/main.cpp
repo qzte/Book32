@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <WiFi.h>
+#include <esp_ota_ops.h>
 #include "Config.h"
 #include "NetworkState.h"
 
@@ -64,6 +65,14 @@ static void networkStartupTask(void* parameter) {
 }
 
 void setup() {
+    // v1.11.0: confirm to the bootloader that this image booted far enough to
+    // be trusted, cancelling any pending auto-rollback to the previous OTA
+    // slot. Safe to call even where the running build's bootloader has no
+    // anti-rollback support compiled in (see
+    // docs/plans/2026-08-23-post-ota-rollback-design.md for the current
+    // limits of what this actually buys us) — it is then a no-op.
+    esp_ota_mark_app_valid_cancel_rollback();
+
     Serial.begin(115200);
     delay(250);
 
