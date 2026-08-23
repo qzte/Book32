@@ -76,10 +76,11 @@ motivo de recusa.
   (`::error::`) se o secret não estiver configurado — uma release sem ele
   seria publicada e o dispositivo recusá-la-ia silenciosamente mais tarde.
 
-## Validação (sem hardware disponível nesta sessão)
+## Validação
 
-Não houve acesso a um dispositivo real. A confiança nesta alteração assenta
-em três verificações feitas em host, com a chave de produção real:
+Não houve acesso a um dispositivo real durante a implementação. A confiança
+nesta alteração assentou em três verificações feitas em host, com a chave de
+produção real:
 
 1. `tools/tests/test_ota_digest.cpp` (corre no CI, `-Wall -Werror`) cobre o
    parsing/`hexDecode()` — lógica pura, sem dependência de Arduino.
@@ -93,10 +94,18 @@ em três verificações feitas em host, com a chave de produção real:
    verificado pelo mesmo binário de teste do ponto 2 — o pipeline completo
    "workflow assina → dispositivo verifica" foi exercitado de ponta a ponta.
 
-O que isto **não** substitui: compilar de facto para o `seeed_xiao_esp32s3`
-via PlatformIO (fica a cargo do `pio run` do CI) e um OTA real num
-dispositivo, incluindo o caso de recusa (assinatura errada/ausente deve
-mostrar "Update Blocked" no ecrã e manter o firmware corrente intacto).
+**Atualização, 2026-08-23:** a v1.11.0 foi publicada com digests SHA-256 e
+assinaturas Ed25519 reais nas release notes
+(https://github.com/qzte/Book32/releases/tag/v1.11.0), e o utilizador
+confirmou um OTA real num dispositivo — download, verificação SHA-256 +
+Ed25519, instalação e reinício bem sucedidos. Isto fecha o principal risco em
+aberto: o caminho de aceitação (assinatura válida) funciona em hardware real,
+não só em host.
+
+O que continua por confirmar: o **caminho de recusa** — assinatura errada ou
+ausente deve mostrar "Update Blocked" no ecrã e manter o firmware corrente
+intacto, mas isso exige publicar deliberadamente um asset malformado e não
+foi testado.
 Recomendo os dois antes de promover isto a uma release marcada.
 
 ## Gestão da chave
