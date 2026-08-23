@@ -48,7 +48,9 @@ recomendar já está implementado com cuidado:
 
 **1. TLS não autenticado no canal de OTA (risco de MITM já auto-documentado)** —
 ✅ implementado em 2026-08-23 via assinatura Ed25519, ver
-`docs/plans/2026-08-23-ota-ed25519-signing-design.md`.
+`docs/plans/2026-08-23-ota-ed25519-signing-design.md`. Confirmado com OTA
+real num dispositivo na v1.11.0 (download, verificação e instalação com
+sucesso) — falta só validar o caminho de recusa (assinatura errada/ausente).
 
 `lib/Book32_Update/GitHubMgr.cpp:84` e `:209` chamam `http.begin(apiURL)` /
 `http.begin(url)` sem `setCACert()`. O próprio `docs/plans/2026-07-21-ota-integrity-design.md`
