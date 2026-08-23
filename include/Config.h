@@ -45,9 +45,14 @@
 #define BOOK32_VERBOSE_BOOT_LOG 0
 
 // Battery calibration
-// Fully charged LiPo cells should read 4.20V. This board's ADC path reads a
-// known-full pack around 3.91V with the raw divider math, so compensate here.
-#define BATTERY_VOLTAGE_CALIBRATION 1.075f
+// Fully charged LiPo cells should read 4.20V. The previous value here (1.075)
+// compensated for analogRead()'s raw, uncalibrated 12-bit-to-voltage math,
+// which read a known-full pack around 3.91V. BatteryMgr now reads the ADC via
+// analogReadMilliVolts(), which applies the ESP32-S3's factory eFuse
+// calibration curve and removes most of that error on its own, so the trim
+// factor needed here should be much smaller. Re-check against a multimeter on
+// real hardware and adjust — this default is a starting point, not measured.
+#define BATTERY_VOLTAGE_CALIBRATION 1.0f
 #define BATTERY_EMPTY_VOLTAGE 3.00f
 #define BATTERY_FULL_VOLTAGE 4.20f
 
