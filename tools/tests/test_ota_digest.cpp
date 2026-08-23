@@ -62,6 +62,61 @@ int main() {
     assert(!sha256Equal(string("abcdef00"), string("abcdef01")));
     assert(!sha256Equal(string("abcdef00"), string("abcdef0")));
 
+    // v1.11.0: Ed25519 signature lines use the same "LABEL (asset) = hex"
+    // shape as SHA256, just a different label and a 64-byte (128 hex char)
+    // value instead of a 32-byte one.
+    // firmwareSig is bytes 0x00..0x3f in order; littlefsSig is 64 repeats of
+    // 0x11 — distinct fixtures, so a mix-up between the two lines would fail
+    // the equality assertions below.
+    const string firmwareSig =
+        "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+        "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f";
+    const string littlefsSig(BOOK32_ED25519_SIG_HEX_LEN, '1');
+    assert(firmwareSig.length() == (size_t)BOOK32_ED25519_SIG_HEX_LEN);
+    assert(littlefsSig.length() == (size_t)BOOK32_ED25519_SIG_HEX_LEN);
+
+    const string signed_notes =
+        "### Checksums\n"
+        "SHA256 (firmware.bin) = "
+        "aaaabbbbccccddddeeeeffff0000111122223333444455556666777788889999\n"
+        "ED25519 (firmware.bin) = " + firmwareSig + "\n"
+        "ED25519 (littlefs.bin) = " + littlefsSig + "\n";
+
+    string sig;
+    assert(extractEd25519Signature(signed_notes, "firmware.bin", sig));
+    assert(sig.length() == (size_t)BOOK32_ED25519_SIG_HEX_LEN);
+    assert(sig == firmwareSig);
+
+    assert(extractEd25519Signature(signed_notes, "littlefs.bin", sig));
+    assert(sig == littlefsSig);
+
+    // No signature line for this asset: must fail, not fall through to
+    // firmware.bin's.
+    assert(!extractEd25519Signature(signed_notes, "other.bin", sig));
+
+    // A SHA-256 line must never satisfy an Ed25519 lookup, even though both
+    // share the "LABEL (asset) = hex" shape.
+    assert(!extractEd25519Signature(notes, "firmware.bin", sig));
+
+    // Wrong length (a SHA-256-sized value under the ED25519 label) is
+    // rejected, not silently accepted at the wrong size.
+    const string shortSig =
+        "ED25519 (firmware.bin) = "
+        "aaaabbbbccccddddeeeeffff0000111122223333444455556666777788889999\n";
+    assert(!extractEd25519Signature(shortSig, "firmware.bin", sig));
+
+    // hexDecode(): the inverse of the hex text this file parses out.
+    uint8_t decoded[BOOK32_ED25519_SIG_LEN];
+    assert(hexDecode(sig, (size_t)BOOK32_ED25519_SIG_HEX_LEN, decoded));
+    assert(decoded[0] == 0x11 && decoded[1] == 0x11 && decoded[BOOK32_ED25519_SIG_LEN - 1] == 0x11);
+
+    // Wrong length or non-hex input must fail closed, leaving `decoded`
+    // whatever it was (callers must check the return value).
+    assert(!hexDecode(string("abcd"), (size_t)BOOK32_ED25519_SIG_HEX_LEN, decoded));
+    string nonHexSig = sig;
+    nonHexSig[0] = 'z';
+    assert(!hexDecode(nonHexSig, (size_t)BOOK32_ED25519_SIG_HEX_LEN, decoded));
+
     printf("test_ota_digest: all tests passed.\n");
     return 0;
 }

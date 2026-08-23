@@ -14,6 +14,11 @@ struct UpdateInfo {
     // Empty when the release did not publish one — the download then aborts.
     String firmwareSha256;
     String filesystemSha256;
+    // v1.11.0: Ed25519 signature over the asset's raw SHA-256 digest, parsed
+    // from the release body. Empty when the release did not publish one —
+    // the download then aborts, same as a missing SHA-256.
+    String firmwareEd25519Sig;
+    String filesystemEd25519Sig;
 };
 
 class GitHubMgr {
@@ -23,9 +28,9 @@ public:
     void init();
     UpdateInfo checkUpdate(const char* currentVersion);
     bool performFirmwareUpdate(const char* url, bool restartAfter = true, int step = 0, int totalSteps = 0,
-                               const char* expectedSha256 = nullptr);
+                               const char* expectedSha256 = nullptr, const char* expectedEd25519Sig = nullptr);
     bool performFilesystemUpdate(const char* url, bool restartAfter = true, int step = 0, int totalSteps = 0,
-                                 const char* expectedSha256 = nullptr);
+                                 const char* expectedSha256 = nullptr, const char* expectedEd25519Sig = nullptr);
     bool performFullUpdate(const char* currentVersion);
     void triggerUpdate(const char* currentVersion);
 
@@ -39,5 +44,5 @@ private:
     // `partition` é U_FLASH ou U_SPIFFS.
     bool downloadAndFlash(const char* url, int partition, const char* label,
                           bool restartAfter, int step, int totalSteps,
-                          const char* expectedSha256);
+                          const char* expectedSha256, const char* expectedEd25519Sig);
 };

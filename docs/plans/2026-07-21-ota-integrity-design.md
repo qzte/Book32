@@ -3,6 +3,10 @@
 Data: 2026-07-21
 Estado: implementado
 Fecha: parte do C4. **Não fecha o C4 por completo** — ver "Limites" abaixo.
+> **Actualização (2026-08-23):** o C4 foi fechado na v1.11.0 com assinatura
+> Ed25519 — ver `docs/plans/2026-08-23-ota-ed25519-signing-design.md`. A
+> secção "Limites" abaixo descreve o estado tal como era antes dessa versão;
+> mantida para contexto histórico.
 
 ## Problema
 
