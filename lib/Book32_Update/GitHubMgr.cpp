@@ -5,7 +5,9 @@
 #include "../../include/Config.h"
 #include "../Book32_Core/SemVer.h"
 #include "../Book32_Core/OtaDigest.h"
+#include "../Book32_Core/OtaEd25519PublicKey.h"
 #include <mbedtls/sha256.h>
+#include <Ed25519.h>
 #include "../Book32_Core/DisplayMgr.h"
 #include "../Book32_Core/FontMgr.h"
 
@@ -69,7 +71,7 @@ void GitHubMgr::init() {
 }
 
 UpdateInfo GitHubMgr::checkUpdate(const char* currentVersion) {
-    UpdateInfo info = {false, "", "", "", "", false, false, "", ""};
+    UpdateInfo info = {false, "", "", "", "", false, false, "", "", "", ""};
 
     if (WiFi.status() != WL_CONNECTED) {
         Serial.println("WiFi not connected, cannot check for updates");
@@ -166,6 +168,25 @@ UpdateInfo GitHubMgr::checkUpdate(const char* currentVersion) {
                     Serial.println("WARNING: release publishes no SHA-256 for the filesystem image");
                 }
             }
+            // v1.11.0: pull the expected Ed25519 signature (over the asset's
+            // SHA-256 digest) for each asset. Absent or malformed signatures
+            // leave these empty, which makes the download abort (fail
+            // closed) — same treatment as a missing SHA-256.
+            if (info.hasFirmware) {
+                if (extractEd25519Signature(info.notes, "firmware.bin", info.firmwareEd25519Sig)) {
+                    Serial.println("Expected firmware Ed25519 signature found");
+                } else {
+                    Serial.println("WARNING: release publishes no Ed25519 signature for firmware.bin");
+                }
+            }
+            if (info.hasFilesystem) {
+                if (!extractEd25519Signature(info.notes, "littlefs.bin", info.filesystemEd25519Sig)) {
+                    extractEd25519Signature(info.notes, "filesystem.bin", info.filesystemEd25519Sig);
+                }
+                if (info.filesystemEd25519Sig.length() == 0) {
+                    Serial.println("WARNING: release publishes no Ed25519 signature for the filesystem image");
+                }
+            }
         } else {
             Serial.println("Already up to date");
         }
@@ -182,7 +203,7 @@ UpdateInfo GitHubMgr::checkUpdate(const char* currentVersion) {
 
 bool GitHubMgr::downloadAndFlash(const char* url, int partition, const char* label,
                                  bool restartAfter, int step, int totalSteps,
-                                 const char* expectedSha256) {
+                                 const char* expectedSha256, const char* expectedEd25519Sig) {
     if (WiFi.status() != WL_CONNECTED) return false;
 
     Serial.printf("Downloading %s from: %s\n", label, url);
@@ -193,6 +214,17 @@ bool GitHubMgr::downloadAndFlash(const char* url, int partition, const char* lab
     if (!expectedSha256 || strlen(expectedSha256) != BOOK32_SHA256_HEX_LEN) {
         Serial.println("Refusing update: release publishes no valid SHA-256 for this asset");
         drawOTAProgress(0, "Update Blocked", "No checksum in release");
+        delay(3000);
+        return false;
+    }
+
+    // v1.11.0: same fail-closed treatment for the Ed25519 signature. Without
+    // this, an attacker able to forge the GitHub API response (the same
+    // response the SHA-256 above is fetched from) could simply omit the
+    // ED25519 line and fall back to a SHA-256-only check they also control.
+    if (!expectedEd25519Sig || strlen(expectedEd25519Sig) != BOOK32_ED25519_SIG_HEX_LEN) {
+        Serial.println("Refusing update: release publishes no valid Ed25519 signature for this asset");
+        drawOTAProgress(0, "Update Blocked", "No signature in release");
         delay(3000);
         return false;
     }
@@ -340,6 +372,29 @@ bool GitHubMgr::downloadAndFlash(const char* url, int partition, const char* lab
     }
     Serial.println("SHA-256 verified OK");
 
+    // v1.11.0: verify the Ed25519 signature over that same digest before
+    // committing the image. This is the check that actually defends against
+    // an active MITM — the SHA-256 above only catches corruption, since its
+    // expected value comes from the same (forgeable) API response.
+    uint8_t sigBytes[BOOK32_ED25519_SIG_LEN];
+    if (!hexDecode(String(expectedEd25519Sig), (size_t)BOOK32_ED25519_SIG_HEX_LEN, sigBytes)) {
+        Serial.println("Ed25519 signature is not valid hex - refusing to install");
+        Update.abort();
+        http.end();
+        drawOTAProgress(0, "Update Blocked", "Malformed signature");
+        delay(3000);
+        return false;
+    }
+    if (!Ed25519::verify(sigBytes, BOOK32_OTA_ED25519_PUBLIC_KEY, digest, sizeof(digest))) {
+        Serial.println("Ed25519 SIGNATURE INVALID - refusing to install");
+        Update.abort();
+        http.end();
+        drawOTAProgress(0, "Update Blocked", "Signature invalid");
+        delay(3000);
+        return false;
+    }
+    Serial.println("Ed25519 signature verified OK");
+
     drawOTAProgress(100, title, "Installing...");
     if (!Update.end()) {
         Serial.printf("%s install failed: %s\n", label, Update.errorString());
@@ -359,13 +414,15 @@ bool GitHubMgr::downloadAndFlash(const char* url, int partition, const char* lab
 }
 
 bool GitHubMgr::performFirmwareUpdate(const char* url, bool restartAfter, int step, int totalSteps,
-                                      const char* expectedSha256) {
-    return downloadAndFlash(url, U_FLASH, "Firmware", restartAfter, step, totalSteps, expectedSha256);
+                                      const char* expectedSha256, const char* expectedEd25519Sig) {
+    return downloadAndFlash(url, U_FLASH, "Firmware", restartAfter, step, totalSteps, expectedSha256,
+                            expectedEd25519Sig);
 }
 
 bool GitHubMgr::performFilesystemUpdate(const char* url, bool restartAfter, int step, int totalSteps,
-                                        const char* expectedSha256) {
-    return downloadAndFlash(url, U_SPIFFS, "Web Interface", restartAfter, step, totalSteps, expectedSha256);
+                                        const char* expectedSha256, const char* expectedEd25519Sig) {
+    return downloadAndFlash(url, U_SPIFFS, "Web Interface", restartAfter, step, totalSteps, expectedSha256,
+                            expectedEd25519Sig);
 }
 
 void GitHubMgr::triggerUpdate(const char* currentVersion) {
@@ -373,7 +430,8 @@ void GitHubMgr::triggerUpdate(const char* currentVersion) {
     UpdateInfo info = checkUpdate(currentVersion);
     if (info.available && info.hasFirmware) {
         Serial.printf("Update Available: %s. Starting firmware download.\n", info.version.c_str());
-        performFirmwareUpdate(info.firmwareUrl.c_str(), true, 1, 1, info.firmwareSha256.c_str());
+        performFirmwareUpdate(info.firmwareUrl.c_str(), true, 1, 1, info.firmwareSha256.c_str(),
+                              info.firmwareEd25519Sig.c_str());
     } else {
         Serial.println("No firmware update available.");
     }
@@ -402,7 +460,7 @@ bool GitHubMgr::performFullUpdate(const char* currentVersion) {
         currentStep++;
         Serial.println("Updating firmware...");
         firmwareUpdated = performFirmwareUpdate(info.firmwareUrl.c_str(), false, currentStep, totalSteps,
-                                                info.firmwareSha256.c_str());
+                                                info.firmwareSha256.c_str(), info.firmwareEd25519Sig.c_str());
         if (!firmwareUpdated) {
             Serial.println("Firmware update failed!");
             return false;
@@ -414,7 +472,8 @@ bool GitHubMgr::performFullUpdate(const char* currentVersion) {
         currentStep++;
         Serial.println("Updating filesystem...");
         filesystemUpdated = performFilesystemUpdate(info.filesystemUrl.c_str(), false, currentStep, totalSteps,
-                                                    info.filesystemSha256.c_str());
+                                                    info.filesystemSha256.c_str(),
+                                                    info.filesystemEd25519Sig.c_str());
         if (!filesystemUpdated) {
             Serial.println("Filesystem update failed!");
             // Still restart if firmware was updated

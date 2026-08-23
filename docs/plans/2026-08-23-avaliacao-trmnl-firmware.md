@@ -46,7 +46,9 @@ recomendar já está implementado com cuidado:
 
 ### Alta prioridade
 
-**1. TLS não autenticado no canal de OTA (risco de MITM já auto-documentado)**
+**1. TLS não autenticado no canal de OTA (risco de MITM já auto-documentado)** —
+✅ implementado em 2026-08-23 via assinatura Ed25519, ver
+`docs/plans/2026-08-23-ota-ed25519-signing-design.md`.
 
 `lib/Book32_Update/GitHubMgr.cpp:84` e `:209` chamam `http.begin(apiURL)` /
 `http.begin(url)` sem `setCACert()`. O próprio `docs/plans/2026-07-21-ota-integrity-design.md`
@@ -181,7 +183,7 @@ cada tag `vX.Y.Z` capturaria grande parte do valor a um custo muito menor.
 
 | # | Recomendação | Impacto | Esforço |
 |---|---|---|---|
-| 1 | Autenticar TLS no canal OTA (assinatura ou CA pinning) | Alto (segurança) | Médio–Alto |
+| 1 | ✅ Autenticar TLS no canal OTA (assinatura ou CA pinning) | Alto (segurança) | Médio–Alto |
 | 2 | `analogReadMilliVolts()` na leitura de bateria | Médio (precisão) | Baixo |
 | 3 | `.clang-format` + CI de formatação | Médio (manutenção) | Baixo |
 | 4 | "Esquecer rede" nas definições | Baixo (UX) | Baixo |
