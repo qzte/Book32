@@ -9,6 +9,7 @@
 #include "../Book32_Update/GitHubMgr.h"
 #include "../../include/Config.h"
 #include <WiFi.h>
+#include <WiFiManager.h>
 
 // --- Row identifiers --------------------------------------------------------
 // Kept as an enum so the draw loop, the input handler and the value formatter
@@ -146,6 +147,21 @@ void AppSettings::toggleWifi() {
     }
 }
 
+// Erases the SSID/password WiFiManager stored in the ESP32's WiFi driver NVS
+// (WiFiManager::resetSettings() -> WiFi.disconnect(true, true) on ESP32), so
+// the next boot's autoConnect() can't silently reconnect and opens the
+// Book32-Setup portal instead. Only reachable via SCREEN_CONFIRM_FORGET_WIFI,
+// so an accidental button press can't trigger it.
+void AppSettings::forgetNetwork() {
+    saveDraftIfDirty();
+    setStatus("A esquecer rede...", 1000);
+    draw();
+    WiFiManager wm;
+    wm.resetSettings();
+    delay(400);
+    ESP.restart();
+}
+
 // --- Value formatting -------------------------------------------------------
 String AppSettings::valueForRow(int index) const {
     switch (index) {
@@ -278,12 +294,12 @@ void AppSettings::handleInput(InputAction action) {
     }
 
     if (_screen == SCREEN_SYSTEM) {
-        // 0 = procurar actualizacao, 1 = reiniciar
+        // 0 = procurar actualizacao, 1 = reiniciar, 2 = esquecer rede
         if (action == INPUT_NEXT) {
-            _subSelectedIndex = (_subSelectedIndex + 1) % 2;
+            _subSelectedIndex = (_subSelectedIndex + 1) % 3;
             _needsRedraw = true;
         } else if (action == INPUT_PREV) {
-            _subSelectedIndex = (_subSelectedIndex + 1) % 2;
+            _subSelectedIndex = (_subSelectedIndex + 2) % 3;
             _needsRedraw = true;
         } else if (action == INPUT_SELECT) {
             if (_subSelectedIndex == 0) {
@@ -301,15 +317,42 @@ void AppSettings::handleInput(InputAction action) {
                         setStatus("Ja tem a versao mais recente.");
                     }
                 }
-            } else {
+            } else if (_subSelectedIndex == 1) {
                 saveDraftIfDirty();
                 setStatus("A reiniciar...", 1000);
                 draw();
                 delay(400);
                 ESP.restart();
+            } else {
+                // Destructive and hard to undo from the device itself, so it
+                // gets its own confirmation instead of running immediately.
+                _screen = SCREEN_CONFIRM_FORGET_WIFI;
+                _subSelectedIndex = 1; // default to "Cancelar"
+                _needsRedraw = true;
             }
         } else if (action == INPUT_BACK || action == INPUT_GO_TO_MAIN_MENU) {
             _screen = SCREEN_MAIN;
+            _needsRedraw = true;
+        }
+        return;
+    }
+
+    if (_screen == SCREEN_CONFIRM_FORGET_WIFI) {
+        // 0 = esquecer, 1 = cancelar
+        if (action == INPUT_NEXT || action == INPUT_PREV) {
+            _subSelectedIndex = 1 - _subSelectedIndex;
+            _needsRedraw = true;
+        } else if (action == INPUT_SELECT) {
+            if (_subSelectedIndex == 0) {
+                forgetNetwork();
+                return;
+            }
+            _screen = SCREEN_SYSTEM;
+            _subSelectedIndex = 2;
+            _needsRedraw = true;
+        } else if (action == INPUT_BACK || action == INPUT_GO_TO_MAIN_MENU) {
+            _screen = SCREEN_SYSTEM;
+            _subSelectedIndex = 2;
             _needsRedraw = true;
         }
         return;
@@ -565,8 +608,8 @@ void AppSettings::drawSystemScreen() {
     font.drawText(display, fsStr.c_str(), 220, y, FONT_SIZE_BODY, GxEPD_BLACK);
     y += ROW_HEIGHT + 20;
 
-    const char* actions[2] = {"Procurar actualizacao", "Reiniciar"};
-    for (int i = 0; i < 2; i++) {
+    const char* actions[3] = {"Procurar actualizacao", "Reiniciar", "Esquecer rede"};
+    for (int i = 0; i < 3; i++) {
         int ay = y + i * ROW_HEIGHT;
         uint16_t color = GxEPD_BLACK;
         if (i == _subSelectedIndex) {
@@ -606,6 +649,34 @@ void AppSettings::drawConfirmScreen() {
     drawFooter("KEY3: seguinte  |  KEY3 longo: confirmar");
 }
 
+void AppSettings::drawConfirmForgetWifiScreen() {
+    Book32Display& display = DisplayMgr::getInstance().getDisplay();
+    FontMgr& font = FontMgr::getInstance();
+    int w = display.width();
+
+    drawHeader("Esquecer rede?");
+
+    font.drawTextCentered(display, "O dispositivo desliga-se da rede actual", LIST_START_Y, FONT_SIZE_BODY,
+                          GxEPD_BLACK);
+    font.drawTextCentered(display, "e reinicia no modo de configuracao.", LIST_START_Y + 30, FONT_SIZE_BODY,
+                          GxEPD_BLACK);
+
+    const char* options[2] = {"Esquecer e reiniciar", "Cancelar"};
+    int y = LIST_START_Y + 100;
+    for (int i = 0; i < 2; i++) {
+        int oy = y + i * ROW_HEIGHT;
+        uint16_t color = GxEPD_BLACK;
+        if (i == _subSelectedIndex) {
+            display.fillRect(12, oy - 30, w - 24, ROW_HEIGHT - 8, GxEPD_BLACK);
+            color = GxEPD_WHITE;
+        }
+        font.drawText(display, options[i], 26, oy, FONT_SIZE_BODY, color);
+    }
+
+    display.setTextColor(GxEPD_BLACK);
+    drawFooter("KEY3: seguinte  |  KEY3 longo: confirmar");
+}
+
 void AppSettings::draw() {
     if (!_needsRedraw) return;
     _needsRedraw = false;
@@ -622,12 +693,25 @@ void AppSettings::draw() {
         display.setTextColor(GxEPD_BLACK);
 
         switch (_screen) {
-            case SCREEN_FONT:    drawFontScreen();    break;
-            case SCREEN_NETWORK: drawNetworkScreen(); break;
-            case SCREEN_SYSTEM:  drawSystemScreen();  break;
-            case SCREEN_CONFIRM: drawConfirmScreen(); break;
+            case SCREEN_FONT:
+                drawFontScreen();
+                break;
+            case SCREEN_NETWORK:
+                drawNetworkScreen();
+                break;
+            case SCREEN_SYSTEM:
+                drawSystemScreen();
+                break;
+            case SCREEN_CONFIRM:
+                drawConfirmScreen();
+                break;
+            case SCREEN_CONFIRM_FORGET_WIFI:
+                drawConfirmForgetWifiScreen();
+                break;
             case SCREEN_MAIN:
-            default:             drawMainScreen();    break;
+            default:
+                drawMainScreen();
+                break;
         }
     } while (display.nextPage());
 }

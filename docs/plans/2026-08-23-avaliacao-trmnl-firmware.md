@@ -67,7 +67,10 @@ O documento já propõe as duas saídas e recomenda a primeira para uma v1.7.0:
 Isto continua por fazer. É a recomendação de maior impacto desta avaliação,
 precisamente porque o projeto já a identificou e ainda não a fechou.
 
-**2. Leitura de bateria sem calibração de fábrica do ADC**
+**2. Leitura de bateria sem calibração de fábrica do ADC** —
+✅ implementado em 2026-08-23 (`analogReadMilliVolts()` em
+`lib/Book32_Core/BatteryMgr.cpp`), pendente de verificação com multímetro em
+hardware real.
 
 `lib/Book32_Core/BatteryMgr.cpp:170,181`:
 
@@ -100,53 +103,53 @@ localmente com um multímetro, e reduz a necessidade de recalibrar
 
 ### Média prioridade
 
-**3. Sem formatação de código automatizada**
+**3. Sem formatação de código automatizada** — ✅ implementado em 2026-08-23:
+`.clang-format` + `.clang-format-ignore` + job "Formatação" em `ci.yml`.
+Verifica só as linhas alteradas em cada push/PR (`git-clang-format`), não a
+árvore inteira — ver a nota em `tools/format.sh` sobre porquê.
 
 O `trmnl-firmware` tem `.clang-format`, `.clang-tidy` e um job de CI dedicado
 (`format.yml`, usando `jidicula/clang-format-action`) que bloqueia PRs com
-estilo inconsistente. O Book32 não tem nenhum dos dois. Com várias sessões
+estilo inconsistente. O Book32 não tinha nenhum dos dois. Com várias sessões
 (humanas e de agentes) a tocar no mesmo código ao longo do tempo, isto tende
-a gerar diffs ruidosos por reformatação incidental. Adotar um
-`.clang-format` (pode partir do do `trmnl-firmware` e ajustar) mais um job
-de CI que só verifica (não corrige automaticamente) é barato e de baixo
-risco.
+a gerar diffs ruidosos por reformatação incidental.
 
-**4. Sem opção explícita de "esquecer rede" nas definições**
+**4. Sem opção explícita de "esquecer rede" nas definições** — ✅ implementado
+em 2026-08-23: ecrã Sistema → "Esquecer rede", atrás de uma confirmação
+dedicada (`SCREEN_CONFIRM_FORGET_WIFI` em `AppSettings.cpp`).
 
-`lib/Book32_Apps/AppSettings.cpp` mostra SSID, IP e RSSI, mas não expõe
-`WiFiManager::resetSettings()`. Hoje, a única forma de trocar de rede é
-esperar que a ligação falhe (o `autoConnect()` do WiFiManager só reabre o
-portal de configuração nesse momento) ou reflashar. Uma ação "Esquecer rede"
-no menu de definições, atrás de uma confirmação, cobre o caso de o
-utilizador querer mudar de rede deliberadamente sem esperar por uma falha.
+`lib/Book32_Apps/AppSettings.cpp` mostrava SSID, IP e RSSI, mas não expunha
+`WiFiManager::resetSettings()`. Antes, a única forma de trocar de rede era
+esperar que a ligação falhasse (o `autoConnect()` do WiFiManager só reabre o
+portal de configuração nesse momento) ou reflashar.
 
 **5. Ausência de confirmação pós-OTA (`app_valid`) apesar da tabela de
-partições já suportar rollback**
+partições já suportar rollback** — ✅ parcialmente implementado em
+2026-08-23: `esp_ota_mark_app_valid_cancel_rollback()` chamado no arranque
+(`src/main.cpp`). Ver `docs/plans/2026-08-23-post-ota-rollback-design.md`
+para uma limitação não verificada — a build `framework = arduino` pura pode
+não ter o rollback do bootloader realmente ativo, o que só um teste em
+hardware real confirma.
 
 `partitions_16MB.csv` já define `app0`/`app1` como `ota_0`/`ota_1` — layout
 de duas partições, compatível com o mecanismo de rollback do ESP-IDF. O
 `trmnl-firmware` chama `esp_ota_mark_app_valid_cancel_rollback()` logo no
 arranque (`src/main.cpp`, ramo OG) para confirmar ao bootloader que a
-imagem atual arrancou com sucesso. O Book32 nunca faz essa chamada. Vale a
-pena confirmar se `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` está ativo na
-build Arduino/PlatformIO usada aqui; se estiver (ou puder ser ativado via
-`sdkconfig` options do `espressif32`), adicionar essa chamada — mais um
-contador de falhas de arranque — permitiria que um OTA mau reverta
-automaticamente para o firmware anterior, em vez de depender de recuperação
-por USB, que é hoje o único caminho documentado quando um OTA corre mal.
+imagem atual arrancou com sucesso. O Book32 nunca fazia essa chamada.
 
 ### Baixa prioridade
 
-**6. Dependências de biblioteca com ranges em vez de versões fixas**
+**6. Dependências de biblioteca com ranges em vez de versões fixas** —
+✅ implementado em 2026-08-23: todas as `lib_deps` e `platform` em
+`platformio.ini` fixadas às versões exatas que o CI já tinha validado
+(confirmadas a partir do "Dependency Graph" impresso pelo próprio `pio run`,
+não adivinhadas).
 
-`platformio.ini` usa `^` em todas as `lib_deps`
-(ex.: `zinggjm/GxEPD2 @ ^1.5.0`), o que permite que uma build futura resolva
-uma versão de biblioteca diferente da testada, silenciosamente. O
+`platformio.ini` usava `^` em todas as `lib_deps`
+(ex.: `zinggjm/GxEPD2 @ ^1.5.0`), o que permitia que uma build futura
+resolvesse uma versão de biblioteca diferente da testada, silenciosamente. O
 `trmnl-firmware` fixa versões exatas por placa via ficheiros
-`dependencies.lock.*`. Fixar versões exatas (ou documentar a versão exata
-resolvida em cada release) tornaria `pio run` reprodutível para uma tag já
-publicada — relevante porque o `release.yml` do Book32 já depende de builds
-reprodutíveis para os digests SHA-256 fazerem sentido.
+`dependencies.lock.*`.
 
 **7. Sem suite de testes de integração em hardware**
 
@@ -184,11 +187,11 @@ cada tag `vX.Y.Z` capturaria grande parte do valor a um custo muito menor.
 | # | Recomendação | Impacto | Esforço |
 |---|---|---|---|
 | 1 | ✅ Autenticar TLS no canal OTA (assinatura ou CA pinning) | Alto (segurança) | Médio–Alto |
-| 2 | `analogReadMilliVolts()` na leitura de bateria | Médio (precisão) | Baixo |
-| 3 | `.clang-format` + CI de formatação | Médio (manutenção) | Baixo |
-| 4 | "Esquecer rede" nas definições | Baixo (UX) | Baixo |
-| 5 | Confirmar `app_valid` pós-OTA para rollback automático | Médio (robustez) | Médio |
-| 6 | Fixar versões exatas em `lib_deps` | Baixo (reprodutibilidade) | Baixo |
+| 2 | ✅ `analogReadMilliVolts()` na leitura de bateria | Médio (precisão) | Baixo |
+| 3 | ✅ `.clang-format` + CI de formatação | Médio (manutenção) | Baixo |
+| 4 | ✅ "Esquecer rede" nas definições | Baixo (UX) | Baixo |
+| 5 | ✅⚠️ Confirmar `app_valid` pós-OTA para rollback automático | Médio (robustez) | Médio |
+| 6 | ✅ Fixar versões exatas em `lib_deps` | Baixo (reprodutibilidade) | Baixo |
 | 7 | Checklist de fumo manual pré-release | Baixo (qualidade) | Baixo |
 
 Os pontos 1 e 2 são os que trazem mais valor por esforço: o primeiro porque

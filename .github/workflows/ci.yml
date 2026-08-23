@@ -74,3 +74,44 @@ jobs:
       # sintaxe só apareceria no browser, depois de um uploadfs.
       - name: Verificar script.js
         run: node --check data/script.js
+
+  format:
+    name: Formatação (clang-format)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Instalar clang-format
+        run: sudo apt-get update && sudo apt-get install -y clang-format-18
+
+      # git-clang-format só reformata as LINHAS alteradas por este push/PR, e
+      # falha se essa reformatação mudaria alguma coisa — não verifica o
+      # ficheiro inteiro. O repositório nunca foi passado pelo clang-format
+      # (ver tools/format.sh), por isso um check de árvore inteira falharia
+      # já no primeiro commit; isto apanha o desvio de estilo em código novo
+      # sem forçar essa reformatação maior agora.
+      - name: Determinar commit base
+        id: base
+        run: |
+          set -e
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch origin "${{ github.base_ref }}" --depth=50
+            echo "sha=$(git merge-base "origin/${{ github.base_ref }}" HEAD)" >> "$GITHUB_OUTPUT"
+          else
+            echo "sha=$(git rev-parse HEAD~1)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verificar formatação do código alterado
+        run: |
+          set +e
+          git-clang-format-18 --binary clang-format-18 --diff "${{ steps.base.outputs.sha }}"
+          STATUS=$?
+          set -e
+          # 0 = nada por formatar (ou nenhum .cpp/.h no diff). 1 = encontrou
+          # diferenças (mostradas acima). 2 = erro da própria ferramenta.
+          if [ $STATUS -ne 0 ]; then
+            echo "::error::Código alterado não está formatado (ou a verificação falhou). Corre 'clang-format -i <ficheiro>' (ou tools/format.sh) e volta a submeter."
+            exit 1
+          fi
