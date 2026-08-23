@@ -164,13 +164,18 @@ void BatteryMgr::updateCache(bool clearStaleCharging) {
     delay(5); // Wait for stabilization
 #endif
 
-    // Read ADC - average 30 samples for stability
-    uint32_t raw = 0;
+    // Read ADC - average 30 samples for stability. analogReadMilliVolts() uses
+    // the factory eFuse calibration curve burned into each ESP32-S3, instead
+    // of analogRead()'s raw 12-bit count through a fixed linear formula, so it
+    // tracks the true pin voltage much more closely on its own. The discarded
+    // first read only primes the ADC (its output is unreliable otherwise).
+    analogRead(PIN_BAT_VOLT);
+    uint32_t raw_mv = 0;
     for(int i = 0; i < 30; i++) {
-        raw += analogRead(PIN_BAT_VOLT);
+        raw_mv += analogReadMilliVolts(PIN_BAT_VOLT);
         delay(1);
     }
-    raw /= 30;
+    raw_mv /= 30;
 
 #ifdef PIN_VBAT_SWITCH
     digitalWrite(PIN_VBAT_SWITCH, !VBAT_SWITCH_LEVEL); // Turn off to save power
@@ -178,7 +183,7 @@ void BatteryMgr::updateCache(bool clearStaleCharging) {
 
     // Convert to battery voltage through the 2:1 divider, then apply the board
     // calibration factor from Config.h.
-    float voltage = (raw / 4095.0f) * 3.3f * 2.0f;
+    float voltage = (raw_mv / 1000.0f) * 2.0f;
     voltage *= BATTERY_VOLTAGE_CALIBRATION;
     if (voltage > BATTERY_FULL_VOLTAGE) {
         voltage = BATTERY_FULL_VOLTAGE;
