@@ -142,7 +142,19 @@ void BatteryMgr::update() {
     }
 
     if (sleepTimeoutMinutes > 0 && !charging) {
-        unsigned long idleTime = now - lastActivity;
+        // Novo millis() aqui, não o `now` capturado no topo desta função:
+        // isCriticallyLow() acima pode bloquear dezenas de ms num
+        // updateCache() (delay(5) + 30 leituras de ADC). Se um premir de
+        // botão puser resetIdleTimer() a correr nessa janela,
+        // _lastActivityTime fica mais recente que o `now` já capturado, e a
+        // subtracção sem sinal abaixo dava a volta para perto de UINT32_MAX -
+        // disparando um "idle timeout" falso e instantâneo exactamente no
+        // premir que devia ter reiniciado o temporizador (idle=4294967260ms
+        // em vez dos ~timeoutMs esperados). Ler millis() depois de já termos
+        // lastActivity garante idleNow >= lastActivity sempre, porque
+        // millis() só cresce.
+        unsigned long idleNow = millis();
+        unsigned long idleTime = idleNow - lastActivity;
         unsigned long timeoutMs = (unsigned long)sleepTimeoutMinutes * 60 * 1000;
         if (idleTime >= timeoutMs) {
             // v1.9.1 diagnostics: distinguishes this path from the KEY2
