@@ -54,8 +54,12 @@
       <p class="installer-error" data-installer-error role="alert" hidden></p>
 
       <div class="erase-warning" role="note">
-        <strong>Protect your library.</strong>
-        If the installer offers an <q>Erase device</q> option, leave it unchecked. This update does not write to ebook storage.
+        <strong>Do not check "Erase device".</strong>
+        The installer will ask whether to erase the chip before writing.
+        Leave that box unchecked. Answering yes wipes the <em>entire</em>
+        flash first &mdash; WiFi settings, your ebook library, everything &mdash;
+        and this update only rewrites firmware and the web UI afterwards,
+        so nothing else gets restored.
       </div>
     </section>
 

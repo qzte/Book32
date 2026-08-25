@@ -179,3 +179,50 @@ funcionalidade opcionais, não correções de lacunas.
 (Settings → Pages → Deploy from a branch → `main` → pasta `/docs`) para a
 página ficar acessível em `https://qzte.github.io/Book32/` — essa
 definição do repositório não é algo que eu consiga alterar por aqui.
+
+## Incidente (2026-08-25): instalador apagou um dispositivo real
+
+Pouco depois de ativado, o instalador foi usado num Book32 que já estava a
+funcionar e deixou-o preso num ciclo de reset por watchdog
+(`invalid header: 0xffffffff` no monitor de série, repetido
+indefinidamente — sinal de o bootloader, offset `0x0`, ter ficado apagado).
+O utilizador confirmou que o próprio instalador reportou "Installation
+complete" sem erros, o que excluiu logo a hipótese de ligação USB
+interrompida a meio da escrita.
+
+**Causa**: usei mal o campo `new_install_prompt_erase` do manifest do ESP
+Web Tools. O nome sugere "perguntar antes de apagar", mas o comportamento
+real (confirmado no código-fonte atual de `esphome/esp-web-tools`,
+`src/install-dialog.ts`) é o oposto — comentário no próprio código:
+"Default is to erase a device that does not support Improv Serial". Ou
+seja: com o campo a `false` (o que eu tinha posto), a instalação **apaga a
+chip inteira automaticamente, sem perguntar nada**; só `true` mostra ao
+utilizador um diálogo onde pode recusar o apagamento. Nunca cheguei a
+testar isto num dispositivo real porque o CDN do esp-web-tools está
+bloqueado no ambiente de sandbox onde desenvolvi — só validei localmente
+que o manifest tinha os offsets e caminhos corretos, não o comportamento
+do próprio esp-web-tools perante esse campo.
+
+Como o "modo Atualizar" só reescreve `firmware.bin` (offset `0x10000`) e
+`littlefs.bin` (offset `0x510000`), um apagamento total da chip antes disso
+deixa por restaurar tudo o resto: bootloader (`0x0`), tabela de partições
+(`0x8000`), `nvs`/credenciais WiFi (`0x9000`), `otadata` (`0xe000`) e a
+partição de ebooks de 10 MB (`0x610000`) — não só o bootloader.
+
+**Correção** (`docs/installer.js`, `docs/index.html`): `new_install_prompt_erase`
+passou a `true`, com um comentário extenso no código a explicar a semântica
+real do campo para não se repetir o erro. O aviso na página também ficou
+mais explícito sobre o que está em risco (WiFi e biblioteca, não só o
+firmware) já que agora o diálogo de apagar vai mesmo aparecer.
+
+**Recuperação recomendada ao utilizador**: reflash completo por PlatformIO
+(`pio run --target upload` + `pio run --target uploadfs`), que escreve
+bootloader + tabela de partições + firmware do zero — o único caminho que
+repõe as regiões que o instalador via browser nunca tocou.
+
+**Lição**: uma alegação de "testei localmente" que só cobre a lógica em
+JavaScript (offsets, caminhos, construção do manifest) sem executar a
+biblioteca de terceiros real contra hardware não é suficiente para uma
+funcionalidade que escreve fisicamente na flash de um dispositivo — mesmo
+com os offsets certos, o comportamento de uma opção mal interpretada foi
+o que causou o incidente, não os offsets.
