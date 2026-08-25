@@ -54,6 +54,15 @@ private:
     bool _needsRedraw;
     bool _dirty;
 
+    // Set by handleInput() when NEXT/PREV just moved the highlighted row on
+    // SCREEN_MAIN or SCREEN_FONT, with nothing else on screen changing. draw()
+    // consumes it into a partial refresh over the old + new row instead of a
+    // full-window flash. Any other redraw reason (screen switch, value edit,
+    // status message) leaves it false, so those still get a full refresh.
+    bool _selectionOnlyRedraw;
+    int _previousSelectedIndex;    // last _selectedIndex, for SCREEN_MAIN
+    int _previousSubSelectedIndex; // last _subSelectedIndex, for SCREEN_FONT
+
     // Draft state: edited freely, only flushed to disk on save.
     ReaderSettings _reader;
     DisplaySettings _display;
