@@ -43,7 +43,16 @@ async function init() {
   const manifest = {
     name: 'Book32',
     version,
-    new_install_prompt_erase: false,
+    // CRITICAL: this must stay true. ESP Web Tools' actual behaviour is the
+    // opposite of what the field name suggests - when this is false (or
+    // absent), it erases the ENTIRE flash chip automatically, with no
+    // prompt and no way to opt out (see esphome/esp-web-tools
+    // src/install-dialog.ts: "Default is to erase a device that does not
+    // support Improv Serial"). Only `true` shows the user a confirmation
+    // dialog where they can decline the erase. A `false` here silently
+    // wiped a real device's bootloader, WiFi settings and ebook library on
+    // 2026-08-25 before this was caught - do not change it back.
+    new_install_prompt_erase: true,
     builds: [
       {
         chipFamily: 'ESP32-S3',
