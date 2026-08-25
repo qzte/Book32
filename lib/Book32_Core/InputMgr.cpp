@@ -38,10 +38,13 @@ void InputMgr::init() {
     btnBack.setPressMs(BUTTON_LONG_PRESS_MS);
 
     // KEY2 - short click triggers a manual full display refresh; long press
-    // enters standby. Standby needs STANDBY_HOLD_MS held (see StandbyGuard.h),
-    // well beyond the ordinary BUTTON_LONG_PRESS_MS, so a brush against the
-    // button - or against KEY1/KEY3 - never drops the device into deep sleep
-    // mid-page. Polled manually for the same reason as KEY1.
+    // used to enter standby (now off by default - see
+    // BOOK32_KEY2_STANDBY_ENABLED in Config.h; only BatteryMgr's automatic
+    // idle timeout sleeps the device). When re-enabled, standby needs
+    // STANDBY_HOLD_MS held (see StandbyGuard.h), well beyond the ordinary
+    // BUTTON_LONG_PRESS_MS, so a brush against the button - or against
+    // KEY1/KEY3 - never drops the device into deep sleep mid-page. Polled
+    // manually for the same reason as KEY1.
     btnSleep.setDebounceMs(BUTTON_DEBOUNCE_MIN_MS);
     btnSleep.setPressMs(STANDBY_HOLD_MS);
     pinMode(PIN_BUTTON_SLEEP, INPUT_PULLUP);
@@ -203,6 +206,7 @@ void InputMgr::inputTask(void* parameter) {
                 Serial.println("KEY2: Button pressed");
             } else if (!self->_btnSleepLongPressSent && !self->_btnSleepAborted &&
                        (now - self->_btnSleepPressTime) >= STANDBY_HOLD_MS) {
+#if BOOK32_KEY2_STANDBY_ENABLED
                 // Guarda de standby: relê os três pinos e só aceita o pedido se
                 // KEY2 estiver mesmo premido e mais nenhum botão estiver em
                 // baixo. Sem isto, um LOW induzido em GPIO3 por premir KEY3
@@ -232,6 +236,13 @@ void InputMgr::inputTask(void* parameter) {
                                   standbyDecisionName(decision),
                                   now - self->_btnSleepPressTime);
                 }
+#else
+                // Standby manual desligado (BOOK32_KEY2_STANDBY_ENABLED=0,
+                // ver Config.h): só o idle timeout automático do BatteryMgr
+                // adormece o dispositivo. Consumido como recusado para não
+                // voltar a testar a cada 5ms até KEY2 ser largado.
+                self->_btnSleepAborted = true;
+#endif
             }
         } else {
             if (self->_btnSleepPressTime != 0) {

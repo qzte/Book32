@@ -23,7 +23,7 @@
 // press producing INPUT_NEXT, captured before any pin change ever shipped.
 #define PIN_BUTTON   5  // "KEY3" button
 #define PIN_BUTTON_BACK 2  // "KEY1" button - dedicated Back button
-#define PIN_BUTTON_SLEEP 3  // "KEY2" button - full refresh (click), standby (long press)
+#define PIN_BUTTON_SLEEP 3 // "KEY2" button - full refresh (click), standby (long press; off by default)
 
 // Display Pins (TRMNL 7.5" OG DIY Kit)
 #define EPD_SCK     7
@@ -43,6 +43,13 @@
 // Set to 1 when debugging partition/filesystem issues. Keeping this off makes
 // normal startup quieter and avoids walking the ebook filesystem every boot.
 #define BOOK32_VERBOSE_BOOT_LOG 0
+
+// Manual standby (KEY2 long press, ~1.5s — see StandbyGuard.h). At 0, only
+// the automatic idle sleep stays active (BatteryMgr's inactivity timeout,
+// configurable in Settings); holding KEY2 no longer puts the device to
+// sleep, but a short click still triggers a full refresh. Set to 1 to bring
+// the manual long-press standby back.
+#define BOOK32_KEY2_STANDBY_ENABLED 0
 
 // Battery calibration
 // Fully charged LiPo cells should read 4.20V. The previous value here (1.075)
