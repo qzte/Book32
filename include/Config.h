@@ -23,7 +23,7 @@
 // press producing INPUT_NEXT, captured before any pin change ever shipped.
 #define PIN_BUTTON   5  // "KEY3" button
 #define PIN_BUTTON_BACK 2  // "KEY1" button - dedicated Back button
-#define PIN_BUTTON_SLEEP 3  // "KEY2" button - full refresh (click), standby (long press, off by default - see BOOK32_KEY2_STANDBY_ENABLED)
+#define PIN_BUTTON_SLEEP 3 // "KEY2" button - full refresh (click), standby (long press; off by default)
 
 // Display Pins (TRMNL 7.5" OG DIY Kit)
 #define EPD_SCK     7
