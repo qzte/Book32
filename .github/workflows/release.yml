@@ -162,3 +162,39 @@ jobs:
             dist/firmware.bin
             dist/littlefs.bin
           body_path: notes.md
+
+      - name: Update browser installer assets
+        # docs/ is the GitHub Pages browser installer (ESP Web Tools). Its
+        # manifest is built at runtime by docs/installer.js from
+        # docs/latest.json, so this step is the only thing that needs to run
+        # per release: write the new version-suffixed binaries, drop the old
+        # ones, and bump latest.json. Filenames are version-suffixed so a
+        # browser or CDN cache can never serve a stale binary under a name
+        # the current manifest still points to.
+        #
+        # GitHub release assets do not send CORS headers, so the installer
+        # page (running on a different origin, GitHub Pages) cannot fetch
+        # them directly - the binaries must live on the same origin as the
+        # page, hence committing them here instead of linking to the release.
+        run: |
+          set -e
+          VERSION="${GITHUB_REF_NAME#v}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin main
+          git switch -c installer-assets-update origin/main
+
+          rm -f docs/firmware/*.bin
+          cp dist/firmware.bin "docs/firmware/firmware-v${VERSION}.bin"
+          cp dist/littlefs.bin "docs/firmware/littlefs-v${VERSION}.bin"
+          printf '{\n  "version": "%s"\n}\n' "$VERSION" > docs/latest.json
+
+          git add docs/firmware docs/latest.json
+          if git diff --cached --quiet; then
+            echo "No installer asset changes to commit"
+          else
+            git commit -m "docs: update browser installer assets for ${GITHUB_REF_NAME}"
+            git push origin installer-assets-update:main
+          fi

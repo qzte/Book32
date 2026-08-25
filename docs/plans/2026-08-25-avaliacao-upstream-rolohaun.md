@@ -58,6 +58,9 @@ independente neste fork.
 
 ### Alta prioridade — instalador via browser (`docs/index.html` + ESP Web Tools)
 
+✅ implementado em 2026-08-25, só no modo "Atualizar" (ver secção seguinte
+para o motivo de deixar o modo "hardware novo" de fora por agora).
+
 O original adicionou uma página estática (hospedada em GitHub Pages) que usa
 [esp-web-tools](https://esphome.github.io/esp-web-tools/) para flashar o
 Book32 diretamente do Chrome/Edge via Web Serial, sem precisar de
@@ -85,6 +88,32 @@ existente (publicar `firmware.bin`/`littlefs.bin`/`book32-factory.bin` em
 `docs/firmware/` ou apontar os manifests para os assets do release do
 GitHub). Impacto alto para utilizadores não técnicos, risco baixo — é uma
 página estática independente do firmware em si.
+
+**Implementação real (2026-08-25)**: testei diretamente (`curl` com cabeçalho
+`Origin`) e confirmei que os assets de release do GitHub **não** enviam
+`Access-Control-Allow-Origin` — o browser bloqueia por CORS uma tentativa de
+`fetch()` a partir da página do GitHub Pages (origem diferente). Por isso
+apontar o manifest diretamente para os assets do release, como cheguei a
+considerar, não funciona; os binários têm de viver na mesma origem que a
+página. Segui por isso a mesma solução do original (commitar os binários em
+`docs/firmware/`), mas automatizada: `release.yml` agora, depois de publicar
+o release, copia `firmware.bin`/`littlefs.bin` para
+`docs/firmware/firmware-vX.bin`/`littlefs-vX.bin`, escreve a versão em
+`docs/latest.json`, e faz commit + push direto para `main` — sem editar
+`docs/index.html` a cada release (`docs/installer.js` lê `latest.json` e
+constrói o manifest em runtime). Isto evita exatamente o bug que o original
+teve de corrigir à mão no commit `34a79cf "Prevent stale browser installer
+assets"` (nomes de ficheiro sem sufixo de versão a ficar em cache).
+
+Implementei **só o modo "Atualizar"** (`firmware.bin` + `littlefs.bin` nos
+offsets já usados em produção pelo OTA deste fork — sem risco). Deixei de
+fora o modo "hardware novo" (bootloader + tabela de partições a partir do
+zero): os offsets derivam-se com confiança razoável de
+`partitions_16MB.csv` e das convenções do ESP32-S3, mas não tive forma de
+testar em hardware real aqui, e um offset errado nesse modo pode escrever
+mal um chip em branco. Fica documentado como possível extensão futura, a
+implementar só com verificação em hardware real antes de confiar nele — a
+instalação de hardware novo continua a usar PlatformIO (`README.md`).
 
 ### Média prioridade — apps novas (domínio de funcionalidade, não correção)
 
@@ -130,7 +159,8 @@ página estática independente do firmware em si.
 
 | # | Item | Novo no original? | Impacto | Esforço | Recomendação |
 |---|---|---|---|---|---|
-| 1 | Instalador via browser (ESP Web Tools) | Sim | Alto (UX de instalação) | Baixo | Adotar |
+| 1 | Instalador via browser (ESP Web Tools), modo Atualizar | Sim | Alto (UX de instalação) | Baixo | ✅ Implementado |
+| 1b | Instalador via browser, modo "hardware novo" | Sim | Médio | Médio | Não implementado — precisa de verificação em hardware real |
 | 2 | AppKlipper (monitor Klipper/Moonraker) | Sim | Médio (opcional) | Médio | Só se houver interesse em impressão 3D |
 | 3 | AppTodo | Sim | Baixo | Baixo | Opcional |
 | 4 | Fonte Open Sans | Sim | Baixo | Baixo | Só após validar glifos PT |
@@ -144,3 +174,8 @@ uma página estática, sem impacto no firmware, compatível byte-a-byte com o
 layout de flash já usado neste fork, e resolve um problema real (instalar o
 Book32 exige hoje PlatformIO + VS Code). Os restantes itens são extensões de
 funcionalidade opcionais, não correções de lacunas.
+
+**Nota pós-implementação**: falta ativar GitHub Pages no repositório
+(Settings → Pages → Deploy from a branch → `main` → pasta `/docs`) para a
+página ficar acessível em `https://qzte.github.io/Book32/` — essa
+definição do repositório não é algo que eu consiga alterar por aqui.

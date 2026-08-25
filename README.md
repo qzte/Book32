@@ -56,6 +56,17 @@ Battery sense:
 - Voltage ADC: GPIO 1
 - Measurement switch: GPIO 6, active high
 
+## Install From A Browser
+
+If Book32 is already flashed and you just want to update it, the quickest
+path is the [Book32 Browser Installer](https://qzte.github.io/Book32/). It
+works in desktop Chrome or Edge with a data-capable USB cable and does not
+require PlatformIO or a local development environment. It only writes the
+firmware and web UI partitions — uploaded ebooks and settings are untouched.
+
+Flashing brand-new or blank hardware for the first time still needs
+PlatformIO; see below.
+
 ## Install PlatformIO
 
 The easiest path is Visual Studio Code plus the PlatformIO extension.
