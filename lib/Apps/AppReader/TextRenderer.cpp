@@ -25,8 +25,8 @@ void TextRenderer::setFontSize(int size) {
 }
 
 void TextRenderer::setFontFamily(int family) {
-    int normalized = (family >= READER_FONT_SANS && family <= READER_FONT_GELASIO)
-                          ? family : READER_FONT_SANS;
+    int normalized =
+        (family >= READER_FONT_SANS && family <= READER_FONT_OPEN_SANS) ? family : READER_FONT_SANS;
     if (normalized == _fontFamily) return;
     _fontFamily = normalized;
     // Force width cache + pagination to be recomputed for the new font.
@@ -93,6 +93,10 @@ const GFXfont* TextRenderer::getGFXFont(TextStyle style, int& lineHeight) {
         case READER_FONT_GELASIO:
             B32_FONT_SET(Gelasio_Regular9pt8b, Gelasio_Regular12pt8b, Gelasio_Regular18pt8b,
                          Gelasio_Bold9pt8b, Gelasio_Bold12pt8b, Gelasio_Bold18pt8b, Gelasio_Bold24pt8b)
+            break;
+        case READER_FONT_OPEN_SANS:
+            B32_FONT_SET(OpenSans_Regular9pt8b, OpenSans_Regular12pt8b, OpenSans_Regular18pt8b,
+                         OpenSans_Bold9pt8b, OpenSans_Bold12pt8b, OpenSans_Bold18pt8b, OpenSans_Bold24pt8b)
             break;
         case READER_FONT_SANS:
         default:

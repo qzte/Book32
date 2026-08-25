@@ -31,7 +31,7 @@ int SettingsStore::clampFontSize(int pt) {
 }
 
 int SettingsStore::clampFontFamily(int family) {
-    if (family < 0 || family > 4) return 0;
+    if (family < 0 || family > 5) return 0;
     return family;
 }
 

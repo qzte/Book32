@@ -37,9 +37,15 @@ non-redistributable typefaces:
 | `SourceSerif4.h/.cpp` | Source Serif 4          | Source Serif Pro (renamed by Adobe) | SIL Open Font License 1.1 |
 | `Gelasio.h/.cpp`    | Gelasio                   | Georgia (Microsoft, proprietary) | SIL Open Font License 1.1 |
 | `FreeSans.h/.cpp`   | GNU FreeFont FreeSans     | Adafruit FreeSans (ASCII-only) | GPLv3 with font exception |
+| `OpenSans.h/.cpp`   | Open Sans                 | (extra sans-serif option, not a substitute) | SIL Open Font License 1.1 |
 
 Source TTFs: [google/fonts](https://github.com/google/fonts) (`ofl/` directory).
 Variable font instances were pinned to static Regular (wght=400) and Bold
-(wght=700) weights with `fonttools varLib.instancer` before conversion.
+(wght=700) weights with `fonttools varLib.instancer` before conversion. Open
+Sans was the exception: its `static/` subfolder already ships pre-instanced
+Regular/Bold TTFs, so it went straight into `fontconvert` with no instancer
+step, and its generated yAdvance (24/32/48/64 for 9/12/18/24pt) came out
+cleanly proportional with this project's FreeType/DPI settings, so it needed
+no manual patch.
 
 Full OFL 1.1 license text: https://openfontlicense.org

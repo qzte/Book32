@@ -142,7 +142,8 @@ void AppReader::loadSettings() {
             }
             if (doc.containsKey("fontFamily")) {
                 int fam = doc["fontFamily"];
-                _fontFamily = (fam >= READER_FONT_SANS && fam <= READER_FONT_GELASIO) ? fam : READER_FONT_SANS;
+                _fontFamily =
+                    (fam >= READER_FONT_SANS && fam <= READER_FONT_OPEN_SANS) ? fam : READER_FONT_SANS;
             }
         }
         file.close();
@@ -983,7 +984,8 @@ void AppReader::applyFontSize(int pt) {
 }
 
 void AppReader::applyFontFamily(int family) {
-    int normalized = (family >= READER_FONT_SANS && family <= READER_FONT_GELASIO) ? family : READER_FONT_SANS;
+    int normalized =
+        (family >= READER_FONT_SANS && family <= READER_FONT_OPEN_SANS) ? family : READER_FONT_SANS;
     _fontFamily = normalized;
     if (_textRenderer) _textRenderer->setFontFamily(normalized);
 
