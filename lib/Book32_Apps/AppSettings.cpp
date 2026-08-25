@@ -66,9 +66,34 @@ static int cycleInt(const int* values, int count, int current) {
 static const int LIST_START_Y = 130;
 static const int ROW_HEIGHT = 52;
 
+// Dirty-rect for the row highlight on SCREEN_MAIN/SCREEN_FONT, matching the
+// fillRect() each draws for its selected row (drawMainScreen, drawFontScreen).
+// Both screens lay their rows out identically - one per ROW_HEIGHT starting
+// at LIST_START_Y - so a single helper covers both.
+struct SettingsDirtyRect {
+    int x;
+    int y;
+    int w;
+    int h;
+};
+
+static SettingsDirtyRect settingsRowRect(int index, int screenW) {
+    int y = LIST_START_Y + index * ROW_HEIGHT;
+    return {12, y - 30, screenW - 24, ROW_HEIGHT - 8};
+}
+
+static SettingsDirtyRect unionRect(SettingsDirtyRect a, SettingsDirtyRect b) {
+    int x1 = min(a.x, b.x);
+    int y1 = min(a.y, b.y);
+    int x2 = max(a.x + a.w, b.x + b.w);
+    int y2 = max(a.y + a.h, b.y + b.h);
+    return {x1, y1, x2 - x1, y2 - y1};
+}
+
 AppSettings::AppSettings()
-    : _screen(SCREEN_MAIN), _selectedIndex(0), _subSelectedIndex(0),
-      _needsRedraw(true), _dirty(false), _statusUntil(0), _lastNetworkPoll(0) {}
+    : _screen(SCREEN_MAIN), _selectedIndex(0), _subSelectedIndex(0), _needsRedraw(true), _dirty(false),
+      _selectionOnlyRedraw(false), _previousSelectedIndex(0), _previousSubSelectedIndex(0), _statusUntil(0),
+      _lastNetworkPoll(0) {}
 
 const uint8_t* AppSettings::getIconImage() {
     return icon_settings_160x160;
@@ -87,6 +112,7 @@ void AppSettings::start() {
     _selectedIndex = 0;
     _subSelectedIndex = _reader.fontFamily;
     _dirty = false;
+    _selectionOnlyRedraw = false;
     _statusMessage = "";
     _statusUntil = 0;
     _needsRedraw = true;
@@ -101,6 +127,7 @@ void AppSettings::stop() {
 }
 
 void AppSettings::forceRedraw() {
+    _selectionOnlyRedraw = false;
     _needsRedraw = true;
 }
 
@@ -267,17 +294,23 @@ void AppSettings::handleInput(InputAction action) {
 
     if (_screen == SCREEN_FONT) {
         if (action == INPUT_NEXT) {
+            _selectionOnlyRedraw = true;
+            _previousSubSelectedIndex = _subSelectedIndex;
             _subSelectedIndex = (_subSelectedIndex + 1) % 5;
             _needsRedraw = true;
         } else if (action == INPUT_PREV) {
+            _selectionOnlyRedraw = true;
+            _previousSubSelectedIndex = _subSelectedIndex;
             _subSelectedIndex = (_subSelectedIndex + 4) % 5;
             _needsRedraw = true;
         } else if (action == INPUT_SELECT) {
+            _selectionOnlyRedraw = false; // leaving the screen: full repaint
             _reader.fontFamily = _subSelectedIndex;
             recomputeDirty();
             _screen = SCREEN_MAIN;
             _needsRedraw = true;
         } else if (action == INPUT_BACK || action == INPUT_GO_TO_MAIN_MENU) {
+            _selectionOnlyRedraw = false;
             _screen = SCREEN_MAIN;
             _needsRedraw = true;
         }
@@ -360,14 +393,22 @@ void AppSettings::handleInput(InputAction action) {
 
     // Main screen
     if (action == INPUT_NEXT) {
+        _selectionOnlyRedraw = true;
+        _previousSelectedIndex = _selectedIndex;
         _selectedIndex = (_selectedIndex + 1) % ROW_COUNT;
         _needsRedraw = true;
     } else if (action == INPUT_PREV) {
+        _selectionOnlyRedraw = true;
+        _previousSelectedIndex = _selectedIndex;
         _selectedIndex = (_selectedIndex + ROW_COUNT - 1) % ROW_COUNT;
         _needsRedraw = true;
     } else if (action == INPUT_SELECT) {
+        // activate() may cycle a value, switch screen or leave the app - all
+        // of which touch more than the highlighted row, so always full redraw.
+        _selectionOnlyRedraw = false;
         activate(_selectedIndex);
     } else if (action == INPUT_BACK || action == INPUT_GO_TO_MAIN_MENU) {
+        _selectionOnlyRedraw = false;
         if (_dirty) {
             _screen = SCREEN_CONFIRM;
             _subSelectedIndex = 0;
@@ -683,10 +724,23 @@ void AppSettings::draw() {
 
     Book32Display& display = DisplayMgr::getInstance().getDisplay();
 
-    // Full refresh throughout: a settings list isn't scrolled continuously, and
-    // this keeps the drawing code far simpler than the main menu's dirty-rect
-    // bookkeeping.
-    display.setFullWindow();
+    // Moving the highlighted row on SCREEN_MAIN/SCREEN_FONT only touches that
+    // row and the one it left, so it doesn't need the full-window e-ink flash
+    // that every other redraw here still gets (screen switch, value edit,
+    // status message - all of which touch the header/footer or a different
+    // layout entirely).
+    if (_selectionOnlyRedraw && (_screen == SCREEN_MAIN || _screen == SCREEN_FONT)) {
+        int prevIndex = (_screen == SCREEN_MAIN) ? _previousSelectedIndex : _previousSubSelectedIndex;
+        int currIndex = (_screen == SCREEN_MAIN) ? _selectedIndex : _subSelectedIndex;
+        int screenW = display.width();
+        SettingsDirtyRect dirty =
+            unionRect(settingsRowRect(prevIndex, screenW), settingsRowRect(currIndex, screenW));
+        display.setPartialWindow(dirty.x, dirty.y, dirty.w, dirty.h);
+    } else {
+        display.setFullWindow();
+    }
+    _selectionOnlyRedraw = false;
+
     display.firstPage();
     do {
         display.fillScreen(GxEPD_WHITE);
