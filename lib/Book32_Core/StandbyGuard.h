@@ -3,7 +3,13 @@
 
 // Book32 v1.9.2 — quem pode mandar o dispositivo para standby.
 //
-// Regra do produto: só o long press de KEY2 entra em standby manualmente.
+// O standby manual está actualmente desligado por omissão
+// (BOOK32_KEY2_STANDBY_ENABLED=0 em Config.h): só o idle timeout automático
+// do BatteryMgr adormece o dispositivo, e o código abaixo fica compilado
+// mas fora do caminho de InputMgr até o flag voltar a 1. Mantido tal como
+// estava para esse caso.
+//
+// Regra do produto (com o standby manual ligado): só o long press de KEY2 entra em standby manualmente.
 // KEY1 e KEY3 não têm caminho para o sleep no código, mas o utilizador via
 // KEY3 a adormecer o leitor. A hipótese A do diagnóstico
 // (docs/plans/2026-07-26-key1-key3-standby-diagnostics.md) é acoplamento nos
