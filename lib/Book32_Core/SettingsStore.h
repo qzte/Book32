@@ -22,7 +22,7 @@
 struct ReaderSettings {
     int refreshFrequency = 10;  // Full e-ink refresh every N page turns
     int fontSize = 9;           // Reading body size in points: 9, 12 or 18
-    int fontFamily = 0;         // See ReaderFontFamily: 0..4
+    int fontFamily = 0;         // See ReaderFontFamily: 0..5
 };
 
 struct DisplaySettings {
@@ -52,7 +52,7 @@ public:
     // Clamping helpers, exposed so the UI can snap a value to the next legal
     // one while cycling rather than duplicating the allowed sets.
     static int clampFontSize(int pt);       // -> 9, 12 or 18
-    static int clampFontFamily(int family); // -> 0..4
+    static int clampFontFamily(int family); // -> 0..5
     static int clampRotation(int rotation); // -> 1 or 3
     static int clampRefreshFrequency(int n);
     static int clampSleepTimeout(int minutes);

@@ -12,16 +12,18 @@
 #include "Fonts/Literata.h"
 #include "Fonts/SourceSerif4.h"
 #include "Fonts/Gelasio.h"
+#include "Fonts/OpenSans.h"
 #include "DisplayMgr.h"
 #include "EpubLoader.h"
 
 // Reading font family, selectable in the web UI's Reader Options.
 enum ReaderFontFamily {
-    READER_FONT_SANS         = 0, // FreeSans (system default, no serif)
+    READER_FONT_SANS = 0,         // FreeSans (system default, no serif)
     READER_FONT_MERRIWEATHER = 1, // Bookerly-style serif (SIL OFL substitute)
-    READER_FONT_LITERATA     = 2, // Literata (SIL OFL)
+    READER_FONT_LITERATA = 2,     // Literata (SIL OFL)
     READER_FONT_SOURCE_SERIF = 3, // Source Serif 4 / "Source Serif Pro" (SIL OFL)
-    READER_FONT_GELASIO      = 4  // Georgia-style serif (SIL OFL substitute)
+    READER_FONT_GELASIO = 4,      // Georgia-style serif (SIL OFL substitute)
+    READER_FONT_OPEN_SANS = 5     // Open Sans, humanist sans-serif (SIL OFL)
 };
 
 struct PagePointer {

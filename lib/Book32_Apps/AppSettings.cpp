@@ -41,13 +41,8 @@ static const char* ROW_LABELS[ROW_COUNT] = {
     "Descartar"
 };
 
-static const char* FONT_FAMILY_NAMES[5] = {
-    "FreeSans",
-    "Merriweather",
-    "Literata",
-    "Source Serif 4",
-    "Gelasio"
-};
+static const char* FONT_FAMILY_NAMES[6] = {"FreeSans",       "Merriweather", "Literata",
+                                           "Source Serif 4", "Gelasio",      "Open Sans"};
 
 // Cycle sets. Every value here must survive its SettingsStore clamp, otherwise
 // cycling would silently snap back and the row would appear stuck.
@@ -296,12 +291,12 @@ void AppSettings::handleInput(InputAction action) {
         if (action == INPUT_NEXT) {
             _selectionOnlyRedraw = true;
             _previousSubSelectedIndex = _subSelectedIndex;
-            _subSelectedIndex = (_subSelectedIndex + 1) % 5;
+            _subSelectedIndex = (_subSelectedIndex + 1) % 6;
             _needsRedraw = true;
         } else if (action == INPUT_PREV) {
             _selectionOnlyRedraw = true;
             _previousSubSelectedIndex = _subSelectedIndex;
-            _subSelectedIndex = (_subSelectedIndex + 4) % 5;
+            _subSelectedIndex = (_subSelectedIndex + 5) % 6;
             _needsRedraw = true;
         } else if (action == INPUT_SELECT) {
             _selectionOnlyRedraw = false; // leaving the screen: full repaint
@@ -569,7 +564,7 @@ void AppSettings::drawFontScreen() {
 
     drawHeader("Tipo de letra");
 
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 6; i++) {
         int y = LIST_START_Y + i * ROW_HEIGHT;
         uint16_t color = GxEPD_BLACK;
 

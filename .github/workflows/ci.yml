@@ -105,6 +105,38 @@ jobs:
 
       - name: Verificar formatação do código alterado
         run: |
+          set -e
+          # Ficheiros gerados (Fonts/*, icones) sao ignorados por
+          # .clang-format-ignore no proprio clang-format-18 (suporte nativo
+          # desde a v17), mas o git-clang-format nao sabe disso: para um
+          # ficheiro ignorado, o clang-format devolve saida vazia, e o
+          # git-clang-format interpreta isso como "apagar o ficheiro
+          # inteiro", produzindo um "diff" falso do tamanho do ficheiro
+          # inteiro. Isto nunca apareceu porque nenhuma PR anterior tinha
+          # tocado em lib/Book32_Core/Fonts/*; passar a lista de ficheiros
+          # ja filtrada evita que o git-clang-format chegue a ver esses
+          # ficheiros.
+          mapfile -t ignore_patterns < <(grep -v '^#' .clang-format-ignore | grep -v '^\s*$')
+          is_ignored() {
+            local file="$1"
+            for pattern in "${ignore_patterns[@]}"; do
+              # shellcheck disable=SC2053 # intentional glob match, not literal
+              [[ "$file" == $pattern ]] && return 0
+            done
+            return 1
+          }
+
+          mapfile -t changed_files < <(git diff --name-only --diff-filter=ACMR "${{ steps.base.outputs.sha }}" -- '*.cpp' '*.h')
+          files_to_check=()
+          for f in "${changed_files[@]}"; do
+            is_ignored "$f" || files_to_check+=("$f")
+          done
+
+          if [ ${#files_to_check[@]} -eq 0 ]; then
+            echo "Nenhum ficheiro .cpp/.h nao-ignorado alterado — nada a verificar."
+            exit 0
+          fi
+
           set +e
           # --extensions restringe aos ficheiros que este projeto trata como
           # C++ (mesmo âmbito de tools/format.sh e do "Language: Cpp" no
@@ -112,7 +144,7 @@ jobs:
           # git-clang-format inclui .js entre outras, e tentar formatar um
           # ficheiro nessas extensões com uma config só-C++ falha com "does
           # not support JavaScript" em vez de simplesmente ignorar o ficheiro.
-          git-clang-format-18 --binary clang-format-18 --extensions cpp,h --diff "${{ steps.base.outputs.sha }}"
+          git-clang-format-18 --binary clang-format-18 --extensions cpp,h --diff "${{ steps.base.outputs.sha }}" -- "${files_to_check[@]}"
           STATUS=$?
           set -e
           # 0 = nada por formatar (ou nenhum .cpp/.h no diff). 1 = encontrou
