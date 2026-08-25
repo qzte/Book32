@@ -106,7 +106,13 @@ jobs:
       - name: Verificar formatação do código alterado
         run: |
           set +e
-          git-clang-format-18 --binary clang-format-18 --diff "${{ steps.base.outputs.sha }}"
+          # --extensions restringe aos ficheiros que este projeto trata como
+          # C++ (mesmo âmbito de tools/format.sh e do "Language: Cpp" no
+          # .clang-format). Sem isto, a lista de extensões por omissão do
+          # git-clang-format inclui .js entre outras, e tentar formatar um
+          # ficheiro nessas extensões com uma config só-C++ falha com "does
+          # not support JavaScript" em vez de simplesmente ignorar o ficheiro.
+          git-clang-format-18 --binary clang-format-18 --extensions cpp,h --diff "${{ steps.base.outputs.sha }}"
           STATUS=$?
           set -e
           # 0 = nada por formatar (ou nenhum .cpp/.h no diff). 1 = encontrou
