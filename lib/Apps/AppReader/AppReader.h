@@ -21,8 +21,12 @@ struct BookEntry {
     bool hasProgress;    // v1.8.0: true when a saved position exists
     int globalPage;      // v1.8.0: saved page, shown in the library list
     int totalPages;      // Cached total page count; 0 when not yet known
+    // v1.17.0: false enquanto `title` for só o nome do ficheiro (que o upload
+    // corta aos 28 caracteres). O título a sério vem do <dc:title> do EPUB,
+    // lido fora do desenho — ver AppReader::resolveNextBookTitle().
+    bool titleResolved;
 
-    BookEntry() : hasProgress(false), globalPage(1), totalPages(0) {}
+    BookEntry() : hasProgress(false), globalPage(1), totalPages(0), titleResolved(false) {}
 };
 
 class AppReader : public App {
@@ -72,6 +76,15 @@ private:
     // scrolls it (see updateLibraryScroll()).
     int _libraryScrollOffset;
     void scanBooks();
+    // v1.17.0: lê o <dc:title> de um livro que ainda não tenha título em
+    // cache e guarda-o (BookTitleStore). Um livro por chamada, a partir do
+    // update() e só na biblioteca: abrir um ZIP demora o suficiente para se
+    // notar, e nenhuma biblioteca precisa disto mais do que uma vez por livro.
+    void resolveNextBookTitle();
+    // Um repintar por lote de títulos em vez de um por título: cada refresh
+    // e-ink custa quase um segundo, e a lista inteira costuma resolver-se em
+    // poucas passagens.
+    bool _titlesDirty = false;
     void drawLibrary();
     void updateLibraryScroll();
     void drawBookTile(Book32Display& display, int x, int y, int w, int h, bool selected);
