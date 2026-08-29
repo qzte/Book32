@@ -1,5 +1,6 @@
 #include "TextRenderer.h"
 #include "WordFitLogic.h"
+#include "HyphenationLogic.h"
 
 TextRenderer::TextRenderer(int width, int height, int fontSize) {
     _width = width;
@@ -276,15 +277,27 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
                     }
 
                     // A word still too wide here cannot fit a line of its own
-                    // either, so it is broken by character (see WordFitLogic.h,
-                    // host test tools/tests/test_word_fit.cpp).
+                    // either. Prefer breaking at a Portuguese syllable
+                    // boundary with a visible hyphen (see HyphenationLogic.h)
+                    // over the plain by-character split (WordFitLogic.h, host
+                    // test tools/tests/test_word_fit.cpp). hyphenationPoints()
+                    // allocates, so it's only computed for the word-doesn't-
+                    // fit case handled here — the common whole-word-fits case
+                    // below never reaches it.
                     int wordLen = wordEnd - wordStart;
                     int pixelBudget = usableWidth - (currentX + line_width + segment_width);
-                    WordFit fit = fitWordIntoLine(text + wordStart, wordLen, wordWidth,
-                                                  bufLeft, pixelBudget, _gfxCharWidths);
+                    WordFit fit;
+                    if (wordLen <= bufLeft && wordWidth <= pixelBudget) {
+                        fit = {wordLen, wordWidth, false};
+                    } else {
+                        std::vector<int> hpoints = hyphenationPoints(text + wordStart, wordLen);
+                        fit = fitWordIntoLineHyphenated(text + wordStart, wordLen, wordWidth, bufLeft,
+                                                        pixelBudget, _gfxCharWidths, hpoints);
+                    }
                     if (fit.take <= 0) break;  // buffer full: commit this line
 
                     strncat(lineBuf, text + wordStart, fit.take);
+                    if (fit.hyphen) strcat(lineBuf, "-");
                     segment_width += fit.width;
                     line_chars = wordStart + fit.take - pos;
                     if (fit.take < wordLen) break;  // remainder goes on the next line

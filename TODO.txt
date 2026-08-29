@@ -26,3 +26,15 @@ confirmar que a entrada e mesmo ignorada em vez de agir sobre a posicao
 restaurada antes do salto aterrar.
 Ir para %: livro so com imagens (capitulos sem texto) cai no fallback
 proporcional em vez de aterrar sempre no capitulo 0.
+
+=== v1.15.0 — a verificar no dispositivo (nao coberto pelos testes de host) ===
+(ver docs/plans/2026-08-29-pt-hyphenation-design.md)
+Abrir um livro com palavras compostas longas (fonte "Large") e confirmar
+visualmente que o corte aparece com hifen no fim da linha, nao a meio de um
+digrafo (ch/lh/nh) nem a meio de um grupo consoante+liquida (br/tr/vr/...).
+Confirmar que a posicao de leitura (pagina, capitulo) continua correcta
+depois de uma palavra hifenizada — o hifen e so visual, nunca deve entrar na
+contagem de paginas nem no ponto de retoma.
+Confirmar que uma palavra sem hifenizacao valida (URL, numero, palavra com
+hifen ja existente) continua a cortar como antes (por caracter, sem hifen),
+sem regressao.

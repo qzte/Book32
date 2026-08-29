@@ -12,10 +12,12 @@
 // testável sem hardware. Host-testable: tools/tests/test_word_fit.cpp.
 
 #include <cstddef>
+#include <vector>
 
 struct WordFit {
-    int take;   // caracteres a copiar (0 = não cabe nada, fechar a linha)
-    int width;  // largura em pixels desses caracteres
+    int take;            // caracteres a copiar (0 = não cabe nada, fechar a linha)
+    int width;           // largura em pixels desses caracteres
+    bool hyphen = false; // true: o chamador deve acrescentar um hífen a seguir a `take`
 };
 
 // `widths` é a tabela de larguras indexada por byte (0-255) da fonte activa.
@@ -53,4 +55,40 @@ inline WordFit fitWordIntoLine(const char* word, int wordLen, int wordWidth,
         fitted = (int)widths[(unsigned char)word[0]];
     }
     return {take, fitted};
+}
+
+// Como fitWordIntoLine, mas primeiro tenta um corte numa sílaba válida
+// (`points`, tipicamente vindo de hyphenationPoints() em HyphenationLogic.h),
+// acrescentando um hífen visível em vez de cortar num carácter arbitrário.
+// Cai para fitWordIntoLine sem alterações quando a palavra cabe inteira, ou
+// quando nenhum ponto de `points` cabe no orçamento (palavra curta, sem
+// vogais reconhecidas, ou `points` vazio).
+//
+// `bufLeft` já é o espaço livre no buffer da linha (ver fitWordIntoLine); o
+// hífen ocupa mais um byte, por isso um corte silábico só é aceite quando o
+// prefixo mais o hífen cabem os dois em bufLeft.
+inline WordFit fitWordIntoLineHyphenated(const char* word, int wordLen, int wordWidth, int bufLeft,
+                                         int pixelBudget, const unsigned char* widths,
+                                         const std::vector<int>& points) {
+    if (!word || wordLen <= 0 || bufLeft <= 0) return {0, 0, false};
+    if (wordLen <= bufLeft && wordWidth <= pixelBudget) return {wordLen, wordWidth, false};
+
+    int hyphenWidth = (int)widths[(unsigned char)'-'];
+    int best = -1;
+    int bestWidth = 0;
+    for (int p : points) {
+        if (p <= 0 || p >= wordLen) continue;
+        if (p + 1 > bufLeft) continue; // +1: reserva o byte do hífen
+        int w = 0;
+        for (int k = 0; k < p; k++)
+            w += (int)widths[(unsigned char)word[k]];
+        if (w + hyphenWidth > pixelBudget) continue;
+        if (p > best) {
+            best = p;
+            bestWidth = w + hyphenWidth;
+        }
+    }
+    if (best > 0) return {best, bestWidth, true};
+
+    return fitWordIntoLine(word, wordLen, wordWidth, bufLeft, pixelBudget, widths);
 }

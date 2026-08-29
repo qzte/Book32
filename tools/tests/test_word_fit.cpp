@@ -90,6 +90,50 @@ int main() {
             }
         }
     }
+    // 10. fitWordIntoLineHyphenated: palavra que cabe inteira -> igual a
+    //     fitWordIntoLine, sem hífen.
+    {
+        string w = "livro";
+        WordFit f = fitWordIntoLineHyphenated(w.c_str(), w.size(), widthOf(w), 100, 200, widths, {2});
+        assert(f.take == 5 && f.width == 50 && !f.hyphen);
+    }
+    // 11. Palavra que não cabe, mas um ponto de corte válido cabe: usa-o e
+    //     assinala o hífen (a largura devolvida inclui o hífen).
+    {
+        string w = "computador"; // 10 caracteres, 100 px a 10px/carácter
+        WordFit f = fitWordIntoLineHyphenated(w.c_str(), w.size(), widthOf(w), 100, 45, widths, {3, 5, 7});
+        // Só o ponto 3 cabe em 45px (30 + hífen de 10 = 40 <= 45; o ponto 5
+        // precisaria de 50 + 10 = 60).
+        assert(f.take == 3 && f.hyphen);
+        assert(f.width == 40);
+    }
+    // 12. Nenhum ponto de corte cabe: cai para o corte por carácter, sem
+    //     hífen (o mesmo resultado que fitWordIntoLine sozinho daria).
+    {
+        string w = "computador";
+        WordFit hyphenated =
+            fitWordIntoLineHyphenated(w.c_str(), w.size(), widthOf(w), 100, 25, widths, {3, 5, 7});
+        WordFit plain = fitWordIntoLine(w.c_str(), w.size(), widthOf(w), 100, 25, widths);
+        assert(!hyphenated.hyphen);
+        assert(hyphenated.take == plain.take && hyphenated.width == plain.width);
+    }
+    // 13. `points` vazio: mesmo comportamento de fitWordIntoLine.
+    {
+        string w = "abcdefghij";
+        WordFit f = fitWordIntoLineHyphenated(w.c_str(), w.size(), widthOf(w), 100, 45, widths, {});
+        assert(f.take == 4 && f.width == 40 && !f.hyphen);
+    }
+    // 14. Um ponto de corte perto do fim do buffer é rejeitado se não houver
+    //     espaço para o próprio byte do hífen.
+    {
+        string w = "computador";
+        WordFit f = fitWordIntoLineHyphenated(w.c_str(), w.size(), widthOf(w), 3, 1000, widths, {3});
+        // bufLeft=3: "com" (3 chars) + hífen excederia bufLeft (3+1>3) -> cai
+        // para o corte por carácter, que também respeita bufLeft=3.
+        assert(!f.hyphen);
+        assert(f.take == 3);
+    }
+
     printf("test_word_fit: all tests passed.\n");
     return 0;
 }
