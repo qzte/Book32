@@ -2,8 +2,10 @@
 #include "Book32FS.h"
 #include <ArduinoJson.h>
 
-// Only ever touched from AppReader on the main loop (unlike ProgressStore /
-// SettingsStore, no web handler reads or writes this), so no mutex is needed.
+// Todos os métodos públicos abrem com um Book32Guard; load(), save() e
+// resetIfFontChanged() ficam sem guarda de propósito, porque são privados e só
+// se chegam a partir de um método público que já detém o mutex (recursivo).
+// Mesma convenção do ProgressStore.
 
 static const char* PAGE_TOTALS_PATH = "/page_totals.json";
 
@@ -98,6 +100,7 @@ void PageCountStore::resetIfFontChanged(int fontSize, int fontFamily) {
 }
 
 int PageCountStore::get(const String& originalName, int fontSize, int fontFamily) {
+    Book32Guard guard(_mutex);
     load();
     if (_fontSize != fontSize || _fontFamily != fontFamily) return 0;
     auto it = _totals.find(originalName);
@@ -105,6 +108,7 @@ int PageCountStore::get(const String& originalName, int fontSize, int fontFamily
 }
 
 void PageCountStore::set(const String& originalName, int fontSize, int fontFamily, int totalPages) {
+    Book32Guard guard(_mutex);
     load();
     resetIfFontChanged(fontSize, fontFamily);
     _totals[originalName] = totalPages;
@@ -114,6 +118,7 @@ void PageCountStore::set(const String& originalName, int fontSize, int fontFamil
 
 bool PageCountStore::getCheckpoint(const String& originalName, int fontSize, int fontFamily,
                                    PageCountCheckpoint& out) {
+    Book32Guard guard(_mutex);
     load();
     if (_fontSize != fontSize || _fontFamily != fontFamily) return false;
     auto it = _checkpoints.find(originalName);
@@ -124,6 +129,7 @@ bool PageCountStore::getCheckpoint(const String& originalName, int fontSize, int
 
 void PageCountStore::setCheckpoint(const String& originalName, int fontSize, int fontFamily,
                                    const PageCountCheckpoint& checkpoint) {
+    Book32Guard guard(_mutex);
     load();
     resetIfFontChanged(fontSize, fontFamily);
     _checkpoints[originalName] = checkpoint;

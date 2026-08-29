@@ -15,6 +15,9 @@
 #include "../Book32_Core/DeviceCred.h"
 #include "../Book32_Core/BookOrderLogic.h"
 #include "../Book32_Core/BookMeta.h"
+#include "../Book32_Core/TimeMgr.h"
+#include "../Book32_Core/PageCountStore.h"
+#include "../Book32_Core/BookStatusLogic.h"
 #include "../Book32_Core/ProgressStore.h"
 #include "../Book32_Core/BookmarkStore.h"
 #include "../Book32_Core/GoToPercentStore.h"
@@ -221,6 +224,11 @@ void WebMgr::init() {
     server->begin();
     _initialized = true;
     Serial.println("Web Server Started");
+
+    // A janela em que o WiFi está ligado é a única em que o relógio se pode
+    // acertar — o leitor corre com o WiFi desligado. Idempotente, por isso
+    // chamar aqui a cada init() não custa nada. Ver TimeMgr.h.
+    TimeMgr::getInstance().syncIfNeeded();
 
     // mDNS: http://book32.local/send funciona sem saber o IP. Falha
     // silenciosamente em redes que bloqueiam multicast — o IP continua a
@@ -667,7 +675,15 @@ void WebMgr::setupEndpoints() {
         applyBookOrder(order, epubs);
         for (const String& f : fonts) epubs.push_back(f);
 
-        // 3) Stream JSON directly — O(1) memory w.r.t. number of books.
+        // 3) Reading state for the same list. Both stores are already in-RAM
+        //    maps, so this costs a lookup per book and no extra flash reads —
+        //    which is why the status rides on this response instead of a second
+        //    endpoint the UI would have to join against.
+        ReaderSettings rs = SettingsStore::getInstance().loadReader();
+        ProgressStore& progress = ProgressStore::getInstance();
+        PageCountStore& counts = PageCountStore::getInstance();
+
+        // 4) Stream JSON directly — O(1) memory w.r.t. number of books.
         AsyncResponseStream *response = request->beginResponseStream("application/json");
         response->print("{\"books\":[");
         bool first = true;
@@ -677,14 +693,103 @@ void WebMgr::setupEndpoints() {
             if (f) f.close();
             if (!first) response->print(",");
             first = false;
-            response->printf("{\"name\":\"%s\",\"filename\":\"%s\",\"size\":%u}",
-                             jsonEscape(getOriginalFilename(name)).c_str(),
-                             jsonEscape(name).c_str(),
-                             (unsigned)sz);
+
+            String original = getOriginalFilename(name);
+            response->printf("{\"name\":\"%s\",\"filename\":\"%s\",\"size\":%u", jsonEscape(original).c_str(),
+                             jsonEscape(name).c_str(), (unsigned)sz);
+
+            // Reading state only for books. This list also carries the
+            // uploaded .ttf fonts (appended above), and a font reported as
+            // "unread" would be a lie the UI would then have to filter back
+            // out.
+            if (hasExtensionCI(name, ".epub")) {
+                BookProgress p;
+                bool hasEntry = progress.get(original, p);
+                // 0 when this book has not been counted through yet, or was
+                // counted at font settings that are no longer in use.
+                // deriveStatus treats that as "percent unknown", never as
+                // "finished".
+                int totalPages = counts.get(original, rs.fontSize, rs.fontFamily);
+                BookStatusView view = deriveStatus(hasEntry, p.override, p.globalPage, totalPages);
+
+                response->printf(",\"status\":\"%s\",\"override\":\"%s\"", statusKey(view.status),
+                                 overrideKey(p.override));
+                // null, not 0: "unknown" and "at the very start" are different
+                // things and the UI renders them differently.
+                if (view.percent >= 0)
+                    response->printf(",\"percent\":%d", view.percent);
+                else
+                    response->print(",\"percent\":null");
+                response->printf(",\"startedAt\":%lu,\"finishedAt\":%lu,\"lastReadAt\":%lu",
+                                 (unsigned long)p.startedAt, (unsigned long)p.finishedAt,
+                                 (unsigned long)p.lastReadAt);
+            }
+            response->print("}");
         }
-        response->print("]}");
+        response->print("],");
+        // Lets the UI say "the device has no clock yet" instead of showing bare
+        // dashes for books that are genuinely undated.
+        response->printf("\"clockSynced\":%s}", TimeMgr::getInstance().isSynced() ? "true" : "false");
         request->send(response);
     });
+
+    // API: manual status override. Body:
+    //   {"filename":"livro.epub","status":"read","at":1756480000}
+    //
+    // `at` is the *browser's* clock. The device may have none (no NTP since the
+    // last power cut), and the moment you mark a book read is exactly when a
+    // good timestamp is guaranteed to be at hand — see ProgressStore::setOverride.
+    AsyncCallbackJsonWebHandler* bookStatusHandler = new AsyncCallbackJsonWebHandler(
+        "/api/books/status", [](AsyncWebServerRequest* request, JsonVariant& json) {
+            JsonObject body = json.as<JsonObject>();
+            if (body.isNull()) {
+                request->send(400, "application/json",
+                              "{\"status\":\"error\",\"message\":\"corpo invalido\"}");
+                return;
+            }
+
+            String filename = body["filename"] | "";
+            // Same allow-list as every other endpoint that takes a book name:
+            // this one only ever keys a map, but the name is persisted and read
+            // back by code that does build paths from it.
+            if (!isSafeBookName(filename) || !hasExtensionCI(filename, ".epub")) {
+                request->send(400, "application/json",
+                              "{\"status\":\"error\",\"message\":\"nome invalido\"}");
+                return;
+            }
+
+            StatusOverride override = StatusOverride::Auto;
+            if (!parseOverride(body["status"] | "", override)) {
+                request->send(400, "application/json",
+                              "{\"status\":\"error\",\"message\":\"estado invalido\"}");
+                return;
+            }
+
+            if (!EbookFS.exists("/" + filename)) {
+                request->send(404, "application/json",
+                              "{\"status\":\"error\",\"message\":\"livro nao encontrado\"}");
+                return;
+            }
+
+            uint32_t at = body["at"] | 0UL;
+            // A browser with a badly wrong clock (or a hand-written request)
+            // must not be able to plant an absurd date in the history. Below
+            // 2020 is not a real date; well past now is not either.
+            uint32_t deviceNow = TimeMgr::getInstance().nowOrZero();
+            if (at != 0 && (at < TIME_PLAUSIBLE_EPOCH || (deviceNow != 0 && at > deviceNow + 86400UL))) {
+                at = 0;
+            }
+
+            String original = getOriginalFilename(filename);
+            if (!ProgressStore::getInstance().setOverride(original, override, at)) {
+                request->send(500, "application/json",
+                              "{\"status\":\"error\",\"message\":\"falha ao gravar\"}");
+                return;
+            }
+            request->send(200, "application/json", "{\"status\":\"ok\"}");
+        });
+    bookStatusHandler->setMethod(HTTP_POST);
+    server->addHandler(bookStatusHandler);
 
     // API (v1.2.0): Save manual book order. Body: {"order":["a.epub","b.epub"]}
     AsyncCallbackJsonWebHandler* bookOrderHandler = new AsyncCallbackJsonWebHandler("/api/books/order",

@@ -1,6 +1,7 @@
 #include "ProgressStore.h"
 #include "Book32FS.h"
 #include "BookMeta.h"
+#include "TimeMgr.h"
 
 // Todos os métodos públicos abrem com um Book32Guard. load() e save() ficam
 // sem guarda de propósito: são privados e só são alcançados a partir de um
@@ -18,7 +19,8 @@ static size_t readCapacityFor(size_t fileSize) {
 }
 
 static size_t writeCapacityFor(size_t entries) {
-    size_t cap = 512 + entries * 192;
+    // 192 -> 288: the v3 entry carries an override name and three dates.
+    size_t cap = 512 + entries * 288;
     if (cap > 32768) cap = 32768;
     return cap;
 }
@@ -82,6 +84,13 @@ bool ProgressStore::load() {
             p.globalPage = entry["globalPage"] | 1;
             p.seq = entry["seq"] | 0UL;
             p.pending = entry["pending"] | false;
+            // v3. Absent in a v2 file, which is exactly the migration: an old
+            // entry becomes Auto with unknown dates and behaves as before.
+            StatusOverride parsed = StatusOverride::Auto;
+            if (parseOverride(entry["override"] | "", parsed)) p.override = parsed;
+            p.startedAt = entry["startedAt"] | 0UL;
+            p.finishedAt = entry["finishedAt"] | 0UL;
+            p.lastReadAt = entry["lastReadAt"] | 0UL;
             if (p.seq > _seq) _seq = p.seq;
 
             // A v1 file could hold both "/livro.epub" and "livro.epub" after a
@@ -117,6 +126,13 @@ bool ProgressStore::save() {
         entry["globalPage"] = kv.second.globalPage;
         entry["seq"] = kv.second.seq;
         if (kv.second.pending) entry["pending"] = true;
+        // Omitted when they carry no information, to keep the file (and the
+        // 32 KB write budget) close to its v2 size for a library that has
+        // never been marked or dated.
+        if (kv.second.override != StatusOverride::Auto) entry["override"] = overrideKey(kv.second.override);
+        if (kv.second.startedAt) entry["startedAt"] = kv.second.startedAt;
+        if (kv.second.finishedAt) entry["finishedAt"] = kv.second.finishedAt;
+        if (kv.second.lastReadAt) entry["lastReadAt"] = kv.second.lastReadAt;
     }
 
     if (doc.overflowed()) {
@@ -162,15 +178,88 @@ bool ProgressStore::get(const String& originalName, BookProgress& out) {
     return true;
 }
 
-void ProgressStore::set(const String& originalName, const BookProgress& progress) {
+void ProgressStore::set(const String& originalName, const BookProgress& progress, int totalPages) {
     Book32Guard guard(_mutex);
     begin();
     if (originalName.length() == 0) return;
     BookProgress p = progress;
     p.seq = ++_seq;
     p.pending = false;  // we only get here by actually reading the book
+
+    // Status and dates belong to the book, not to the position the caller just
+    // handed us. Carry them over from the stored entry (see the header): a
+    // fresh BookProgress from AppReader has them all zeroed, and taking that
+    // literally would wipe a manual mark on the next page turn.
+    auto it = _books.find(originalName);
+    if (it != _books.end()) {
+        p.override = it->second.override;
+        p.startedAt = it->second.startedAt;
+        p.finishedAt = it->second.finishedAt;
+        p.lastReadAt = it->second.lastReadAt;
+    } else {
+        p.override = StatusOverride::Auto;
+        p.startedAt = 0;
+        p.finishedAt = 0;
+        p.lastReadAt = 0;
+    }
+
+    // Zero means the clock is unknown (no NTP since the last power cut). Every
+    // date then stays as it was: an absent date is recoverable, an invented one
+    // is not. See TimeMgr.h.
+    uint32_t now = TimeMgr::getInstance().nowOrZero();
+    if (now != 0) {
+        if (p.startedAt == 0) p.startedAt = now;
+        p.lastReadAt = now;
+
+        // The finish is dated the first time the position crosses the
+        // threshold, and never re-dated afterwards — paging back and forth
+        // through the last chapter must not keep moving the date.
+        //
+        // Only while the status is actually being derived. Under a manual mark
+        // the user has already said where the book stands: dating a finish
+        // under "Reading" would put "Finished <date>" on a book the UI badges
+        // as still being read, and under "Read" the date is setOverride's.
+        if (p.finishedAt == 0 && totalPages > 0 && p.override == StatusOverride::Auto) {
+            BookStatusView view = deriveStatus(true, StatusOverride::Auto, p.globalPage, totalPages);
+            if (view.status == BookStatus::Read) p.finishedAt = now;
+        }
+    }
+
     _books[originalName] = p;
     save();
+}
+
+bool ProgressStore::setOverride(const String& originalName, StatusOverride override, uint32_t atEpoch) {
+    Book32Guard guard(_mutex);
+    begin();
+    if (originalName.length() == 0) return false;
+
+    auto it = _books.find(originalName);
+    BookProgress p;
+    if (it != _books.end()) {
+        p = it->second;
+    }
+    // No entry means the book was never opened here. Marking it read is
+    // legitimate — you read it somewhere else — and the entry that gets created
+    // simply carries no position.
+
+    p.override = override;
+    p.seq = ++_seq;
+
+    if (override == StatusOverride::Read) {
+        // Only when unset: a date already recorded by the device (or imported
+        // from another one) is the better evidence of when it was actually
+        // finished.
+        if (p.finishedAt == 0 && atEpoch != 0) p.finishedAt = atEpoch;
+    } else if (override == StatusOverride::Unread) {
+        // Marking a book unread is how a re-read starts, and a book waiting to
+        // be read has no finish date. `startedAt` and `lastReadAt` survive: the
+        // first read did happen, and losing that is not what was asked for.
+        p.finishedAt = 0;
+    }
+
+    _books[originalName] = p;
+    return save();
 }
 
 void ProgressStore::remove(const String& originalName) {
@@ -274,6 +363,12 @@ void ProgressStore::fillExportJson(JsonObject dest) {
         entry["nodeIndex"] = kv.second.nodeIndex;
         entry["charOffset"] = kv.second.charOffset;
         entry["globalPage"] = kv.second.globalPage;
+        // Status and dates are portable between devices and belong in the
+        // bundle, unlike `pending` and `seq`, which are device-local.
+        if (kv.second.override != StatusOverride::Auto) entry["override"] = overrideKey(kv.second.override);
+        if (kv.second.startedAt) entry["startedAt"] = kv.second.startedAt;
+        if (kv.second.finishedAt) entry["finishedAt"] = kv.second.finishedAt;
+        if (kv.second.lastReadAt) entry["lastReadAt"] = kv.second.lastReadAt;
     }
 }
 
@@ -330,6 +425,11 @@ ImportReport ProgressStore::applyImportedJson(JsonObjectConst src) {
         imported.nodeIndex = entry["nodeIndex"] | 0;
         imported.charOffset = entry["charOffset"] | 0;
         imported.globalPage = entry["globalPage"] | 1;
+        StatusOverride importedOverride = StatusOverride::Auto;
+        if (parseOverride(entry["override"] | "", importedOverride)) imported.override = importedOverride;
+        imported.startedAt = entry["startedAt"] | 0UL;
+        imported.finishedAt = entry["finishedAt"] | 0UL;
+        imported.lastReadAt = entry["lastReadAt"] | 0UL;
 
         // The .epub may not be here yet — that is what `pending` protects.
         bool fileExists = present.find(key) != present.end();

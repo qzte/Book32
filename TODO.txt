@@ -38,3 +38,45 @@ contagem de paginas nem no ponto de retoma.
 Confirmar que uma palavra sem hifenizacao valida (URL, numero, palavra com
 hifen ja existente) continua a cortar como antes (por caracter, sem hifen),
 sem regressao.
+
+=== v1.16.0 — a verificar no dispositivo (nao coberto pelos testes de host) ===
+(ver docs/plans/2026-08-29-gestao-biblioteca-e-estado-design.md; pio run nao
+correu neste ambiente — api.registry.platformio.org bloqueado pela politica de
+rede — so os testes de host da logica pura)
+
+Relogio: ligar o WiFi e confirmar no monitor serie o "TimeMgr: SNTP started"
+seguido de datas plausiveis na web UI. Depois entrar em standby (KEY2 longo),
+acordar, e confirmar que a hora se mantem — o ESP-IDF deve preserva-la atraves
+do deep sleep, e e disso que depende uma so sincronizacao por ciclo de energia.
+Cortar a energia e reabrir a web UI ANTES de haver WiFi: as datas novas devem
+ficar a "—", nunca uma data inventada, e clockSynced deve vir a false.
+
+Override: marcar um livro como lido na web UI, abri-lo no dispositivo e virar
+algumas paginas. Confirmar que a marca SOBREVIVE — e a armadilha do
+ProgressStore::set(), que antes reconstruia a entrada inteira a cada virar de
+pagina. Confirmar tambem que as datas nao se perdem no mesmo caminho.
+
+Data de conclusao: ler um livro pequeno ate passar os 96% com o relogio
+acertado e confirmar que finishedAt fica gravado uma unica vez — voltar atras e
+avancar outra vez pelo ultimo capitulo nao deve mexer na data.
+
+Poda: marcar um livro como lido, apaga-lo pela web UI e confirmar que a entrada
+sobrevive ao scanBooks() seguinte (a lista de "livros que li" tem de aguentar
+arrumar o dispositivo). Um livro NAO marcado deve continuar a ser podado como
+antes.
+
+Biblioteca do PC: escolher a pasta no Chrome e no Firefox e confirmar os tres
+grupos. Enviar em lote com a particao quase cheia e confirmar que a verificacao
+de espaco recusa ANTES de comecar, em vez de deixar uploads meio escritos.
+Recarregar a pagina sem re-escolher a pasta: o diff deve continuar la, com a
+data da listagem e os botoes Enviar desactivados.
+Num browser movel (sem webkitdirectory) a seccao deve desaparecer, nao dar erro.
+
+Ficheiro de estado: confirmar a migracao v2->v3 com um reader_progress.json
+antigo (sem override nem datas) — as posicoes mantem-se e as entradas ficam
+Auto. Exportar e importar entre dois estados com marcas diferentes e confirmar
+a regra do startedAt mais antigo a ganhar.
+
+Concorrencia: o PageCountStore passou a ter mutex porque o GET /api/books o le
+a partir da tarefa do servidor. Confirmar que abrir a web UI enquanto uma
+contagem de paginas esta a decorrer nao trava nem corrompe o total.

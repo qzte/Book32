@@ -29,6 +29,9 @@ function showTab(tabId) {
 
     // Load data when switching tabs
     if (tabId === 'ereader') {
+        // Restores the last folder listing so the diff is there without having
+        // to re-pick the folder (see the PC Library section).
+        loadPcListing();
         fetchBooks();
         getReaderProgress();
     } else if (tabId === 'settings') {
@@ -185,22 +188,96 @@ async function fetchBooks() {
     }
 }
 
+// Epoch seconds -> a short local date. 0 means the device had no clock when
+// the event happened (no NTP since the last power cut, see TimeMgr.h): an
+// absent date is shown as absent, never guessed at.
+function formatDate(epoch) {
+    if (!epoch) return '\u2014';
+    return new Date(epoch * 1000).toLocaleDateString();
+}
+
+const STATUS_LABEL = { unread: 'Unread', reading: 'Reading', read: 'Read' };
+
+function statusBadge(book) {
+    const key = book.status || 'unread';
+    let label = STATUS_LABEL[key] || 'Unread';
+    // The percentage rides along with "reading" only. On a read book it is
+    // noise, and on an unread one it would contradict the badge.
+    if (key === 'reading' && typeof book.percent === 'number') {
+        label += ' ' + book.percent + '%';
+    }
+    // A manual mark is flagged so it is obvious why a book says what it says
+    // when the position suggests otherwise.
+    const manual = book.override && book.override !== 'auto';
+    return `<span class="book-badge ${key}"${manual ? ' title="Set manually"' : ''}>` +
+           `${escapeHtml(label)}${manual ? ' \u270e' : ''}</span>`;
+}
+
+function bookDates(book) {
+    const parts = [];
+    if (book.startedAt) parts.push('Started ' + formatDate(book.startedAt));
+    if (book.finishedAt) parts.push('Finished ' + formatDate(book.finishedAt));
+    if (book.lastReadAt && !book.finishedAt) parts.push('Last read ' + formatDate(book.lastReadAt));
+    if (!parts.length) return '';
+    return `<span class="book-dates">${escapeHtml(parts.join(' \u00b7 '))}</span>`;
+}
+
+// The list the user is looking at, after the filter and sort. Kept separate
+// from currentBooks, which stays in the device's own order because that is what
+// /api/books/order persists.
+function visibleBooks() {
+    const filter = (document.getElementById('book-filter') || {}).value || 'all';
+    const sort = (document.getElementById('book-sort') || {}).value || 'manual';
+
+    let list = currentBooks.slice();
+    if (filter !== 'all') {
+        // Fonts have no reading state at all, so any status filter drops them.
+        list = list.filter(b => isEpub(b.filename) && b.status === filter);
+    }
+    if (sort === 'title') {
+        list.sort((a, b) => a.name.localeCompare(b.name));
+    } else if (sort !== 'manual') {
+        // Most recent first, with undated books last rather than treated as
+        // 1970 — they are unknown, not old.
+        list.sort((a, b) => {
+            const av = a[sort] || 0, bv = b[sort] || 0;
+            if (av === bv) return a.name.localeCompare(b.name);
+            if (!av) return 1;
+            if (!bv) return -1;
+            return bv - av;
+        });
+    }
+    return { list, reorderable: filter === 'all' && sort === 'manual' };
+}
+
 function renderBooks() {
     const bookList = document.getElementById('book-list');
+    const note = document.getElementById('book-list-note');
     if (!currentBooks.length) {
         bookList.innerHTML = '<p class="hint">No books uploaded yet.</p>';
+        if (note) note.classList.add('hidden');
+        renderPcDiff();
         return;
     }
+
+    const view = visibleBooks();
+    if (note) note.classList.toggle('hidden', view.reorderable);
+    if (!view.list.length) {
+        bookList.innerHTML = '<p class="hint">No books match this filter.</p>';
+        renderPcDiff();
+        return;
+    }
+
     const epubs = currentBooks.filter(b => isEpub(b.filename));
     // Nomes de ficheiro e títulos vêm dos EPUB enviados. Interpolá-los num
     // atributo onclick partia o handler ao primeiro título com plica e deixava
     // um nome escolhido a dedo executar código nesta página; agora viajam em
     // data-* (com escape de atributo) e o clique é tratado por delegação.
-    bookList.innerHTML = currentBooks.map(book => {
+    bookList.innerHTML = view.list.map(book => {
         const bookIsFont = isFont(book.filename);
         const nameAttr = escapeAttr(book.filename);
         let orderBtns = '';
-        if (!bookIsFont && epubs.length > 1) {
+        if (!bookIsFont && epubs.length > 1 && view.reorderable) {
             const idx = epubs.indexOf(book);
             orderBtns = `
                 <span class="order-btns">
@@ -208,15 +285,55 @@ function renderBooks() {
                     <button class="btn-order" ${idx === epubs.length - 1 ? 'disabled' : ''} data-action="move" data-dir="1" data-filename="${nameAttr}" title="Move down">▼</button>
                 </span>`;
         }
+        let statusControls = '';
+        if (!bookIsFont) {
+            const override = book.override || 'auto';
+            statusControls = `
+                ${statusBadge(book)}
+                <select class="book-status-select" data-action="status" data-filename="${nameAttr}" title="Override the status">
+                    <option value="auto"${override === 'auto' ? ' selected' : ''}>Automatic</option>
+                    <option value="unread"${override === 'unread' ? ' selected' : ''}>Unread</option>
+                    <option value="reading"${override === 'reading' ? ' selected' : ''}>Reading</option>
+                    <option value="read"${override === 'read' ? ' selected' : ''}>Read</option>
+                </select>`;
+        }
         return `
         <div class="book-item">
             ${orderBtns}
-            <span class="book-title">${bookIsFont ? '📂 [Font] ' : '📖 '}${escapeHtml(book.name)}</span>
+            <span class="book-title">${bookIsFont ? '📂 [Font] ' : '📖 '}${escapeHtml(book.name)}${bookIsFont ? '' : bookDates(book)}</span>
+            ${statusControls}
             <span class="book-size">${Math.round(book.size / 1024)} KB</span>
             <button class="btn-delete" data-action="delete" data-filename="${nameAttr}" data-name="${escapeAttr(book.name)}">Delete</button>
         </div>
     `}).join('');
     bindBookListActions();
+    renderPcDiff();
+}
+
+async function setBookStatus(filename, status) {
+    const msg = document.getElementById('book-status-msg');
+    try {
+        const res = await fetch('/api/books/status', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            // The browser's clock, not the device's: the device may have none
+            // since its last power cut, and this is the one moment a good
+            // timestamp is guaranteed to be at hand.
+            body: JSON.stringify({ filename, status, at: Math.floor(Date.now() / 1000) })
+        });
+        if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            throw new Error(body.message || res.statusText);
+        }
+        if (msg) { msg.innerText = 'Status saved.'; msg.style.color = 'var(--success)'; }
+        // Refetch rather than patching in place: the derived status and the
+        // finish date are the server's to decide, and guessing them here is how
+        // the two drift apart.
+        await fetchBooks();
+    } catch (e) {
+        if (msg) { msg.innerText = 'Could not save status: ' + e.message; msg.style.color = 'var(--danger)'; }
+        console.error('Failed to set book status', e);
+    }
 }
 
 // O ouvinte fica no contentor, que sobrevive à substituição do innerHTML, por
@@ -234,6 +351,13 @@ function bindBookListActions() {
         } else if (btn.dataset.action === 'move') {
             moveBook(btn.dataset.filename, Number(btn.dataset.dir));
         }
+    });
+    // The status control is a <select>, so it needs 'change' rather than the
+    // click delegation above.
+    bookList.addEventListener('change', e => {
+        const sel = e.target.closest('select[data-action="status"]');
+        if (!sel) return;
+        setBookStatus(sel.dataset.filename, sel.value);
     });
     bookListBound = true;
 }
@@ -345,6 +469,254 @@ function uploadBook() {
     // Send the request
     xhr.open('POST', '/api/books/upload');
     xhr.send(formData);
+}
+
+// === PC Library ===
+//
+// The page is served over http:// from the device, so the File System Access
+// API is out of reach (it needs a secure context) and so is any handle that
+// would survive a reload. What does work on plain HTTP is <input
+// webkitdirectory>, which yields the folder listing — names and sizes, no file
+// contents — and that is all a diff needs.
+//
+// Consequences, both visible in the UI below: the folder must be re-picked
+// before anything can actually be sent, and nothing is ever written back to
+// the PC.
+
+const PC_LISTING_KEY = 'book32.pcListing';
+
+let pcFiles = new Map();   // original name -> File, only for a folder picked this session
+let pcListing = null;      // { takenAt, files: [{name, size}] } — survives a reload
+
+function pcSupported() {
+    return 'webkitdirectory' in document.createElement('input');
+}
+
+function loadPcListing() {
+    // Private windows, cleared site data and browsers set to block storage all
+    // land here; the section just starts empty.
+    try {
+        const raw = localStorage.getItem(PC_LISTING_KEY);
+        if (raw) pcListing = JSON.parse(raw);
+    } catch (e) {
+        pcListing = null;
+    }
+}
+
+function savePcListing() {
+    try {
+        localStorage.setItem(PC_LISTING_KEY, JSON.stringify(pcListing));
+    } catch (e) {
+        // Not worth surfacing: the diff still works for this session.
+        console.warn('Could not remember the folder listing', e);
+    }
+}
+
+function pickPcFolder(input) {
+    const files = Array.from(input.files || []).filter(f => isEpub(f.name));
+    pcFiles = new Map();
+    files.forEach(f => pcFiles.set(f.name, f));
+    pcListing = {
+        takenAt: Date.now(),
+        files: files.map(f => ({ name: f.name, size: f.size }))
+    };
+    savePcListing();
+    // Let the same folder be picked twice in a row (the input would otherwise
+    // fire no change event the second time).
+    input.value = '';
+    renderPcDiff();
+}
+
+// Books on the device, by the original filename — which is what the PC folder
+// holds, since uploads truncate the stored name but /api/books reports the
+// original.
+function readerBookNames() {
+    const map = new Map();
+    currentBooks.filter(b => isEpub(b.filename)).forEach(b => map.set(b.name, b));
+    return map;
+}
+
+function renderPcDiff() {
+    const card = document.getElementById('pc-library-card');
+    if (!card) return;
+    if (!pcSupported()) {
+        // Most mobile browsers. Hiding beats showing a control that silently
+        // does nothing.
+        card.classList.add('hidden');
+        return;
+    }
+
+    const age = document.getElementById('pc-listing-age');
+    const out = document.getElementById('pc-diff');
+    const sendAll = document.getElementById('pc-send-all');
+
+    if (!pcListing || !pcListing.files.length) {
+        age.innerText = '';
+        out.innerHTML = '<p class="hint">No folder chosen yet.</p>';
+        sendAll.disabled = true;
+        return;
+    }
+
+    const canSend = pcFiles.size > 0;
+    age.innerHTML = canSend
+        ? `Folder read just now \u2014 ${pcListing.files.length} EPUB(s).`
+        : `Listing from ${escapeHtml(new Date(pcListing.takenAt).toLocaleString())}. ` +
+          `<strong>Choose the folder again to send anything</strong> \u2014 the browser does not let this page keep access to it across reloads.`;
+
+    const onReader = readerBookNames();
+    const pcNames = new Set(pcListing.files.map(f => f.name));
+
+    const onlyPc = pcListing.files.filter(f => !onReader.has(f.name));
+    const both = pcListing.files.filter(f => onReader.has(f.name));
+    const onlyReader = Array.from(onReader.values()).filter(b => !pcNames.has(b.name));
+
+    let html = '';
+
+    html += `<h4 class="pc-group">Only on PC (${onlyPc.length})</h4>`;
+    if (!onlyPc.length) {
+        html += '<p class="hint">Nothing missing from the reader.</p>';
+    } else {
+        html += onlyPc.map(f => `
+            <div class="book-item">
+                <span class="book-title">\u2b06\ufe0f ${escapeHtml(f.name)}</span>
+                <span class="book-size">${Math.round(f.size / 1024)} KB</span>
+                <button class="btn-order" data-pc-action="send" data-name="${escapeAttr(f.name)}" ${canSend ? '' : 'disabled'}>Send</button>
+            </div>`).join('');
+    }
+
+    html += `<h4 class="pc-group">Only on the reader (${onlyReader.length})</h4>`;
+    if (!onlyReader.length) {
+        html += '<p class="hint">Nothing on the reader that is missing from the folder.</p>';
+    } else {
+        html += onlyReader.map(b => `
+            <div class="book-item">
+                <span class="book-title">\u26a0\ufe0f ${escapeHtml(b.name)}</span>
+                <span class="book-size">${Math.round(b.size / 1024)} KB</span>
+                <button class="btn-delete" data-pc-action="delete" data-filename="${escapeAttr(b.filename)}" data-name="${escapeAttr(b.name)}">Delete</button>
+            </div>`).join('');
+    }
+
+    // Matching is by name, so a book renamed on the PC shows up on both sides
+    // at once. The sizes are what make that recognisable, so they are worth
+    // showing even for the books that need no action.
+    html += `<h4 class="pc-group">On both (${both.length})</h4>`;
+    if (!both.length) {
+        html += '<p class="hint">Nothing in common.</p>';
+    } else {
+        html += both.map(f => {
+            const b = onReader.get(f.name);
+            const sizeDiffers = b && Math.abs(b.size - f.size) > 1024;
+            return `
+            <div class="book-item">
+                <span class="book-title">\u2705 ${escapeHtml(f.name)}</span>
+                <span class="book-size${sizeDiffers ? ' warn' : ''}">${Math.round(f.size / 1024)} KB${sizeDiffers ? ' \u2260 ' + Math.round(b.size / 1024) + ' KB on reader' : ''}</span>
+            </div>`;
+        }).join('');
+    }
+
+    out.innerHTML = html;
+    sendAll.disabled = !canSend || !onlyPc.length;
+    bindPcActions();
+}
+
+let pcBound = false;
+function bindPcActions() {
+    if (pcBound) return;
+    const out = document.getElementById('pc-diff');
+    if (!out) return;
+    out.addEventListener('click', e => {
+        const btn = e.target.closest('button[data-pc-action]');
+        if (!btn) return;
+        if (btn.dataset.pcAction === 'send') {
+            sendToReader([btn.dataset.name]);
+        } else if (btn.dataset.pcAction === 'delete') {
+            deleteBook(btn.dataset.filename, btn.dataset.name);
+        }
+    });
+    pcBound = true;
+}
+
+// Free bytes on the ebook partition. Returns null when it cannot be read, and
+// the caller then goes ahead rather than blocking on a diagnostic.
+async function ebookFreeBytes() {
+    try {
+        const res = await fetch('/api/fs');
+        const data = await res.json();
+        const e = data.ebooks;
+        if (!e || typeof e.total !== 'number' || typeof e.used !== 'number') return null;
+        return e.total - e.used;
+    } catch (err) {
+        return null;
+    }
+}
+
+function uploadOne(file) {
+    return new Promise((resolve, reject) => {
+        const form = new FormData();
+        form.append('file', file);
+        const xhr = new XMLHttpRequest();
+        xhr.addEventListener('load', () => {
+            if (xhr.status === 200) resolve();
+            else reject(new Error(xhr.responseText || xhr.statusText));
+        });
+        xhr.addEventListener('error', () => reject(new Error('network error')));
+        xhr.open('POST', '/api/books/upload');
+        xhr.send(form);
+    });
+}
+
+async function sendMissingToReader() {
+    const onReader = readerBookNames();
+    const missing = pcListing.files.filter(f => !onReader.has(f.name)).map(f => f.name);
+    await sendToReader(missing);
+}
+
+async function sendToReader(names) {
+    const status = document.getElementById('pc-status');
+    const sendAll = document.getElementById('pc-send-all');
+    const files = names.map(n => pcFiles.get(n)).filter(Boolean);
+
+    if (!files.length) {
+        status.innerText = 'Choose the folder again first \u2014 the browser cannot reopen it on its own.';
+        status.style.color = 'var(--danger)';
+        return;
+    }
+
+    // The ebook partition is 10 MB and a batch send fills it quickly. Checking
+    // first turns a run of half-written uploads into one clear refusal.
+    const needed = files.reduce((sum, f) => sum + f.size, 0);
+    const free = await ebookFreeBytes();
+    if (free !== null && needed > free) {
+        status.innerText = `Not enough space: ${Math.round(needed / 1024)} KB to send, ` +
+                           `${Math.round(free / 1024)} KB free. Delete something first.`;
+        status.style.color = 'var(--danger)';
+        return;
+    }
+
+    sendAll.disabled = true;
+    status.style.color = 'var(--accent)';
+    let sent = 0;
+    const failed = [];
+    for (const file of files) {
+        status.innerText = `Sending ${sent + 1} of ${files.length}: ${file.name}`;
+        try {
+            // Serially, never in parallel: LittleFS takes one writer, and the
+            // upload endpoint rejects a second request while one is in flight.
+            await uploadOne(file);
+            sent++;
+        } catch (e) {
+            failed.push(`${file.name} (${e.message})`);
+        }
+    }
+
+    if (failed.length) {
+        status.innerText = `Sent ${sent} of ${files.length}. Failed: ${failed.join('; ')}`;
+        status.style.color = 'var(--danger)';
+    } else {
+        status.innerText = `Sent ${sent} book(s).`;
+        status.style.color = 'var(--success)';
+    }
+    await fetchBooks();
 }
 
 async function deleteBook(filename, displayName) {

@@ -27,6 +27,7 @@
 
 #include <Arduino.h>
 #include <map>
+#include "Lock.h"
 
 struct PageCountCheckpoint {
     int chapter = 0;     // Next chapter to start counting from
@@ -58,6 +59,15 @@ public:
 
 private:
     PageCountStore() {}
+
+    // Serializa o acesso ao estado abaixo. Até à v1.15.0 só o AppReader lhe
+    // tocava, a partir do loop principal, e por isso não havia mutex nenhum.
+    // O estado de leitura na web UI mudou isso: GET /api/books lê o total de
+    // páginas de cada livro a partir da tarefa do servidor, enquanto o leitor
+    // pode estar a gravar um checkpoint da contagem. Dois acessos ao mesmo
+    // std::map de tarefas diferentes é corrupção de memória, não só uma
+    // leitura desactualizada. Ver Lock.h.
+    Book32Mutex _mutex;
     void load();
     bool save();
     void resetIfFontChanged(int fontSize, int fontFamily);

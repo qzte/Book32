@@ -195,7 +195,10 @@ python -m platformio device monitor
 
 - Polished boot screen with E-Ink progress feedback
 - EPUB reader with per-book reading progress and boot resume
-- Library state export/import (progress, book names and manual order)
+- Per-book reading status (unread / reading % / read) with manual override
+- Reading dates: started, finished and last read
+- PC library folder diffed against the device, with batch sending
+- Library state export/import (progress, status, dates, names and manual order)
 - Library menu optimized for E-Ink
 - Local web interface for uploading and deleting books
 - Battery indicator and charging status

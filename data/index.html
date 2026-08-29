@@ -136,11 +136,43 @@
                     <div id="upload-status"></div>
                 </div>
 
+                <div class="card" id="pc-library-card">
+                    <h3>PC Library</h3>
+                    <p class="hint">Pick the folder where you keep your EPUBs and Book32 shows what is missing on either side. The folder is only read — nothing is written back to your PC.</p>
+                    <input type="file" id="pc-folder" webkitdirectory directory multiple style="display:none" onchange="pickPcFolder(this)">
+                    <div class="btn-row">
+                        <button class="btn secondary" onclick="document.getElementById('pc-folder').click()">Choose Folder</button>
+                        <button class="btn primary" id="pc-send-all" onclick="sendMissingToReader()" disabled>Send Missing</button>
+                    </div>
+                    <p id="pc-listing-age" class="hint"></p>
+                    <div id="pc-diff"></div>
+                    <div id="pc-status" class="status-msg"></div>
+                </div>
+
                 <div class="card">
                     <h3>Your Books</h3>
+                    <div class="setting-row">
+                        <label for="book-filter">Show</label>
+                        <select id="book-filter" onchange="renderBooks()">
+                            <option value="all">All</option>
+                            <option value="unread">Unread</option>
+                            <option value="reading">Reading</option>
+                            <option value="read">Read</option>
+                        </select>
+                        <label for="book-sort">Sort</label>
+                        <select id="book-sort" onchange="renderBooks()">
+                            <option value="manual">Device order</option>
+                            <option value="lastReadAt">Last read</option>
+                            <option value="finishedAt">Finished</option>
+                            <option value="startedAt">Started</option>
+                            <option value="title">Title</option>
+                        </select>
+                    </div>
+                    <p id="book-list-note" class="hint hidden">Reordering is only available under <strong>Device order</strong> with no filter — the arrows move a book in the device's own list, which this view is no longer showing in order.</p>
                     <div id="book-list">
                         <!-- Books injected by JS -->
                     </div>
+                    <div id="book-status-msg" class="status-msg"></div>
                 </div>
             </section>
 
