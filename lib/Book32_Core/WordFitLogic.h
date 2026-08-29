@@ -14,10 +14,15 @@
 #include <cstddef>
 #include <vector>
 
+// Sem inicializador por omissão em `hyphen` de propósito: um inicializador de
+// membro deixaria de ser um agregado antes do C++14, e o toolchain do ESP32
+// que compila este projecto rejeita então `return {a, b}` mais abaixo (falha
+// real de CI, não hipotética). Todo o `return {...}` tem sempre os três
+// campos explícitos.
 struct WordFit {
-    int take;            // caracteres a copiar (0 = não cabe nada, fechar a linha)
-    int width;           // largura em pixels desses caracteres
-    bool hyphen = false; // true: o chamador deve acrescentar um hífen a seguir a `take`
+    int take;    // caracteres a copiar (0 = não cabe nada, fechar a linha)
+    int width;   // largura em pixels desses caracteres
+    bool hyphen; // true: o chamador deve acrescentar um hífen a seguir a `take`
 };
 
 // `widths` é a tabela de larguras indexada por byte (0-255) da fonte activa.
@@ -33,10 +38,10 @@ struct WordFit {
 inline WordFit fitWordIntoLine(const char* word, int wordLen, int wordWidth,
                                int bufLeft, int pixelBudget,
                                const unsigned char* widths) {
-    if (!word || wordLen <= 0 || bufLeft <= 0) return {0, 0};
+    if (!word || wordLen <= 0 || bufLeft <= 0) return {0, 0, false};
 
     // Caso normal: a palavra cabe inteira, sem custo extra de medição.
-    if (wordLen <= bufLeft && wordWidth <= pixelBudget) return {wordLen, wordWidth};
+    if (wordLen <= bufLeft && wordWidth <= pixelBudget) return {wordLen, wordWidth, false};
 
     // Palavra que não cabe numa linha só para ela: partir por caracteres.
     int take = 0;
@@ -54,7 +59,7 @@ inline WordFit fitWordIntoLine(const char* word, int wordLen, int wordWidth,
         take = 1;
         fitted = (int)widths[(unsigned char)word[0]];
     }
-    return {take, fitted};
+    return {take, fitted, false};
 }
 
 // Como fitWordIntoLine, mas primeiro tenta um corte numa sílaba válida
