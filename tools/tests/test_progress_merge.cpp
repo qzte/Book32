@@ -106,8 +106,109 @@ int main() {
     {
         assert(isSupportedSchema(1));
         assert(isSupportedSchema(2));
-        assert(!isSupportedSchema(3));
+        assert(isSupportedSchema(3));
+        assert(!isSupportedSchema(4));
         assert(!isSupportedSchema(0));
+    }
+
+    // --- v3: status override and reading dates -------------------------
+    // 13. A v2 entry decodes as Auto with unknown dates, so the migration
+    //     needs no special case. This is the default-constructed shape.
+    {
+        BookProgress e = at(1, 0, 5);
+        assert(e.override == StatusOverride::Auto);
+        assert(e.startedAt == 0 && e.finishedAt == 0 && e.lastReadAt == 0);
+    }
+    // 14. Dates survive the side whose position lost. Losing the date you
+    //     finished a book because the other device sat one page further in
+    //     would be plainly wrong.
+    {
+        BookProgress local = at(7, 152, 214);
+        local.startedAt = 1000;
+        local.finishedAt = 5000;
+        local.lastReadAt = 5000;
+        BookProgress imported = at(2, 10, 100); // behind, so KeptLocal
+        imported.startedAt = 500;               // but started earlier
+        imported.lastReadAt = 9000;             // and touched more recently
+        BookProgress out;
+        assert(mergeProgress(&local, imported, true, out) == MergeResult::KeptLocal);
+        assert(out.globalPage == 214);  // position: local won
+        assert(out.startedAt == 500);   // oldest start wins
+        assert(out.finishedAt == 5000); // only local knew it
+        assert(out.lastReadAt == 9000); // newest activity wins
+    }
+    // 15. The same reconciliation applies when the imported position wins.
+    {
+        BookProgress local = at(2, 10, 100);
+        local.startedAt = 700;
+        local.lastReadAt = 700;
+        BookProgress imported = at(7, 152, 214);
+        imported.startedAt = 900;
+        imported.finishedAt = 3000;
+        imported.lastReadAt = 3000;
+        BookProgress out;
+        assert(mergeProgress(&local, imported, true, out) == MergeResult::Merged);
+        assert(out.globalPage == 214);
+        assert(out.startedAt == 700);
+        assert(out.finishedAt == 3000);
+        assert(out.lastReadAt == 3000);
+    }
+    // 16. Zero means unknown, not "very old". An unknown date must never win a
+    //     comparison against a real one, in either direction.
+    {
+        assert(olderDate(0, 500) == 500);
+        assert(olderDate(500, 0) == 500);
+        assert(olderDate(0, 0) == 0);
+        assert(olderDate(200, 500) == 200);
+        assert(newerDate(0, 500) == 500);
+        assert(newerDate(500, 0) == 500);
+        assert(newerDate(0, 0) == 0);
+        assert(newerDate(200, 500) == 500);
+    }
+    // 17. A deliberate mark never loses to an absent one, whichever side holds
+    //     it — an Auto means "no opinion", not "unread".
+    {
+        assert(mergeOverride(StatusOverride::Read, StatusOverride::Auto) == StatusOverride::Read);
+        assert(mergeOverride(StatusOverride::Auto, StatusOverride::Read) == StatusOverride::Read);
+        assert(mergeOverride(StatusOverride::Auto, StatusOverride::Auto) == StatusOverride::Auto);
+    }
+    // 18. Two different explicit marks: the imported one wins. There is no
+    //     cross-device clock to order them by (`seq` is device-local), and the
+    //     import is the more recent deliberate act.
+    {
+        assert(mergeOverride(StatusOverride::Read, StatusOverride::Unread) == StatusOverride::Unread);
+        assert(mergeOverride(StatusOverride::Unread, StatusOverride::Read) == StatusOverride::Read);
+    }
+    // 19. The override rides along with the merge, independently of the
+    //     position: a book marked read here stays read after importing a state
+    //     that is further ahead but has no opinion.
+    {
+        BookProgress local = at(2, 10, 100);
+        local.override = StatusOverride::Read;
+        BookProgress imported = at(7, 152, 214);
+        BookProgress out;
+        assert(mergeProgress(&local, imported, true, out) == MergeResult::Merged);
+        assert(out.globalPage == 214);
+        assert(out.override == StatusOverride::Read);
+    }
+    // 20. An entry marked read survives pruning without its .epub — that is
+    //     what lets a reading history outlive tidying books off the device.
+    {
+        BookProgress e = at(1, 0, 5);
+        e.override = StatusOverride::Read;
+        assert(!shouldPrune(e, false));
+    }
+    // 21. The exemption is only for an explicit mark. A book that merely
+    //     derived as read still prunes, otherwise nothing would ever be
+    //     collected and the pruning would be pointless.
+    {
+        BookProgress e = at(1, 0, 5);
+        e.override = StatusOverride::Auto;
+        assert(shouldPrune(e, false));
+        e.override = StatusOverride::Reading;
+        assert(shouldPrune(e, false));
+        e.override = StatusOverride::Unread;
+        assert(shouldPrune(e, false));
     }
 
     printf("test_progress_merge: all assertions passed\n");

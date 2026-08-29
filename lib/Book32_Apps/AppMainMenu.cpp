@@ -6,6 +6,7 @@
 #include "../Book32_Core/FontMgr.h"
 #include "../Book32_Web/WebMgr.h"
 #include "../Book32_Core/DeviceCred.h"
+#include "../Book32_Core/TimeMgr.h"
 #include "../../include/Config.h"
 #include "../../include/NetworkState.h"
 #include <WiFi.h>
@@ -107,6 +108,7 @@ void AppMainMenu::wifiWakeTask(void* parameter) {
     if (WiFi.status() == WL_CONNECTED && !isReaderActive()) {
         Serial.println("Main menu WiFi connected");
         Serial.println(WiFi.localIP());
+        TimeMgr::getInstance().syncIfNeeded();
         WebMgr::getInstance().init();
     } else {
         Serial.println("Main menu WiFi wake did not connect; bringing up hotspot");

@@ -42,8 +42,33 @@ public:
     void begin();
 
     bool get(const String& originalName, BookProgress& out);
+
     // Bumps `seq`, stores and persists.
-    void set(const String& originalName, const BookProgress& progress);
+    //
+    // `progress` supplies the *position* only. The status override and the
+    // three dates are owned here and carried over from the stored entry — the
+    // caller (AppReader::saveReadingProgress) builds a fresh BookProgress on
+    // every page turn and knows nothing about them, so taking its zeroed fields
+    // at face value would erase a manual mark and the reading dates a few
+    // seconds after they were set.
+    //
+    // `totalPages` is the only thing this cannot work out for itself: dating
+    // the finish means knowing whether the new position crosses the read
+    // threshold. Pass 0 when the count is not known yet (PageCountStore
+    // returns 0 until a book has been counted through) and `finishedAt` simply
+    // stays unset until a later save arrives with a total.
+    void set(const String& originalName, const BookProgress& progress, int totalPages = 0);
+
+    // Sets the manual status override, creating an entry for a book that was
+    // never opened — the "read it elsewhere" case. `atEpoch` is the caller's
+    // wall clock (the browser's, from POST /api/books/status), used to date the
+    // finish; pass 0 when no clock is available and the date stays unknown.
+    //
+    // The browser's clock is deliberately preferred over the device's here:
+    // marking a book read is the one moment when a good timestamp is always at
+    // hand, even when the device has not seen NTP since its last power cut.
+    bool setOverride(const String& originalName, StatusOverride override, uint32_t atEpoch);
+
     void remove(const String& originalName);
 
     void setLast(const String& originalName, bool resumeOnBoot);

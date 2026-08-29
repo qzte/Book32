@@ -512,7 +512,10 @@ void AppReader::flushProgress() {
     p.globalPage = _globalPageNumber;
 
     ProgressStore& store = ProgressStore::getInstance();
-    store.set(key, p);
+    // _totalPages is 0 until the background count reaches the end of the book;
+    // ProgressStore treats that as "cannot tell yet" and leaves the finish date
+    // unset rather than guessing. See ProgressStore::set.
+    store.set(key, p, _totalPages);
     store.setLast(key, _progressResumeOnBoot);
 }
 
