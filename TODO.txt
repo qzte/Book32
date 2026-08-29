@@ -8,3 +8,21 @@ Tecto de 64 KB no POST /api/library/import (deve responder 413, nao 500).
 Poda no scanBooks(): apagar um .epub fora da web UI e confirmar que a entrada desaparece.
 Importar o estado ANTES de enviar os .epub: as entradas ficam pending e sobrevivem ao scan seguinte.
 Migracao v1->v2: gravar um reader_progress.json antigo (chaves com "/") e confirmar que as posicoes se mantem.
+
+=== v1.14.0 — a verificar no dispositivo (nao coberto pelos testes de host) ===
+(ver docs/plans/2026-08-29-bookmarks-and-goto-percent-design.md; pio run nao
+correu neste ambiente, so os testes de host da logica pura)
+Marcadores: adicionar, saltar e apagar via web UI; confirmar que "saltar" so
+faz efeito ao reabrir o livro no dispositivo, nao no livro que possa estar
+aberto nessa altura (nao devia estar, com o WiFi desligado durante a leitura).
+Tecto de 20 marcadores por livro: confirmar resposta 409 do POST /api/bookmarks/add.
+Ir para %: pedir 100% num livro grande e confirmar que o scan por capitulos
+(orcamentado a TOTAL_PAGES_BUDGET_MS por tick) nao trava a UI nem atrasa
+visivelmente a abertura do livro.
+Ir para %: confirmar que nao ha duplo refresh e-ink (pagina restaurada seguida
+da pagina alvo) ao abrir um livro com um pedido pendente.
+Ir para %: premir um botao durante o scan (a janela costuma ser curta) e
+confirmar que a entrada e mesmo ignorada em vez de agir sobre a posicao
+restaurada antes do salto aterrar.
+Ir para %: livro so com imagens (capitulos sem texto) cai no fallback
+proporcional em vez de aterrar sempre no capitulo 0.

@@ -425,13 +425,20 @@ function saveReaderSettings() {
         });
 }
 
+// Bookmarks and "go to %" both act on this book: the one with a saved
+// reading position, same scope as the "Reading Progress" card above them.
+let currentLastBook = '';
+
 function getReaderProgress() {
     fetch('/api/reader/progress')
         .then(response => response.json())
         .then(data => {
             const status = document.getElementById('reader-progress-status');
-            if (!status) return;
+            currentLastBook = data.exists ? (data.lastBook || '') : '';
+            updateBookScopedLabels();
+            loadBookmarks();
 
+            if (!status) return;
             if (data.exists) {
                 const name = data.displayName || data.lastBook || 'Saved book';
                 const page = data.page || 1;
@@ -441,6 +448,14 @@ function getReaderProgress() {
             }
         })
         .catch(error => console.error('Error loading reader progress:', error));
+}
+
+function updateBookScopedLabels() {
+    const label = currentLastBook || 'the current book';
+    ['bookmarks-book-name', 'goto-percent-book-name'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = label;
+    });
 }
 
 function resetReaderProgress() {
@@ -464,6 +479,168 @@ function resetReaderProgress() {
             console.error('Error resetting reader progress:', error);
             statusDiv.textContent = 'Connection error.';
             statusDiv.style.color = 'red';
+        });
+}
+
+// === Bookmarks and "go to %" (v1.14.0) ===
+// Both act on currentLastBook (see getReaderProgress). Applying a jump — via
+// a bookmark or a percent — writes into the reader's saved position, which
+// only takes effect the next time that book is opened on the device (WiFi is
+// off while the reader is actually running, same as library reorder and
+// progress import already work this way).
+
+function loadBookmarks() {
+    const list = document.getElementById('bookmarks-list');
+    const emptyHint = document.getElementById('bookmarks-empty-hint');
+    if (!list) return;
+
+    if (!currentLastBook) {
+        list.innerHTML = '';
+        if (emptyHint) emptyHint.classList.remove('hidden');
+        return;
+    }
+    if (emptyHint) emptyHint.classList.add('hidden');
+
+    fetch('/api/bookmarks?book=' + encodeURIComponent(currentLastBook))
+        .then(response => response.json())
+        .then(data => renderBookmarks(data.bookmarks || []))
+        .catch(error => {
+            console.error('Error loading bookmarks:', error);
+            list.innerHTML = '<p class="error">Error loading bookmarks.</p>';
+        });
+}
+
+function renderBookmarks(bookmarks) {
+    const list = document.getElementById('bookmarks-list');
+    if (!list) return;
+
+    if (!bookmarks.length) {
+        list.innerHTML = '<p class="hint">No bookmarks yet.</p>';
+        return;
+    }
+    list.innerHTML = bookmarks.map(b => {
+        const label = b.label && b.label.length ? b.label : `Page ${b.page}`;
+        return `
+        <div class="book-item">
+            <span class="book-title">${escapeHtml(label)}</span>
+            <span class="book-size">page ${b.page}</span>
+            <button class="btn-order" data-action="jump" data-seq="${b.seq}" title="Apply next time this book opens on the device">Jump</button>
+            <button class="btn-delete" data-action="remove" data-seq="${b.seq}">Delete</button>
+        </div>`;
+    }).join('');
+    bindBookmarkListActions();
+}
+
+let bookmarkListBound = false;
+function bindBookmarkListActions() {
+    if (bookmarkListBound) return;
+    const list = document.getElementById('bookmarks-list');
+    if (!list) return;
+    list.addEventListener('click', e => {
+        const btn = e.target.closest('button[data-action]');
+        if (!btn) return;
+        const seq = Number(btn.dataset.seq);
+        if (btn.dataset.action === 'jump') jumpBookmark(seq);
+        else if (btn.dataset.action === 'remove') removeBookmark(seq);
+    });
+    bookmarkListBound = true;
+}
+
+function addBookmark() {
+    const status = document.getElementById('bookmarks-status');
+    if (!currentLastBook) {
+        status.textContent = 'Open a book on the device first.';
+        status.style.color = 'red';
+        return;
+    }
+    const labelInput = document.getElementById('bookmark-label');
+    const label = labelInput ? labelInput.value.trim() : '';
+
+    fetch('/api/bookmarks/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ book: currentLastBook, label })
+    })
+        .then(response => response.json().then(data => ({ ok: response.ok, data })))
+        .then(({ ok, data }) => {
+            if (!ok) throw new Error(data.error || 'Request failed');
+            if (labelInput) labelInput.value = '';
+            status.textContent = 'Bookmark added.';
+            status.style.color = 'green';
+            setTimeout(() => status.textContent = '', 3000);
+            loadBookmarks();
+        })
+        .catch(error => {
+            console.error('Error adding bookmark:', error);
+            status.textContent = 'Could not add bookmark: ' + error.message;
+            status.style.color = 'red';
+        });
+}
+
+function removeBookmark(seq) {
+    const status = document.getElementById('bookmarks-status');
+    fetch('/api/bookmarks/remove', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ book: currentLastBook, seq })
+    })
+        .then(response => {
+            if (!response.ok) throw new Error('Request failed');
+            loadBookmarks();
+        })
+        .catch(error => {
+            console.error('Error removing bookmark:', error);
+            status.textContent = 'Could not remove bookmark.';
+            status.style.color = 'red';
+        });
+}
+
+function jumpBookmark(seq) {
+    const status = document.getElementById('bookmarks-status');
+    fetch('/api/bookmarks/jump', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ book: currentLastBook, seq })
+    })
+        .then(response => {
+            if (!response.ok) throw new Error('Request failed');
+            status.textContent = 'Will resume there next time this book opens on the device.';
+            status.style.color = 'green';
+            setTimeout(() => status.textContent = '', 5000);
+        })
+        .catch(error => {
+            console.error('Error jumping to bookmark:', error);
+            status.textContent = 'Could not jump to bookmark.';
+            status.style.color = 'red';
+        });
+}
+
+function goToPercent() {
+    const status = document.getElementById('goto-percent-status');
+    if (!currentLastBook) {
+        status.textContent = 'Open a book on the device first.';
+        status.style.color = 'red';
+        return;
+    }
+    const input = document.getElementById('goto-percent');
+    const percent = Math.max(0, Math.min(100, Number(input.value)));
+    input.value = percent;
+
+    fetch('/api/reader/goto', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ book: currentLastBook, percent })
+    })
+        .then(response => {
+            if (!response.ok) throw new Error('Request failed');
+            status.textContent = `Will jump to ~${percent}% next time this book opens on the device.`;
+            status.style.color = 'green';
+            setTimeout(() => status.textContent = '', 5000);
+        })
+        .catch(error => {
+            console.error('Error setting go-to-percent:', error);
+            status.textContent = 'Could not set the jump.';
+            status.style.color = 'red';
         });
 }
 

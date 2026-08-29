@@ -5,6 +5,7 @@
 #include "EpubLoader.h"
 #include "TextRenderer.h"
 #include "../../Book32_Core/InputMgr.h"
+#include "../../Book32_Core/GoToPercentLogic.h"
 #include <vector>
 #include <map>
 
@@ -28,15 +29,15 @@ class AppReader : public App {
 public:
     AppReader();
     virtual ~AppReader();
-    
+
     // App Interface
     void start() override;
     void stop() override;
     void update() override; // Main loop: Input handling
     void draw() override;   // Display handling
-    
+
     // Icon
-    const uint8_t* getIconImage() override; 
+    const uint8_t* getIconImage() override;
     const char* getName() override { return "eReader"; }
 
     // A página do leitor ocupa o ecrã todo: o indicador de bateria do sistema
@@ -58,7 +59,7 @@ public:
 
 private:
     ReaderState _state;
-    
+
     // Library
     std::vector<BookEntry> _books;
     int _selectedBookIndex;
@@ -74,7 +75,7 @@ private:
     void drawLibrary();
     void updateLibraryScroll();
     void drawBookTile(Book32Display& display, int x, int y, int w, int h, bool selected);
-    
+
     // Settings
     int _refreshEveryNPages;
     int _pageTurnsSinceRefresh;
@@ -82,7 +83,7 @@ private:
     int _fontFamily;          // Reading font family (see ReaderFontFamily)
     bool _readingFirstDraw;   // Forces a full refresh on the next reading draw
     void loadSettings();
-    
+
     // Reading
     EpubLoader* _epubLoader;
     TextRenderer* _textRenderer;
@@ -106,13 +107,29 @@ private:
     void startTotalPagesCounting();
     void updateTotalPagesCount();
 
+    // v1.14.0: "go to %" requested from the web UI (see GoToPercentStore),
+    // applied the next time this specific book is opened. Content-length
+    // proportional (see GoToPercentLogic.h for why), not exact-page: chapters
+    // are scanned once for their text length (no font measurement, no
+    // rendering — much cheaper than the total-page count above), budgeted
+    // across update() calls the same way so a big book doesn't stall the
+    // book-open path. While active, input is ignored (see handleInput) so a
+    // button press during the scan can't act on the position this is about
+    // to replace.
+    bool _percentSeekActive;
+    int _percentSeekTargetPercent;
+    std::vector<long> _percentSeekChapterLengths;
+    void startPercentSeek(int percent);
+    void updatePercentSeek();
+    static long chapterTextLength(const std::vector<ContentNode>& content);
+
     // Dynamic Pagination
     std::vector<ContentNode> _currentRichContent;
     PagePointer _currentPagePointer;
     std::vector<PagePointer> _pageHistory; // Stores start of each page for current chapter
     RenderResult _currentPageRender;
     bool _currentPageRenderValid;
-    
+
     bool openBook(const String& path, bool restoreProgress = true);
     bool openSavedProgress();
     // v1.8.0: keyed by original filename via ProgressStore, not by path.

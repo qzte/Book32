@@ -9,6 +9,8 @@
 #include "BookMeta.h"
 #include "ProgressStore.h"
 #include "PageCountStore.h"
+#include "BookmarkStore.h"
+#include "GoToPercentStore.h"
 #include "WebMgr.h"
 #include <WiFi.h>
 #include <LittleFS.h>
@@ -113,6 +115,8 @@ AppReader::AppReader() {
     _countChapter = 0;
     _countPointer = {0, 0};
     _countPagesSoFar = 0;
+    _percentSeekActive = false;
+    _percentSeekTargetPercent = 0;
     _currentPageRender = {0, 0, false, 0, 0};
     _currentPageRenderValid = false;
     _pageTurnsSinceRefresh = 0;
@@ -245,6 +249,9 @@ void AppReader::scanBooks() {
         present.reserve(_books.size());
         for (const auto& b : _books) present.push_back(b.originalName);
         store.reconcile(present);
+        // v1.14.0: same pruning rule for bookmarks — a bookmark for a book
+        // that's no longer on flash is dead weight, same as a progress entry.
+        BookmarkStore::getInstance().reconcile(present);
 
         for (auto& b : _books) {
             BookProgress p;
@@ -343,6 +350,11 @@ void AppReader::handleInput(InputAction action) {
             AppMgr::getInstance().switchTo(0);
         }
     } else if (_state == VIEW_READING) {
+        // v1.14.0: a "go to %" jump is resolving in the background (see
+        // updatePercentSeek) and about to replace the position on screen —
+        // ignore input until it lands, so a page turn can't act on a
+        // position that's seconds away from being overwritten.
+        if (_percentSeekActive) return;
         if (action == INPUT_NEXT) nextPage();
         else if (action == INPUT_PREV) prevPage();
         else if (action == INPUT_SELECT) {
@@ -427,11 +439,27 @@ bool AppReader::openBook(const String& path, bool restoreProgress) {
 
     _state = VIEW_READING;
     startTotalPagesCounting();
+
+    // v1.14.0: a "go to %" requested from the web UI while this book wasn't
+    // open (see GoToPercentStore) applies now, overriding the position just
+    // restored above. takePendingFor() only matches this exact book and
+    // consumes the request, so it can't retrigger on a later re-open.
+    int pendingPercent = 0;
+    bool hasPendingSeek = GoToPercentStore::getInstance().takePendingFor(progressKey, pendingPercent);
+    if (hasPendingSeek) {
+        startPercentSeek(pendingPercent);
+        // Don't draw the just-restored page: updatePercentSeek() draws once
+        // the jump lands, so this avoids a visible flash of the wrong page
+        // followed by a second full e-ink refresh a moment later.
+        _needsRedraw = false;
+    } else {
+        _needsRedraw = true;
+    }
+
     // Abrir um livro grava já: é o que marca o livro como "último aberto" para
     // o resume no arranque, e acontece uma vez por livro, não por página.
     saveReadingProgress(true);
     flushProgress();
-    _needsRedraw = true;
     return true;
 }
 
@@ -607,6 +635,102 @@ void AppReader::updateTotalPagesCount() {
             checkpoint.pagesSoFar = _countPagesSoFar;
             PageCountStore::getInstance().setCheckpoint(key, _fontSizePt, _fontFamily, checkpoint);
         }
+    }
+}
+
+// Sums the character length of a chapter's already-parsed rich content —
+// text nodes directly, table cells cell by cell. No font measurement: this
+// is only ever used to compare chapters against each other for "go to %", so
+// it only needs to be proportionally right, not pixel-accurate.
+long AppReader::chapterTextLength(const std::vector<ContentNode>& content) {
+    long total = 0;
+    for (const ContentNode& node : content) {
+        if (node.type == CONTENT_TEXT) {
+            total += node.textNode.text.length();
+        } else if (node.type == CONTENT_TABLE) {
+            for (const TableRow& row : node.table.rows) {
+                for (const TableCell& cell : row.cells)
+                    total += cell.content.length();
+            }
+        }
+    }
+    return total;
+}
+
+// Kicks off a background "go to %" resolution for the book currently open in
+// _epubLoader. See updatePercentSeek() for how it's carried out and applied.
+void AppReader::startPercentSeek(int percent) {
+    _percentSeekActive = false;
+    _percentSeekChapterLengths.clear();
+    if (!_epubLoader) return;
+    if (_epubLoader->getChapterCount() <= 0) return; // nothing to seek into
+
+    _percentSeekTargetPercent = percent;
+    _percentSeekChapterLengths.reserve(_epubLoader->getChapterCount());
+    _percentSeekActive = true;
+}
+
+// Advances the "go to %" scan by a time-boxed slice (same budget and
+// rationale as updateTotalPagesCount: don't stall the main loop measuring a
+// big book in one shot). Each tick measures one more chapter's text length
+// with EpubLoader::getChapterContentRich() — parsing only, no TextRenderer,
+// no pagination, so this is lighter than the total-page count above and
+// needs no renderer of its own.
+//
+// Once every chapter is measured, resolvePercentTarget() (pure logic, see
+// GoToPercentLogic.h) picks the chapter and in-chapter offset for the
+// requested percent, resolveNodeTarget() narrows that down to a content
+// node, and the result replaces the live reading position — this is the one
+// point where a "go to %" jump actually lands on screen.
+void AppReader::updatePercentSeek() {
+    if (!_epubLoader) {
+        _percentSeekActive = false;
+        return;
+    }
+    int totalChapters = _epubLoader->getChapterCount();
+
+    unsigned long budgetEnd = millis() + TOTAL_PAGES_BUDGET_MS;
+    while (_percentSeekActive && millis() < budgetEnd) {
+        if ((int)_percentSeekChapterLengths.size() >= totalChapters) {
+            ChapterPercentTarget target =
+                resolvePercentTarget(_percentSeekChapterLengths, _percentSeekTargetPercent);
+            _percentSeekActive = false;
+            if (target.chapterIndex < 0) return; // no chapters — nothing to land on
+
+            loadChapter(target.chapterIndex);
+            // loadChapter() can fall through to a later chapter if the target
+            // one turned out empty (see its own fallback loop) — only place
+            // the pointer inside it if we actually landed where asked.
+            if (_currentChapter == target.chapterIndex) {
+                std::vector<int> nodeLengths;
+                nodeLengths.reserve(_currentRichContent.size());
+                for (const ContentNode& node : _currentRichContent) {
+                    nodeLengths.push_back(node.type == CONTENT_TEXT ? (int)node.textNode.text.length() : 0);
+                }
+                NodePositionTarget nodeTarget = resolveNodeTarget(nodeLengths, target.charOffsetInChapter);
+                _currentPagePointer.nodeIndex = nodeTarget.nodeIndex;
+                _currentPagePointer.charOffset = nodeTarget.charOffsetInNode;
+                _currentPageRenderValid = false;
+
+                // Best-effort page number: exact only when the total is
+                // already cached at the current font settings (see
+                // PageCountStore); this is the one number on screen that
+                // stays approximate otherwise, same spirit as the "no
+                // made-up percentage" rule the library list follows.
+                _globalPageNumber =
+                    (_totalPages > 0)
+                        ? max(1, (int)(((long)_totalPages * (long)_percentSeekTargetPercent) / 100))
+                        : 1;
+            }
+            _readingFirstDraw = true; // full refresh: clears whatever was last on screen
+            _needsRedraw = true;
+            saveReadingProgress(true);
+            return;
+        }
+
+        int chapterIndex = (int)_percentSeekChapterLengths.size();
+        std::vector<ContentNode> content = _epubLoader->getChapterContentRich(chapterIndex);
+        _percentSeekChapterLengths.push_back(chapterTextLength(content));
     }
 }
 
@@ -955,6 +1079,11 @@ void AppReader::update() {
     // pages, if it isn't already known. Runs between draw() calls only (see
     // updateTotalPagesCount), so it never overlaps an actual page render.
     if (_countingActive) updateTotalPagesCount();
+
+    // v1.14.0: same budgeted-slice treatment for a pending "go to %" jump.
+    // Independent of the counting above — different state, no shared
+    // renderer — so both can run in the same session without conflict.
+    if (_percentSeekActive) updatePercentSeek();
 
     // Commit a deferred reading position once the page has been still for a
     // while. Page turns only mark it dirty (see saveReadingProgress), so a
