@@ -173,6 +173,19 @@ const isFont = f => f.toLowerCase().endsWith('.ttf');
 let currentBooks = [];          // Server-provided order (books + fonts)
 let saveOrderTimer = null;      // Debounce: avoid hammering flash on rapid clicks
 
+// As duas particoes actualizam-se em separado (`uploadfs` envia esta interface,
+// `upload` envia o firmware), por isso e perfeitamente normal ter uma web UI
+// mais recente do que o firmware por baixo. Nesse caso /api/books devolve os
+// livros sem estado de leitura nenhum, e /api/books/status nao existe.
+//
+// Isto tem de ser detectado em vez de assumido: sem o campo `status`, cada
+// livro caia no valor por omissao e a lista mostrava "Por ler" em tudo — uma
+// mentira, nao um valor em falta. E o POST para uma rota inexistente devolve
+// 500 com corpo vazio (o ESPAsyncWebServer cai no _catchAllHandler, que sem
+// onNotFound faz send(500)), o que chegava ao utilizador como um
+// "Internal Server Error" sem explicacao possivel.
+let statusApiSupported = true;
+
 async function fetchBooks() {
     const bookList = document.getElementById('book-list');
     bookList.innerHTML = '<p>A carregar...</p>';
@@ -181,6 +194,11 @@ async function fetchBooks() {
         const res = await fetch('/api/books');
         const data = await res.json();
         currentBooks = (data.books || []);
+        // Um firmware que conheca o estado de leitura poe `status` em todos os
+        // .epub. Uma biblioteca sem .epub nenhum nao diz nada, por isso nesse
+        // caso nao se declara nada em falta.
+        const epubs = currentBooks.filter(b => isEpub(b.filename));
+        statusApiSupported = epubs.length === 0 || epubs.some(b => 'status' in b);
         renderBooks();
     } catch (e) {
         bookList.innerHTML = '<p class="error">Erro ao carregar os livros.</p>';
@@ -261,8 +279,13 @@ function renderBooks() {
         return;
     }
 
+    // Sem suporte no firmware nao ha estado a filtrar nem a ordenar por data.
+    const controls = document.querySelector('#ereader .setting-row select#book-filter');
+    const controlRow = controls ? controls.closest('.setting-row') : null;
+    if (controlRow) controlRow.classList.toggle('hidden', !statusApiSupported);
+
     const view = visibleBooks();
-    if (note) note.classList.toggle('hidden', view.reorderable);
+    if (note) note.classList.toggle('hidden', view.reorderable || !statusApiSupported);
     if (!view.list.length) {
         bookList.innerHTML = '<p class="hint">Nenhum livro corresponde a este filtro.</p>';
         renderPcDiff();
@@ -274,7 +297,13 @@ function renderBooks() {
     // atributo onclick partia o handler ao primeiro título com plica e deixava
     // um nome escolhido a dedo executar código nesta página; agora viajam em
     // data-* (com escape de atributo) e o clique é tratado por delegação.
-    bookList.innerHTML = view.list.map(book => {
+    const banner = statusApiSupported ? '' :
+        `<p class="error">O firmware do dispositivo é mais antigo do que esta interface, ` +
+        `por isso o estado de leitura e as datas não estão disponíveis. ` +
+        `Enviar só a interface (<code>uploadfs</code>) não chega — é preciso ` +
+        `<code>pio run --target upload</code> para o firmware.</p>`;
+
+    bookList.innerHTML = banner + view.list.map(book => {
         const bookIsFont = isFont(book.filename);
         const nameAttr = escapeAttr(book.filename);
         let orderBtns = '';
@@ -287,7 +316,7 @@ function renderBooks() {
                 </span>`;
         }
         let statusControls = '';
-        if (!bookIsFont) {
+        if (!bookIsFont && statusApiSupported) {
             const override = book.override || 'auto';
             statusControls = `
                 ${statusBadge(book)}
@@ -301,7 +330,7 @@ function renderBooks() {
         return `
         <div class="book-item">
             ${orderBtns}
-            <span class="book-title">${bookIsFont ? '📂 [Letra] ' : '📖 '}${escapeHtml(book.name)}${bookIsFont ? '' : bookDates(book)}</span>
+            <span class="book-title">${bookIsFont ? '📂 [Letra] ' : '📖 '}${escapeHtml(book.name)}${bookIsFont || !statusApiSupported ? '' : bookDates(book)}</span>
             ${statusControls}
             <span class="book-size">${Math.round(book.size / 1024)} KB</span>
             <button class="btn-delete" data-action="delete" data-filename="${nameAttr}" data-name="${escapeAttr(book.name)}">Apagar</button>
@@ -324,7 +353,12 @@ async function setBookStatus(filename, status) {
         });
         if (!res.ok) {
             const body = await res.json().catch(() => ({}));
-            throw new Error(body.message || res.statusText);
+            // Um 500 sem corpo nao e uma avaria do dispositivo: e uma rota que
+            // ele nao conhece (ver statusApiSupported acima). "Internal Server
+            // Error" nao dizia isso a ninguem.
+            throw new Error(body.message || (res.status === 500
+                ? 'o firmware do dispositivo não conhece este pedido — actualiza-o'
+                : res.statusText));
         }
         if (msg) { msg.innerText = 'Estado guardado.'; msg.style.color = 'var(--success)'; }
         // Refetch rather than patching in place: the derived status and the
