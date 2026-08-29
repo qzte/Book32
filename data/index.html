@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="pt-PT">
 
 <head>
     <meta charset="UTF-8">
@@ -15,9 +15,9 @@
         <nav class="sidebar">
             <div class="brand">Book32 <span style="font-size: 0.5em; opacity: 0.7;">by Rolohaun</span></div>
             <ul class="nav-links">
-                <li class="active" onclick="showTab('dashboard')">Dashboard</li>
-                <li onclick="showTab('ereader')">Ereader</li>
-                <li onclick="showTab('settings')">Settings</li>
+                <li class="active" onclick="showTab('dashboard')">Painel</li>
+                <li onclick="showTab('ereader')">Leitor</li>
+                <li onclick="showTab('settings')">Definições</li>
             </ul>
             <div class="version">v<span id="version-display">1.0</span></div>
         </nav>
@@ -34,18 +34,18 @@
 
             <!-- Dashboard Tab -->
             <section id="dashboard" class="tab-content active">
-                <h1>System Status</h1>
+                <h1>Estado do Sistema</h1>
                 <div class="stats-grid">
                     <div class="card stat">
-                        <h3>Battery</h3>
+                        <h3>Bateria</h3>
                         <p id="battery-val">--%</p>
                     </div>
                     <div class="card stat">
-                        <h3>Uptime</h3>
+                        <h3>Ligado há</h3>
                         <p id="uptime-val">--</p>
                     </div>
                     <div class="card stat">
-                        <h3>Free Space</h3>
+                        <h3>Espaço Livre</h3>
                         <p id="freespace-val">--</p>
                     </div>
                 </div>
@@ -53,23 +53,23 @@
 
             <!-- Ereader Tab -->
             <section id="ereader" class="tab-content">
-                <h1>Ereader Library</h1>
+                <h1>Biblioteca do Leitor</h1>
 
                 <div class="card">
-                    <h3>Reader Options</h3>
+                    <h3>Opções de Leitura</h3>
                     <div class="setting-row">
-                        <label for="font-size">Reading Font Size</label>
+                        <label for="font-size">Tamanho da letra</label>
                         <select id="font-size">
-                            <option value="9">Small</option>
-                            <option value="12">Medium</option>
-                            <option value="18">Large</option>
+                            <option value="9">Pequeno</option>
+                            <option value="12">Médio</option>
+                            <option value="18">Grande</option>
                         </select>
                     </div>
-                    <p class="hint">Applies to the book text. A larger size fits fewer words per page; pages reflow automatically.</p>
+                    <p class="hint">Aplica-se ao texto do livro. Um tamanho maior leva menos palavras por página; as páginas são refeitas automaticamente.</p>
                     <div class="setting-row">
-                        <label for="font-family">Reading Font</label>
+                        <label for="font-family">Tipo de letra</label>
                         <select id="font-family">
-                            <option value="0">System (Sans-serif)</option>
+                            <option value="0">Sistema (sem serifas)</option>
                             <option value="1">Merriweather</option>
                             <option value="2">Literata</option>
                             <option value="3">Source Serif Pro</option>
@@ -77,59 +77,59 @@
                             <option value="5">Open Sans</option>
                         </select>
                     </div>
-                    <p class="hint">Changes the typeface used for the book text. Pages reflow automatically.</p>
+                    <p class="hint">Muda a letra usada no texto do livro. As páginas são refeitas automaticamente.</p>
                     <div class="setting-row">
-                        <label for="refresh-rate">Full Refresh Interval (Pages)</label>
+                        <label for="refresh-rate">Refrescamento total (a cada N páginas)</label>
                         <input type="number" id="refresh-rate" min="1" max="100" value="6" class="input-narrow">
                     </div>
-                    <button class="btn secondary" onclick="saveReaderSettings()">Save Settings</button>
+                    <button class="btn secondary" onclick="saveReaderSettings()">Guardar Definições</button>
                     <div id="reader-settings-status" class="status-msg"></div>
                 </div>
 
                 <div class="card">
-                    <h3>Reading Progress</h3>
-                    <p id="reader-progress-status" class="hint">Loading saved position...</p>
-                    <button class="btn secondary" onclick="resetReaderProgress()">Reset Reading Progress</button>
+                    <h3>Progresso de Leitura</h3>
+                    <p id="reader-progress-status" class="hint">A carregar a posição guardada...</p>
+                    <button class="btn secondary" onclick="resetReaderProgress()">Apagar Progresso de Leitura</button>
                     <div id="reader-progress-reset-status" class="status-msg"></div>
                 </div>
 
                 <div class="card">
-                    <h3>Bookmarks</h3>
-                    <p class="hint">Named positions in <strong id="bookmarks-book-name">the current book</strong>, separate from the position above. Bookmarking here saves whatever position was last saved on the device; jumping to one applies the next time that book is opened on the device.</p>
-                    <p id="bookmarks-empty-hint" class="hint hidden">Open a book on the device first — bookmarks apply to whichever book has a saved reading position.</p>
+                    <h3>Marcadores</h3>
+                    <p class="hint">Posições com nome, à parte da posição acima. Marcar aqui guarda a última posição gravada no dispositivo; saltar para um marcador só faz efeito da próxima vez que abrires o livro no dispositivo. Livro: <strong id="bookmarks-book-name">o livro actual</strong></p>
+                    <p id="bookmarks-empty-hint" class="hint hidden">Abre primeiro um livro no dispositivo — os marcadores aplicam-se ao livro que tiver uma posição de leitura guardada.</p>
                     <div id="bookmarks-list"></div>
                     <div class="setting-row spaced">
-                        <input type="text" id="bookmark-label" placeholder="Label (optional)" maxlength="40" class="input-grow">
-                        <button class="btn secondary" onclick="addBookmark()">Bookmark Current Position</button>
+                        <input type="text" id="bookmark-label" placeholder="Nome (opcional)" maxlength="40" class="input-grow">
+                        <button class="btn secondary" onclick="addBookmark()">Marcar Posição Actual</button>
                     </div>
                     <div id="bookmarks-status" class="status-msg"></div>
                 </div>
 
                 <div class="card">
-                    <h3>Go to Page (%)</h3>
-                    <p class="hint">Jumps to roughly that point in <strong id="goto-percent-book-name">the current book</strong> the next time it's opened on the device. Approximate — chapters vary in length, so this is not an exact page.</p>
+                    <h3>Ir Para (%)</h3>
+                    <p class="hint">Salta para aproximadamente esse ponto do livro, da próxima vez que ele for aberto no dispositivo. É aproximado — os capítulos têm tamanhos diferentes, por isso não é uma página exacta. Livro: <strong id="goto-percent-book-name">o livro actual</strong></p>
                     <div class="setting-row">
-                        <label for="goto-percent">Percent</label>
+                        <label for="goto-percent">Percentagem</label>
                         <input type="number" id="goto-percent" min="0" max="100" value="50" class="input-narrow">
                     </div>
-                    <button class="btn secondary" onclick="goToPercent()">Go to %</button>
+                    <button class="btn secondary" onclick="goToPercent()">Ir para %</button>
                     <div id="goto-percent-status" class="status-msg"></div>
                 </div>
 
                 <div class="card">
-                    <h3>Library State</h3>
-                    <p class="hint">Reading positions, book names and manual order. Does not include the .epub files.</p>
-                    <button class="btn secondary" onclick="exportLibraryState()">Export State</button>
+                    <h3>Estado da Biblioteca</h3>
+                    <p class="hint">Posições de leitura, estado, datas, nomes dos livros e ordem manual. Não inclui os ficheiros .epub.</p>
+                    <button class="btn secondary" onclick="exportLibraryState()">Exportar Estado</button>
                     <input type="file" id="import-state-file" accept=".json,application/json" style="display:none" onchange="importLibraryState(this)">
-                    <button class="btn secondary" onclick="document.getElementById('import-state-file').click()">Import State</button>
+                    <button class="btn secondary" onclick="document.getElementById('import-state-file').click()">Importar Estado</button>
                     <div id="library-state-status" class="status-msg"></div>
                 </div>
 
                 <div class="card">
-                    <h3>Upload Book</h3>
-                    <p class="hint">Upload EPUB books directly</p>
+                    <h3>Enviar Livro</h3>
+                    <p class="hint">Envia livros EPUB directamente</p>
                     <input type="file" id="book-file" accept=".epub,.ttf">
-                    <button class="btn primary" onclick="uploadBook()">Upload</button>
+                    <button class="btn primary" onclick="uploadBook()">Enviar</button>
                     <div id="upload-progress" class="progress-container hidden">
                         <div id="upload-progress-bar" class="progress-bar"></div>
                     </div>
@@ -137,12 +137,12 @@
                 </div>
 
                 <div class="card" id="pc-library-card">
-                    <h3>PC Library</h3>
-                    <p class="hint">Pick the folder where you keep your EPUBs and Book32 shows what is missing on either side. The folder is only read — nothing is written back to your PC.</p>
+                    <h3>Biblioteca do PC</h3>
+                    <p class="hint">Escolhe a pasta onde guardas os teus EPUB e o Book32 mostra o que falta de cada lado. A pasta é apenas lida — nada é escrito de volta no teu PC.</p>
                     <input type="file" id="pc-folder" webkitdirectory directory multiple style="display:none" onchange="pickPcFolder(this)">
                     <div class="btn-row">
-                        <button class="btn secondary" onclick="document.getElementById('pc-folder').click()">Choose Folder</button>
-                        <button class="btn primary" id="pc-send-all" onclick="sendMissingToReader()" disabled>Send Missing</button>
+                        <button class="btn secondary" onclick="document.getElementById('pc-folder').click()">Escolher Pasta</button>
+                        <button class="btn primary" id="pc-send-all" onclick="sendMissingToReader()" disabled>Enviar em Falta</button>
                     </div>
                     <p id="pc-listing-age" class="hint"></p>
                     <div id="pc-diff"></div>
@@ -150,25 +150,25 @@
                 </div>
 
                 <div class="card">
-                    <h3>Your Books</h3>
+                    <h3>Os Teus Livros</h3>
                     <div class="setting-row">
-                        <label for="book-filter">Show</label>
+                        <label for="book-filter">Mostrar</label>
                         <select id="book-filter" onchange="renderBooks()">
-                            <option value="all">All</option>
-                            <option value="unread">Unread</option>
-                            <option value="reading">Reading</option>
-                            <option value="read">Read</option>
+                            <option value="all">Todos</option>
+                            <option value="unread">Por ler</option>
+                            <option value="reading">A ler</option>
+                            <option value="read">Lidos</option>
                         </select>
-                        <label for="book-sort">Sort</label>
+                        <label for="book-sort">Ordenar</label>
                         <select id="book-sort" onchange="renderBooks()">
-                            <option value="manual">Device order</option>
-                            <option value="lastReadAt">Last read</option>
-                            <option value="finishedAt">Finished</option>
-                            <option value="startedAt">Started</option>
-                            <option value="title">Title</option>
+                            <option value="manual">Ordem do dispositivo</option>
+                            <option value="lastReadAt">Última leitura</option>
+                            <option value="finishedAt">Conclusão</option>
+                            <option value="startedAt">Início</option>
+                            <option value="title">Título</option>
                         </select>
                     </div>
-                    <p id="book-list-note" class="hint hidden">Reordering is only available under <strong>Device order</strong> with no filter — the arrows move a book in the device's own list, which this view is no longer showing in order.</p>
+                    <p id="book-list-note" class="hint hidden">Só se pode reordenar em <strong>Ordem do dispositivo</strong> e sem filtro — as setas movem o livro na lista do próprio dispositivo, que esta vista já não está a mostrar por ordem.</p>
                     <div id="book-list">
                         <!-- Books injected by JS -->
                     </div>
@@ -178,65 +178,65 @@
 
             <!-- Settings Tab -->
             <section id="settings" class="tab-content">
-                <h1>Settings</h1>
+                <h1>Definições</h1>
 
                 <div class="card">
-                    <h3>Sleep Settings</h3>
+                    <h3>Suspensão</h3>
                     <div class="setting-row">
-                        <label for="sleep-timeout">Idle Sleep Timeout (Minutes)</label>
+                        <label for="sleep-timeout">Suspender ao fim de (minutos)</label>
                         <input type="number" id="sleep-timeout" min="0" max="60" value="5" class="input-narrow">
                     </div>
-                    <p class="hint">Set to 0 to disable auto-sleep. Device sleeps after this many minutes of inactivity.</p>
+                    <p class="hint">A 0 desliga a suspensão automática. O dispositivo suspende ao fim destes minutos sem actividade.</p>
                     <div class="setting-row stacked spaced">
-                        <label for="sleep-message">Sleep Message</label>
-                        <input type="text" id="sleep-message" maxlength="100" placeholder="Press button to wake" class="input-full">
+                        <label for="sleep-message">Mensagem de suspensão</label>
+                        <input type="text" id="sleep-message" maxlength="100" placeholder="Prime o botão para acordar" class="input-full">
                     </div>
-                    <p class="hint">Message displayed on screen when device enters sleep mode.</p>
-                    <button class="btn secondary" onclick="saveSleepSettings()">Save Sleep Settings</button>
+                    <p class="hint">Mensagem mostrada no ecrã quando o dispositivo suspende.</p>
+                    <button class="btn secondary" onclick="saveSleepSettings()">Guardar Suspensão</button>
                     <div id="sleep-settings-status" class="status-msg"></div>
                 </div>
 
                 <div class="card">
-                    <h3>Display Orientation</h3>
+                    <h3>Orientação do Ecrã</h3>
                     <div class="setting-row">
-                        <label for="display-rotation">Button Side</label>
+                        <label for="display-rotation">Lado dos botões</label>
                         <select id="display-rotation">
-                            <option value="3">Left (default)</option>
-                            <option value="1">Right (rotate 180°)</option>
+                            <option value="3">Esquerda (predefinição)</option>
+                            <option value="1">Direita (rodar 180°)</option>
                         </select>
                     </div>
-                    <p class="hint">Flips the entire screen 180° so the button sits on your preferred side. Applies immediately.</p>
-                    <button class="btn secondary" onclick="saveDisplaySettings()">Apply Orientation</button>
+                    <p class="hint">Roda o ecrã inteiro 180° para os botões ficarem do lado que preferires. Aplica-se imediatamente.</p>
+                    <button class="btn secondary" onclick="saveDisplaySettings()">Aplicar Orientação</button>
                     <div id="display-settings-status" class="status-msg"></div>
                 </div>
 
                 <div class="card">
-                    <h3>Wi-Fi &amp; Hotspot</h3>
-                    <p id="wifi-status" class="hint">Checking connection...</p>
+                    <h3>Wi-Fi e Hotspot</h3>
+                    <p id="wifi-status" class="hint">A verificar a ligação...</p>
                     <div class="setting-row spaced">
-                        <label for="wifi-ssid">Network</label>
+                        <label for="wifi-ssid">Rede</label>
                         <select id="wifi-ssid" class="input-grow">
-                            <option value="">Tap Scan to list networks…</option>
+                            <option value="">Toca em Procurar para listar as redes…</option>
                         </select>
                     </div>
                     <div class="setting-row spaced">
-                        <label for="wifi-pass">Password</label>
-                        <input type="password" id="wifi-pass" placeholder="(leave blank if open)" class="input-grow">
+                        <label for="wifi-pass">Palavra-passe</label>
+                        <input type="password" id="wifi-pass" placeholder="(deixa vazio se a rede for aberta)" class="input-grow">
                     </div>
-                    <p class="hint">Connect Book32 to a network, or manage it directly over the Book32 hotspot when no network is available.</p>
+                    <p class="hint">Liga o Book32 a uma rede, ou gere-o directamente pelo hotspot do Book32 quando não houver rede disponível.</p>
                     <div class="btn-row">
-                        <button class="btn secondary" onclick="scanWifi()">Scan</button>
-                        <button class="btn primary" onclick="connectWifi()">Connect</button>
+                        <button class="btn secondary" onclick="scanWifi()">Procurar</button>
+                        <button class="btn primary" onclick="connectWifi()">Ligar</button>
                     </div>
                     <div id="wifi-connect-status" class="status-msg"></div>
                 </div>
 
                 <div class="card update-card">
-                    <h3>Software Update</h3>
-                    <p>Current Version: <span id="current-ver">1.0</span></p>
+                    <h3>Actualização de Software</h3>
+                    <p>Versão actual: <span id="current-ver">1.0</span></p>
                     <div id="update-status" class="status-msg"></div>
-                    <button id="check-update-btn" class="btn primary" onclick="checkUpdate()">Check for Updates</button>
-                    <button id="update-btn" class="btn primary hidden" onclick="performUpdate()">Install Update</button>
+                    <button id="check-update-btn" class="btn primary" onclick="checkUpdate()">Procurar Actualizações</button>
+                    <button id="update-btn" class="btn primary hidden" onclick="performUpdate()">Instalar Actualização</button>
                 </div>
             </section>
         </main>
