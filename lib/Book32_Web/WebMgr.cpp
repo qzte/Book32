@@ -16,6 +16,8 @@
 #include "../Book32_Core/BookOrderLogic.h"
 #include "../Book32_Core/BookMeta.h"
 #include "../Book32_Core/ProgressStore.h"
+#include "../Book32_Core/BookmarkStore.h"
+#include "../Book32_Core/GoToPercentStore.h"
 #include "../Book32_Update/GitHubMgr.h"
 #include "../Book32_Core/BatteryMgr.h"
 #include "../Book32_Core/AppMgr.h"
@@ -1062,6 +1064,129 @@ void WebMgr::setupEndpoints() {
         ProgressStore::getInstance().clearAll();
         request->send(200, "application/json", "{\"status\":\"ok\"}");
     });
+
+    // API (v1.14.0): Bookmarks — named, saved reading positions distinct from
+    // the resume-on-open position above. Managed entirely from the web UI:
+    // adding one snapshots whatever position ProgressStore currently holds
+    // for that book, and jumping to one overwrites that saved position, so it
+    // takes effect the next time the book is opened on the device (same
+    // "web sets it, device picks it up on next open" shape as library
+    // reorder and progress import already use). See
+    // docs/plans/2026-08-29-bookmarks-and-goto-percent-design.md.
+    server->on("/api/bookmarks", HTTP_GET, [](AsyncWebServerRequest* request) {
+        if (!request->hasParam("book")) {
+            request->send(400, "application/json", "{\"error\":\"missing 'book'\"}");
+            return;
+        }
+        String book = request->getParam("book")->value();
+        std::vector<Bookmark> marks = BookmarkStore::getInstance().list(book);
+
+        AsyncResponseStream* response = request->beginResponseStream("application/json");
+        response->printf("{\"book\":\"%s\",\"bookmarks\":[", jsonEscape(book).c_str());
+        bool first = true;
+        for (const Bookmark& b : marks) {
+            if (!first) response->print(",");
+            first = false;
+            response->printf("{\"seq\":%lu,\"label\":\"%s\",\"chapter\":%d,\"page\":%d}", b.seq,
+                             jsonEscape(b.label).c_str(), b.chapter, b.globalPage);
+        }
+        response->print("]}");
+        request->send(response);
+    });
+
+    // API: Add bookmark. Body: {"book":"<original name>","label":"..."}.
+    // Fails with 404 if the book has no saved position yet (nothing to
+    // snapshot) and 409 once it already holds BookmarkStore::MAX_BOOKMARKS_PER_BOOK.
+    AsyncCallbackJsonWebHandler* bookmarkAddHandler = new AsyncCallbackJsonWebHandler(
+        "/api/bookmarks/add", [](AsyncWebServerRequest* request, JsonVariant& json) {
+            String book = json["book"] | "";
+            String label = json["label"] | "";
+            if (book.length() == 0) {
+                request->send(400, "application/json", "{\"error\":\"missing 'book'\"}");
+                return;
+            }
+            BookProgress pos;
+            if (!ProgressStore::getInstance().get(book, pos)) {
+                request->send(404, "application/json",
+                              "{\"error\":\"no saved reading position for this book yet\"}");
+                return;
+            }
+            unsigned long seq = BookmarkStore::getInstance().add(book, label, pos.chapter, pos.nodeIndex,
+                                                                 pos.charOffset, pos.globalPage);
+            if (seq == 0) {
+                request->send(409, "application/json",
+                              "{\"error\":\"bookmark limit reached for this book\"}");
+                return;
+            }
+            request->send(200, "application/json", "{\"status\":\"ok\",\"seq\":" + String(seq) + "}");
+        });
+    bookmarkAddHandler->setMethod(HTTP_POST);
+    server->addHandler(bookmarkAddHandler);
+
+    // API: Remove bookmark. Body: {"book":"...","seq":N}.
+    AsyncCallbackJsonWebHandler* bookmarkRemoveHandler = new AsyncCallbackJsonWebHandler(
+        "/api/bookmarks/remove", [](AsyncWebServerRequest* request, JsonVariant& json) {
+            String book = json["book"] | "";
+            unsigned long seq = json["seq"] | 0UL;
+            if (book.length() == 0 || seq == 0) {
+                request->send(400, "application/json", "{\"error\":\"missing 'book' or 'seq'\"}");
+                return;
+            }
+            bool ok = BookmarkStore::getInstance().remove(book, seq);
+            if (ok)
+                request->send(200, "application/json", "{\"status\":\"ok\"}");
+            else
+                request->send(404, "application/json", "{\"error\":\"bookmark not found\"}");
+        });
+    bookmarkRemoveHandler->setMethod(HTTP_POST);
+    server->addHandler(bookmarkRemoveHandler);
+
+    // API: Jump to bookmark. Body: {"book":"...","seq":N}. Overwrites the
+    // book's saved progress with the bookmark's position — same field, same
+    // store AppReader::loadBookProgress() reads on open.
+    AsyncCallbackJsonWebHandler* bookmarkJumpHandler = new AsyncCallbackJsonWebHandler(
+        "/api/bookmarks/jump", [](AsyncWebServerRequest* request, JsonVariant& json) {
+            String book = json["book"] | "";
+            unsigned long seq = json["seq"] | 0UL;
+            if (book.length() == 0 || seq == 0) {
+                request->send(400, "application/json", "{\"error\":\"missing 'book' or 'seq'\"}");
+                return;
+            }
+            std::vector<Bookmark> marks = BookmarkStore::getInstance().list(book);
+            for (const Bookmark& b : marks) {
+                if (b.seq != seq) continue;
+                BookProgress p;
+                p.chapter = b.chapter;
+                p.nodeIndex = b.nodeIndex;
+                p.charOffset = b.charOffset;
+                p.globalPage = b.globalPage;
+                ProgressStore::getInstance().set(book, p);
+                request->send(200, "application/json", "{\"status\":\"ok\"}");
+                return;
+            }
+            request->send(404, "application/json", "{\"error\":\"bookmark not found\"}");
+        });
+    bookmarkJumpHandler->setMethod(HTTP_POST);
+    server->addHandler(bookmarkJumpHandler);
+
+    // API (v1.14.0): Go to approximate percent. Body: {"book":"...","percent":N}.
+    // Computing the target position needs the EPUB's text (to know how much
+    // precedes it), which only the reader app parses — the web server just
+    // records the intent; AppReader applies it the next time this book opens
+    // (see GoToPercentStore, AppReader::startPercentSeek/updatePercentSeek).
+    AsyncCallbackJsonWebHandler* goToPercentHandler = new AsyncCallbackJsonWebHandler(
+        "/api/reader/goto", [](AsyncWebServerRequest* request, JsonVariant& json) {
+            String book = json["book"] | "";
+            int percent = json["percent"] | -1;
+            if (book.length() == 0 || percent < 0 || percent > 100) {
+                request->send(400, "application/json", "{\"error\":\"invalid 'book' or 'percent'\"}");
+                return;
+            }
+            GoToPercentStore::getInstance().setPending(book, percent);
+            request->send(200, "application/json", "{\"status\":\"ok\"}");
+        });
+    goToPercentHandler->setMethod(HTTP_POST);
+    server->addHandler(goToPercentHandler);
 
     // API (v1.8.0): Export library state — reading progress, original-name
     // metadata and the manual order. No .epub files: those go through /send.

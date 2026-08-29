@@ -94,6 +94,29 @@
                 </div>
 
                 <div class="card">
+                    <h3>Bookmarks</h3>
+                    <p class="hint">Named positions in <strong id="bookmarks-book-name">the current book</strong>, separate from the position above. Bookmarking here saves whatever position was last saved on the device; jumping to one applies the next time that book is opened on the device.</p>
+                    <p id="bookmarks-empty-hint" class="hint hidden">Open a book on the device first — bookmarks apply to whichever book has a saved reading position.</p>
+                    <div id="bookmarks-list"></div>
+                    <div class="setting-row spaced">
+                        <input type="text" id="bookmark-label" placeholder="Label (optional)" maxlength="40" class="input-grow">
+                        <button class="btn secondary" onclick="addBookmark()">Bookmark Current Position</button>
+                    </div>
+                    <div id="bookmarks-status" class="status-msg"></div>
+                </div>
+
+                <div class="card">
+                    <h3>Go to Page (%)</h3>
+                    <p class="hint">Jumps to roughly that point in <strong id="goto-percent-book-name">the current book</strong> the next time it's opened on the device. Approximate — chapters vary in length, so this is not an exact page.</p>
+                    <div class="setting-row">
+                        <label for="goto-percent">Percent</label>
+                        <input type="number" id="goto-percent" min="0" max="100" value="50" class="input-narrow">
+                    </div>
+                    <button class="btn secondary" onclick="goToPercent()">Go to %</button>
+                    <div id="goto-percent-status" class="status-msg"></div>
+                </div>
+
+                <div class="card">
                     <h3>Library State</h3>
                     <p class="hint">Reading positions, book names and manual order. Does not include the .epub files.</p>
                     <button class="btn secondary" onclick="exportLibraryState()">Export State</button>
