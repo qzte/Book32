@@ -554,15 +554,21 @@ function renderPcDiff() {
     if (!pcListing || !pcListing.files.length) {
         age.innerText = '';
         out.innerHTML = '<p class="hint">Ainda não escolheste nenhuma pasta.</p>';
-        sendAll.disabled = true;
+        sendAll.classList.add('hidden');
         return;
     }
 
+    // O browser nao deixa esta pagina reter acesso a pasta depois de recarregar
+    // (a File System Access API, que teria um handle persistente, exige contexto
+    // seguro e a pagina e servida em http:// pelo dispositivo). A listagem
+    // sobrevive no localStorage, os ficheiros nao: nesse estado NAO se desenha
+    // um so botao de envio. Um botao morto que so um paragrafo por cima explica
+    // le-se como avaria, e foi exactamente assim que este ecra foi reportado.
     const canSend = pcFiles.size > 0;
     age.innerHTML = canSend
         ? `Pasta lida agora mesmo \u2014 ${pcListing.files.length} EPUB.`
-        : `Listagem de ${escapeHtml(new Date(pcListing.takenAt).toLocaleString('pt-PT', { dateStyle: 'short', timeStyle: 'short' }))}. ` +
-          `<strong>Escolhe a pasta outra vez para poderes enviar</strong> \u2014 o browser não deixa esta página manter acesso à pasta depois de recarregar.`;
+        : `Listagem de ${escapeHtml(new Date(pcListing.takenAt).toLocaleString('pt-PT', { dateStyle: 'short', timeStyle: 'short' }))}, guardada neste browser. ` +
+          `Para enviar seja o que for, escolhe a pasta outra vez.`;
 
     const onReader = readerBookNames();
     const pcNames = new Set(pcListing.files.map(f => f.name));
@@ -576,12 +582,18 @@ function renderPcDiff() {
     html += `<h4 class="pc-group">Só no PC (${onlyPc.length})</h4>`;
     if (!onlyPc.length) {
         html += '<p class="hint">Não falta nada no leitor.</p>';
-    } else {
+    } else if (!canSend) {
+        // Substitui os botões de envio que não seriam clicáveis por um que é,
+        // no sítio onde a acção era esperada.
+        html += `<p class="hint">Escolhe a pasta outra vez para poderes enviar estes ${onlyPc.length}.</p>` +
+                `<button class="btn secondary" data-pc-action="pick">Escolher Pasta</button>`;
+    }
+    if (onlyPc.length) {
         html += onlyPc.map(f => `
             <div class="book-item">
                 <span class="book-title">\u2b06\ufe0f ${escapeHtml(f.name)}</span>
                 <span class="book-size">${Math.round(f.size / 1024)} KB</span>
-                <button class="btn-order" data-pc-action="send" data-name="${escapeAttr(f.name)}" ${canSend ? '' : 'disabled'}>Enviar</button>
+                ${canSend ? `<button class="btn-order" data-pc-action="send" data-name="${escapeAttr(f.name)}">Enviar</button>` : ''}
             </div>`).join('');
     }
 
@@ -616,7 +628,13 @@ function renderPcDiff() {
     }
 
     out.innerHTML = html;
-    sendAll.disabled = !canSend || !onlyPc.length;
+    // hidden, nao disabled: sem ficheiros nao ha envio possivel nenhum, e um
+    // botao a cinzento continua a convidar ao clique.
+    sendAll.classList.toggle('hidden', !canSend || !onlyPc.length);
+    // sendToReader desactiva-o enquanto o lote corre, para nao haver duplo
+    // envio, e chama fetchBooks() no fim — que acaba aqui. Sem esta linha o
+    // botao ficava desactivado para sempre a seguir ao primeiro lote.
+    sendAll.disabled = false;
     bindPcActions();
 }
 
@@ -628,7 +646,9 @@ function bindPcActions() {
     out.addEventListener('click', e => {
         const btn = e.target.closest('button[data-pc-action]');
         if (!btn) return;
-        if (btn.dataset.pcAction === 'send') {
+        if (btn.dataset.pcAction === 'pick') {
+            document.getElementById('pc-folder').click();
+        } else if (btn.dataset.pcAction === 'send') {
             sendToReader([btn.dataset.name]);
         } else if (btn.dataset.pcAction === 'delete') {
             deleteBook(btn.dataset.filename, btn.dataset.name);
