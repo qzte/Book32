@@ -310,6 +310,18 @@ h3 {
     background-color: var(--accent-hover);
 }
 
+/* Um .btn desactivado nao tinha estilo nenhum: o "Enviar em Falta" fica
+   disabled enquanto a pasta do PC nao for re-escolhida, e parecia clicavel.
+   :not(:disabled) no hover para o cursor tambem nao mentir. */
+.btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.btn.primary:disabled:hover {
+    background-color: var(--accent);
+}
+
 .btn.hidden,
 .hidden {
     display: none;

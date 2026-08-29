@@ -59,7 +59,7 @@ async function fetchStatus() {
     try {
         const res = await fetch('/api/status');
         const data = await res.json();
-        document.getElementById('battery-val').innerText = data.battery + '%' + (data.charging ? ' (Charging)' : '');
+        document.getElementById('battery-val').innerText = data.battery + '%' + (data.charging ? ' (a carregar)' : '');
         document.getElementById('uptime-val').innerText = data.uptime;
 
         // Update version display
@@ -114,7 +114,7 @@ async function checkUpdate() {
     const msg = document.getElementById('update-status');
     const updateBtn = document.getElementById('update-btn');
 
-    btn.innerText = "Checking...";
+    btn.innerText = "A verificar...";
     msg.innerText = "";
     updateBtn.classList.add('hidden');
 
@@ -129,7 +129,7 @@ async function checkUpdate() {
 
             // A tag e o corpo do release são texto de fora do dispositivo:
             // entram como conteúdo, não como marcação.
-            msg.innerHTML = `<strong>New version available: ${escapeHtml(data.latest)}</strong>`;
+            msg.innerHTML = `<strong>Nova versão disponível: ${escapeHtml(data.latest)}</strong>`;
             if (updateParts.length > 0) {
                 msg.innerHTML += `<br><small>Includes: ${updateParts.join(" and ")}</small>`;
             }
@@ -138,31 +138,31 @@ async function checkUpdate() {
             }
             msg.style.color = "var(--success)";
             updateBtn.classList.remove('hidden');
-            btn.innerText = "Check Again";
+            btn.innerText = "Verificar Outra Vez";
         } else {
-            msg.innerText = "You are up to date.";
+            msg.innerText = "Estás actualizado.";
             msg.style.color = "var(--text-secondary)";
-            btn.innerText = "Check Again";
+            btn.innerText = "Verificar Outra Vez";
         }
     } catch (e) {
-        msg.innerText = "Error checking update.";
+        msg.innerText = "Erro ao procurar actualizações.";
         msg.style.color = "var(--danger)";
-        btn.innerText = "Retry";
+        btn.innerText = "Tentar Outra Vez";
     }
 }
 
 async function performUpdate() {
-    if (!confirm("Install update? Device will restart when complete.")) return;
+    if (!confirm("Instalar a actualização? O dispositivo reinicia no fim.")) return;
 
     const msg = document.getElementById('update-status');
     const updateBtn = document.getElementById('update-btn');
 
-    msg.innerText = "Downloading and installing update...";
+    msg.innerText = "A descarregar e instalar a actualização...";
     msg.style.color = "var(--accent)";
     updateBtn.classList.add('hidden');
 
     fetch('/api/update/all', { method: 'POST' });
-    alert("Update started. The device will reboot when complete. This page will stop responding during the update.");
+    alert("Actualização iniciada. O dispositivo reinicia no fim. Esta página deixa de responder durante a actualização.");
 }
 
 // === Ereader Book Management ===
@@ -175,7 +175,7 @@ let saveOrderTimer = null;      // Debounce: avoid hammering flash on rapid clic
 
 async function fetchBooks() {
     const bookList = document.getElementById('book-list');
-    bookList.innerHTML = '<p>Loading...</p>';
+    bookList.innerHTML = '<p>A carregar...</p>';
 
     try {
         const res = await fetch('/api/books');
@@ -183,7 +183,7 @@ async function fetchBooks() {
         currentBooks = (data.books || []);
         renderBooks();
     } catch (e) {
-        bookList.innerHTML = '<p class="error">Error loading books.</p>';
+        bookList.innerHTML = '<p class="error">Erro ao carregar os livros.</p>';
         console.error("Failed to fetch books", e);
     }
 }
@@ -193,14 +193,15 @@ async function fetchBooks() {
 // absent date is shown as absent, never guessed at.
 function formatDate(epoch) {
     if (!epoch) return '\u2014';
-    return new Date(epoch * 1000).toLocaleDateString();
+    // Locale fixo: a data deve ler-se DD/MM/AAAA venha o browser de onde vier.
+    return new Date(epoch * 1000).toLocaleDateString('pt-PT');
 }
 
-const STATUS_LABEL = { unread: 'Unread', reading: 'Reading', read: 'Read' };
+const STATUS_LABEL = { unread: 'Por ler', reading: 'A ler', read: 'Lido' };
 
 function statusBadge(book) {
     const key = book.status || 'unread';
-    let label = STATUS_LABEL[key] || 'Unread';
+    let label = STATUS_LABEL[key] || 'Por ler';
     // The percentage rides along with "reading" only. On a read book it is
     // noise, and on an unread one it would contradict the badge.
     if (key === 'reading' && typeof book.percent === 'number') {
@@ -209,15 +210,15 @@ function statusBadge(book) {
     // A manual mark is flagged so it is obvious why a book says what it says
     // when the position suggests otherwise.
     const manual = book.override && book.override !== 'auto';
-    return `<span class="book-badge ${key}"${manual ? ' title="Set manually"' : ''}>` +
+    return `<span class="book-badge ${key}"${manual ? ' title="Marcado à mão"' : ''}>` +
            `${escapeHtml(label)}${manual ? ' \u270e' : ''}</span>`;
 }
 
 function bookDates(book) {
     const parts = [];
-    if (book.startedAt) parts.push('Started ' + formatDate(book.startedAt));
-    if (book.finishedAt) parts.push('Finished ' + formatDate(book.finishedAt));
-    if (book.lastReadAt && !book.finishedAt) parts.push('Last read ' + formatDate(book.lastReadAt));
+    if (book.startedAt) parts.push('Início ' + formatDate(book.startedAt));
+    if (book.finishedAt) parts.push('Concluído ' + formatDate(book.finishedAt));
+    if (book.lastReadAt && !book.finishedAt) parts.push('Última leitura ' + formatDate(book.lastReadAt));
     if (!parts.length) return '';
     return `<span class="book-dates">${escapeHtml(parts.join(' \u00b7 '))}</span>`;
 }
@@ -254,7 +255,7 @@ function renderBooks() {
     const bookList = document.getElementById('book-list');
     const note = document.getElementById('book-list-note');
     if (!currentBooks.length) {
-        bookList.innerHTML = '<p class="hint">No books uploaded yet.</p>';
+        bookList.innerHTML = '<p class="hint">Ainda não enviaste nenhum livro.</p>';
         if (note) note.classList.add('hidden');
         renderPcDiff();
         return;
@@ -263,7 +264,7 @@ function renderBooks() {
     const view = visibleBooks();
     if (note) note.classList.toggle('hidden', view.reorderable);
     if (!view.list.length) {
-        bookList.innerHTML = '<p class="hint">No books match this filter.</p>';
+        bookList.innerHTML = '<p class="hint">Nenhum livro corresponde a este filtro.</p>';
         renderPcDiff();
         return;
     }
@@ -281,8 +282,8 @@ function renderBooks() {
             const idx = epubs.indexOf(book);
             orderBtns = `
                 <span class="order-btns">
-                    <button class="btn-order" ${idx === 0 ? 'disabled' : ''} data-action="move" data-dir="-1" data-filename="${nameAttr}" title="Move up">▲</button>
-                    <button class="btn-order" ${idx === epubs.length - 1 ? 'disabled' : ''} data-action="move" data-dir="1" data-filename="${nameAttr}" title="Move down">▼</button>
+                    <button class="btn-order" ${idx === 0 ? 'disabled' : ''} data-action="move" data-dir="-1" data-filename="${nameAttr}" title="Subir">▲</button>
+                    <button class="btn-order" ${idx === epubs.length - 1 ? 'disabled' : ''} data-action="move" data-dir="1" data-filename="${nameAttr}" title="Descer">▼</button>
                 </span>`;
         }
         let statusControls = '';
@@ -290,20 +291,20 @@ function renderBooks() {
             const override = book.override || 'auto';
             statusControls = `
                 ${statusBadge(book)}
-                <select class="book-status-select" data-action="status" data-filename="${nameAttr}" title="Override the status">
-                    <option value="auto"${override === 'auto' ? ' selected' : ''}>Automatic</option>
-                    <option value="unread"${override === 'unread' ? ' selected' : ''}>Unread</option>
-                    <option value="reading"${override === 'reading' ? ' selected' : ''}>Reading</option>
-                    <option value="read"${override === 'read' ? ' selected' : ''}>Read</option>
+                <select class="book-status-select" data-action="status" data-filename="${nameAttr}" title="Forçar o estado">
+                    <option value="auto"${override === 'auto' ? ' selected' : ''}>Automático</option>
+                    <option value="unread"${override === 'unread' ? ' selected' : ''}>Por ler</option>
+                    <option value="reading"${override === 'reading' ? ' selected' : ''}>A ler</option>
+                    <option value="read"${override === 'read' ? ' selected' : ''}>Lido</option>
                 </select>`;
         }
         return `
         <div class="book-item">
             ${orderBtns}
-            <span class="book-title">${bookIsFont ? '📂 [Font] ' : '📖 '}${escapeHtml(book.name)}${bookIsFont ? '' : bookDates(book)}</span>
+            <span class="book-title">${bookIsFont ? '📂 [Letra] ' : '📖 '}${escapeHtml(book.name)}${bookIsFont ? '' : bookDates(book)}</span>
             ${statusControls}
             <span class="book-size">${Math.round(book.size / 1024)} KB</span>
-            <button class="btn-delete" data-action="delete" data-filename="${nameAttr}" data-name="${escapeAttr(book.name)}">Delete</button>
+            <button class="btn-delete" data-action="delete" data-filename="${nameAttr}" data-name="${escapeAttr(book.name)}">Apagar</button>
         </div>
     `}).join('');
     bindBookListActions();
@@ -325,13 +326,13 @@ async function setBookStatus(filename, status) {
             const body = await res.json().catch(() => ({}));
             throw new Error(body.message || res.statusText);
         }
-        if (msg) { msg.innerText = 'Status saved.'; msg.style.color = 'var(--success)'; }
+        if (msg) { msg.innerText = 'Estado guardado.'; msg.style.color = 'var(--success)'; }
         // Refetch rather than patching in place: the derived status and the
         // finish date are the server's to decide, and guessing them here is how
         // the two drift apart.
         await fetchBooks();
     } catch (e) {
-        if (msg) { msg.innerText = 'Could not save status: ' + e.message; msg.style.color = 'var(--danger)'; }
+        if (msg) { msg.innerText = 'Não foi possível guardar o estado: ' + e.message; msg.style.color = 'var(--danger)'; }
         console.error('Failed to set book status', e);
     }
 }
@@ -404,14 +405,14 @@ function uploadBook() {
     const progressBar = document.getElementById('upload-progress-bar');
 
     if (!fileInput.files.length) {
-        status.innerText = "Please select a file.";
+        status.innerText = "Escolhe um ficheiro.";
         status.style.color = "var(--danger)";
         return;
     }
 
     const file = fileInput.files[0];
     if (!isEpub(file.name) && !isFont(file.name)) {
-        status.innerText = "Only .epub and .ttf files are supported.";
+        status.innerText = "Só são aceites ficheiros .epub e .ttf.";
         status.style.color = "var(--danger)";
         return;
     }
@@ -419,7 +420,7 @@ function uploadBook() {
     // Show progress bar and reset
     progressContainer.classList.remove('hidden');
     progressBar.style.width = '0%';
-    status.innerText = "Uploading...";
+    status.innerText = "A enviar...";
     status.style.color = "var(--accent)";
 
     const formData = new FormData();
@@ -433,7 +434,7 @@ function uploadBook() {
         if (e.lengthComputable) {
             const percentComplete = (e.loaded / e.total) * 100;
             progressBar.style.width = percentComplete + '%';
-            status.innerText = `Uploading... ${Math.round(percentComplete)}%`;
+            status.innerText = `A enviar... ${Math.round(percentComplete)}%`;
         }
     });
 
@@ -441,7 +442,7 @@ function uploadBook() {
     xhr.addEventListener('load', () => {
         if (xhr.status === 200) {
             progressBar.style.width = '100%';
-            status.innerText = "Upload complete!";
+            status.innerText = "Envio concluído!";
             status.style.color = "var(--success)";
             fileInput.value = '';
 
@@ -453,7 +454,7 @@ function uploadBook() {
             fetchBooks();
         } else {
             progressContainer.classList.add('hidden');
-            status.innerText = "Upload failed: " + xhr.responseText;
+            status.innerText = "O envio falhou: " + xhr.responseText;
             status.style.color = "var(--danger)";
         }
     });
@@ -461,7 +462,7 @@ function uploadBook() {
     // Handle errors
     xhr.addEventListener('error', () => {
         progressContainer.classList.add('hidden');
-        status.innerText = "Upload error.";
+        status.innerText = "Erro no envio.";
         status.style.color = "var(--danger)";
         console.error("Upload failed");
     });
@@ -552,16 +553,16 @@ function renderPcDiff() {
 
     if (!pcListing || !pcListing.files.length) {
         age.innerText = '';
-        out.innerHTML = '<p class="hint">No folder chosen yet.</p>';
+        out.innerHTML = '<p class="hint">Ainda não escolheste nenhuma pasta.</p>';
         sendAll.disabled = true;
         return;
     }
 
     const canSend = pcFiles.size > 0;
     age.innerHTML = canSend
-        ? `Folder read just now \u2014 ${pcListing.files.length} EPUB(s).`
-        : `Listing from ${escapeHtml(new Date(pcListing.takenAt).toLocaleString())}. ` +
-          `<strong>Choose the folder again to send anything</strong> \u2014 the browser does not let this page keep access to it across reloads.`;
+        ? `Pasta lida agora mesmo \u2014 ${pcListing.files.length} EPUB.`
+        : `Listagem de ${escapeHtml(new Date(pcListing.takenAt).toLocaleString('pt-PT', { dateStyle: 'short', timeStyle: 'short' }))}. ` +
+          `<strong>Escolhe a pasta outra vez para poderes enviar</strong> \u2014 o browser não deixa esta página manter acesso à pasta depois de recarregar.`;
 
     const onReader = readerBookNames();
     const pcNames = new Set(pcListing.files.map(f => f.name));
@@ -572,36 +573,36 @@ function renderPcDiff() {
 
     let html = '';
 
-    html += `<h4 class="pc-group">Only on PC (${onlyPc.length})</h4>`;
+    html += `<h4 class="pc-group">Só no PC (${onlyPc.length})</h4>`;
     if (!onlyPc.length) {
-        html += '<p class="hint">Nothing missing from the reader.</p>';
+        html += '<p class="hint">Não falta nada no leitor.</p>';
     } else {
         html += onlyPc.map(f => `
             <div class="book-item">
                 <span class="book-title">\u2b06\ufe0f ${escapeHtml(f.name)}</span>
                 <span class="book-size">${Math.round(f.size / 1024)} KB</span>
-                <button class="btn-order" data-pc-action="send" data-name="${escapeAttr(f.name)}" ${canSend ? '' : 'disabled'}>Send</button>
+                <button class="btn-order" data-pc-action="send" data-name="${escapeAttr(f.name)}" ${canSend ? '' : 'disabled'}>Enviar</button>
             </div>`).join('');
     }
 
-    html += `<h4 class="pc-group">Only on the reader (${onlyReader.length})</h4>`;
+    html += `<h4 class="pc-group">Só no leitor (${onlyReader.length})</h4>`;
     if (!onlyReader.length) {
-        html += '<p class="hint">Nothing on the reader that is missing from the folder.</p>';
+        html += '<p class="hint">Não há nada no leitor que falte na pasta.</p>';
     } else {
         html += onlyReader.map(b => `
             <div class="book-item">
                 <span class="book-title">\u26a0\ufe0f ${escapeHtml(b.name)}</span>
                 <span class="book-size">${Math.round(b.size / 1024)} KB</span>
-                <button class="btn-delete" data-pc-action="delete" data-filename="${escapeAttr(b.filename)}" data-name="${escapeAttr(b.name)}">Delete</button>
+                <button class="btn-delete" data-pc-action="delete" data-filename="${escapeAttr(b.filename)}" data-name="${escapeAttr(b.name)}">Apagar</button>
             </div>`).join('');
     }
 
     // Matching is by name, so a book renamed on the PC shows up on both sides
     // at once. The sizes are what make that recognisable, so they are worth
     // showing even for the books that need no action.
-    html += `<h4 class="pc-group">On both (${both.length})</h4>`;
+    html += `<h4 class="pc-group">Nos dois (${both.length})</h4>`;
     if (!both.length) {
-        html += '<p class="hint">Nothing in common.</p>';
+        html += '<p class="hint">Nada em comum.</p>';
     } else {
         html += both.map(f => {
             const b = onReader.get(f.name);
@@ -609,7 +610,7 @@ function renderPcDiff() {
             return `
             <div class="book-item">
                 <span class="book-title">\u2705 ${escapeHtml(f.name)}</span>
-                <span class="book-size${sizeDiffers ? ' warn' : ''}">${Math.round(f.size / 1024)} KB${sizeDiffers ? ' \u2260 ' + Math.round(b.size / 1024) + ' KB on reader' : ''}</span>
+                <span class="book-size${sizeDiffers ? ' warn' : ''}">${Math.round(f.size / 1024)} KB${sizeDiffers ? ' \u2260 ' + Math.round(b.size / 1024) + ' KB no leitor' : ''}</span>
             </div>`;
         }).join('');
     }
@@ -659,7 +660,7 @@ function uploadOne(file) {
             if (xhr.status === 200) resolve();
             else reject(new Error(xhr.responseText || xhr.statusText));
         });
-        xhr.addEventListener('error', () => reject(new Error('network error')));
+        xhr.addEventListener('error', () => reject(new Error('erro de rede')));
         xhr.open('POST', '/api/books/upload');
         xhr.send(form);
     });
@@ -677,7 +678,7 @@ async function sendToReader(names) {
     const files = names.map(n => pcFiles.get(n)).filter(Boolean);
 
     if (!files.length) {
-        status.innerText = 'Choose the folder again first \u2014 the browser cannot reopen it on its own.';
+        status.innerText = 'Escolhe primeiro a pasta outra vez \u2014 o browser não a consegue reabrir sozinho.';
         status.style.color = 'var(--danger)';
         return;
     }
@@ -687,8 +688,8 @@ async function sendToReader(names) {
     const needed = files.reduce((sum, f) => sum + f.size, 0);
     const free = await ebookFreeBytes();
     if (free !== null && needed > free) {
-        status.innerText = `Not enough space: ${Math.round(needed / 1024)} KB to send, ` +
-                           `${Math.round(free / 1024)} KB free. Delete something first.`;
+        status.innerText = `Espaço insuficiente: ${Math.round(needed / 1024)} KB a enviar, ` +
+                           `${Math.round(free / 1024)} KB livres. Apaga alguma coisa primeiro.`;
         status.style.color = 'var(--danger)';
         return;
     }
@@ -698,7 +699,7 @@ async function sendToReader(names) {
     let sent = 0;
     const failed = [];
     for (const file of files) {
-        status.innerText = `Sending ${sent + 1} of ${files.length}: ${file.name}`;
+        status.innerText = `A enviar ${sent + 1} de ${files.length}: ${file.name}`;
         try {
             // Serially, never in parallel: LittleFS takes one writer, and the
             // upload endpoint rejects a second request while one is in flight.
@@ -710,10 +711,10 @@ async function sendToReader(names) {
     }
 
     if (failed.length) {
-        status.innerText = `Sent ${sent} of ${files.length}. Failed: ${failed.join('; ')}`;
+        status.innerText = `Enviados ${sent} de ${files.length}. Falharam: ${failed.join('; ')}`;
         status.style.color = 'var(--danger)';
     } else {
-        status.innerText = `Sent ${sent} book(s).`;
+        status.innerText = `${sent} livro(s) enviado(s).`;
         status.style.color = 'var(--success)';
     }
     await fetchBooks();
@@ -722,7 +723,7 @@ async function sendToReader(names) {
 async function deleteBook(filename, displayName) {
     // Use display name for confirmation, filename for API call
     const nameToShow = displayName || filename;
-    if (!confirm(`Delete "${nameToShow}"?`)) return;
+    if (!confirm(`Apagar "${nameToShow}"?`)) return;
 
     try {
         const res = await fetch('/api/books/delete?name=' + encodeURIComponent(filename), {
@@ -732,10 +733,10 @@ async function deleteBook(filename, displayName) {
         if (res.ok) {
             fetchBooks();
         } else {
-            alert("Failed to delete book.");
+            alert("Não foi possível apagar o livro.");
         }
     } catch (e) {
-        alert("Error deleting book.");
+        alert("Erro ao apagar o livro.");
         console.error("Delete failed", e);
     }
 }
@@ -782,17 +783,17 @@ function saveReaderSettings() {
         .then(response => response.json())
         .then(data => {
             if (data.status === 'ok') {
-                statusDiv.textContent = "Settings saved!";
+                statusDiv.textContent = "Definições guardadas!";
                 statusDiv.style.color = "green";
                 setTimeout(() => statusDiv.textContent = "", 3000);
             } else {
-                statusDiv.textContent = "Error saving settings.";
+                statusDiv.textContent = "Erro ao guardar as definições.";
                 statusDiv.style.color = "red";
             }
         })
         .catch(error => {
             console.error('Error saving settings:', error);
-            statusDiv.textContent = "Connection error.";
+            statusDiv.textContent = "Erro de ligação.";
             statusDiv.style.color = "red";
         });
 }
@@ -812,18 +813,21 @@ function getReaderProgress() {
 
             if (!status) return;
             if (data.exists) {
-                const name = data.displayName || data.lastBook || 'Saved book';
+                const name = data.displayName || data.lastBook || 'Livro guardado';
                 const page = data.page || 1;
-                status.textContent = `${name} - page ${page}${data.resumeOnBoot ? ' (will resume on boot)' : ''}`;
+                status.textContent = `${name} \u2014 página ${page}${data.resumeOnBoot ? ' (retoma no arranque)' : ''}`;
             } else {
-                status.textContent = 'No saved reading position.';
+                status.textContent = 'Nenhuma posição de leitura guardada.';
             }
         })
         .catch(error => console.error('Error loading reader progress:', error));
 }
 
 function updateBookScopedLabels() {
-    const label = currentLastBook || 'the current book';
+    // Aposição ("Livro: X"), nao encaixada numa frase: o valor tanto pode ser
+    // um nome de ficheiro como este texto generico, e nenhuma preposicao fixa
+    // servia os dois cartoes que partilham o rotulo.
+    const label = currentLastBook || 'o livro actual';
     ['bookmarks-book-name', 'goto-percent-book-name'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.textContent = label;
@@ -831,25 +835,25 @@ function updateBookScopedLabels() {
 }
 
 function resetReaderProgress() {
-    if (!confirm('Reset saved reading progress? This will not delete any books.')) return;
+    if (!confirm('Apagar o progresso de leitura guardado? Não apaga nenhum livro.')) return;
 
     const statusDiv = document.getElementById('reader-progress-reset-status');
     fetch('/api/reader/progress', { method: 'DELETE' })
         .then(response => response.json())
         .then(data => {
             if (data.status === 'ok') {
-                statusDiv.textContent = 'Reading progress reset.';
+                statusDiv.textContent = 'Progresso de leitura apagado.';
                 statusDiv.style.color = 'green';
                 getReaderProgress();
                 setTimeout(() => statusDiv.textContent = '', 3000);
             } else {
-                statusDiv.textContent = 'Error resetting progress.';
+                statusDiv.textContent = 'Erro ao apagar o progresso.';
                 statusDiv.style.color = 'red';
             }
         })
         .catch(error => {
             console.error('Error resetting reader progress:', error);
-            statusDiv.textContent = 'Connection error.';
+            statusDiv.textContent = 'Erro de ligação.';
             statusDiv.style.color = 'red';
         });
 }
@@ -878,7 +882,7 @@ function loadBookmarks() {
         .then(data => renderBookmarks(data.bookmarks || []))
         .catch(error => {
             console.error('Error loading bookmarks:', error);
-            list.innerHTML = '<p class="error">Error loading bookmarks.</p>';
+            list.innerHTML = '<p class="error">Erro ao carregar os marcadores.</p>';
         });
 }
 
@@ -887,17 +891,17 @@ function renderBookmarks(bookmarks) {
     if (!list) return;
 
     if (!bookmarks.length) {
-        list.innerHTML = '<p class="hint">No bookmarks yet.</p>';
+        list.innerHTML = '<p class="hint">Ainda não há marcadores.</p>';
         return;
     }
     list.innerHTML = bookmarks.map(b => {
-        const label = b.label && b.label.length ? b.label : `Page ${b.page}`;
+        const label = b.label && b.label.length ? b.label : `Página ${b.page}`;
         return `
         <div class="book-item">
             <span class="book-title">${escapeHtml(label)}</span>
-            <span class="book-size">page ${b.page}</span>
-            <button class="btn-order" data-action="jump" data-seq="${b.seq}" title="Apply next time this book opens on the device">Jump</button>
-            <button class="btn-delete" data-action="remove" data-seq="${b.seq}">Delete</button>
+            <span class="book-size">página ${b.page}</span>
+            <button class="btn-order" data-action="jump" data-seq="${b.seq}" title="Aplica-se da próxima vez que este livro abrir no dispositivo">Saltar</button>
+            <button class="btn-delete" data-action="remove" data-seq="${b.seq}">Apagar</button>
         </div>`;
     }).join('');
     bindBookmarkListActions();
@@ -921,7 +925,7 @@ function bindBookmarkListActions() {
 function addBookmark() {
     const status = document.getElementById('bookmarks-status');
     if (!currentLastBook) {
-        status.textContent = 'Open a book on the device first.';
+        status.textContent = 'Abre primeiro um livro no dispositivo.';
         status.style.color = 'red';
         return;
     }
@@ -935,16 +939,16 @@ function addBookmark() {
     })
         .then(response => response.json().then(data => ({ ok: response.ok, data })))
         .then(({ ok, data }) => {
-            if (!ok) throw new Error(data.error || 'Request failed');
+            if (!ok) throw new Error(data.error || 'O pedido falhou');
             if (labelInput) labelInput.value = '';
-            status.textContent = 'Bookmark added.';
+            status.textContent = 'Marcador adicionado.';
             status.style.color = 'green';
             setTimeout(() => status.textContent = '', 3000);
             loadBookmarks();
         })
         .catch(error => {
             console.error('Error adding bookmark:', error);
-            status.textContent = 'Could not add bookmark: ' + error.message;
+            status.textContent = 'Não foi possível adicionar o marcador: ' + error.message;
             status.style.color = 'red';
         });
 }
@@ -962,7 +966,7 @@ function removeBookmark(seq) {
         })
         .catch(error => {
             console.error('Error removing bookmark:', error);
-            status.textContent = 'Could not remove bookmark.';
+            status.textContent = 'Não foi possível apagar o marcador.';
             status.style.color = 'red';
         });
 }
@@ -976,13 +980,13 @@ function jumpBookmark(seq) {
     })
         .then(response => {
             if (!response.ok) throw new Error('Request failed');
-            status.textContent = 'Will resume there next time this book opens on the device.';
+            status.textContent = 'Retoma nesse ponto da próxima vez que este livro abrir no dispositivo.';
             status.style.color = 'green';
             setTimeout(() => status.textContent = '', 5000);
         })
         .catch(error => {
             console.error('Error jumping to bookmark:', error);
-            status.textContent = 'Could not jump to bookmark.';
+            status.textContent = 'Não foi possível saltar para o marcador.';
             status.style.color = 'red';
         });
 }
@@ -990,7 +994,7 @@ function jumpBookmark(seq) {
 function goToPercent() {
     const status = document.getElementById('goto-percent-status');
     if (!currentLastBook) {
-        status.textContent = 'Open a book on the device first.';
+        status.textContent = 'Abre primeiro um livro no dispositivo.';
         status.style.color = 'red';
         return;
     }
@@ -1005,13 +1009,13 @@ function goToPercent() {
     })
         .then(response => {
             if (!response.ok) throw new Error('Request failed');
-            status.textContent = `Will jump to ~${percent}% next time this book opens on the device.`;
+            status.textContent = `Salta para ~${percent}% da próxima vez que este livro abrir no dispositivo.`;
             status.style.color = 'green';
             setTimeout(() => status.textContent = '', 5000);
         })
         .catch(error => {
             console.error('Error setting go-to-percent:', error);
-            status.textContent = 'Could not set the jump.';
+            status.textContent = 'Não foi possível marcar o salto.';
             status.style.color = 'red';
         });
 }
@@ -1021,7 +1025,7 @@ function goToPercent() {
 function exportLibraryState() {
     const status = document.getElementById('library-state-status');
     status.style.color = '';
-    status.textContent = 'Preparing export...';
+    status.textContent = 'A preparar a exportação...';
 
     fetch('/api/library/export')
         .then(response => {
@@ -1040,13 +1044,13 @@ function exportLibraryState() {
             a.click();
             a.remove();
             URL.revokeObjectURL(url);
-            status.textContent = 'State exported.';
+            status.textContent = 'Estado exportado.';
             status.style.color = 'green';
             setTimeout(() => status.textContent = '', 4000);
         })
         .catch(error => {
             console.error('Export failed', error);
-            status.textContent = 'Export failed.';
+            status.textContent = 'A exportação falhou.';
             status.style.color = 'red';
         });
 }
@@ -1062,13 +1066,13 @@ function importLibraryState(input) {
     // The device caps the bundle at 64 KB; fail here rather than after the
     // upload. The server remains the authority.
     if (file.size > 64 * 1024) {
-        status.textContent = 'File too large (limit 64 KB).';
+        status.textContent = 'Ficheiro demasiado grande (limite de 64 KB).';
         status.style.color = 'red';
         return;
     }
-    if (!confirm('Import reading state? For each book the furthest-ahead page wins.')) return;
+    if (!confirm('Importar o estado de leitura? Para cada livro ganha a página mais avançada.')) return;
 
-    status.textContent = 'Importing...';
+    status.textContent = 'A importar...';
 
     const form = new FormData();
     form.append('state', file, file.name);
@@ -1077,13 +1081,13 @@ function importLibraryState(input) {
         .then(response => response.json().then(body => ({ ok: response.ok, body })))
         .then(({ ok, body }) => {
             if (!ok || body.status !== 'ok') {
-                status.textContent = 'Import failed: ' + (body.message || 'unknown error');
+                status.textContent = 'A importação falhou: ' + (body.message || 'erro desconhecido');
                 status.style.color = 'red';
                 return;
             }
-            let msg = `${body.merged} updated, ${body.added} added, ${body.skipped} already ahead`;
+            let msg = `${body.merged} actualizados, ${body.added} adicionados, ${body.skipped} já mais à frente`;
             if (body.pending > 0) {
-                msg += `. ${body.pending} waiting for the .epub to be uploaded`;
+                msg += `. ${body.pending} à espera que o .epub seja enviado`;
             }
             status.textContent = msg + '.';
             status.style.color = 'green';
@@ -1092,7 +1096,7 @@ function importLibraryState(input) {
         })
         .catch(error => {
             console.error('Import failed', error);
-            status.textContent = 'Connection error.';
+            status.textContent = 'Erro de ligação.';
             status.style.color = 'red';
         });
 }
@@ -1127,17 +1131,17 @@ function saveSleepSettings() {
         .then(response => response.json())
         .then(data => {
             if (data.status === 'ok') {
-                statusDiv.textContent = "Settings saved!";
+                statusDiv.textContent = "Definições guardadas!";
                 statusDiv.style.color = "green";
                 setTimeout(() => statusDiv.textContent = "", 3000);
             } else {
-                statusDiv.textContent = "Error saving settings.";
+                statusDiv.textContent = "Erro ao guardar as definições.";
                 statusDiv.style.color = "red";
             }
         })
         .catch(error => {
             console.error('Error saving sleep settings:', error);
-            statusDiv.textContent = "Connection error.";
+            statusDiv.textContent = "Erro de ligação.";
             statusDiv.style.color = "red";
         });
 }
@@ -1166,17 +1170,17 @@ function saveDisplaySettings() {
         .then(response => response.json())
         .then(data => {
             if (data.status === 'ok') {
-                statusDiv.textContent = "Orientation applied.";
+                statusDiv.textContent = "Orientação aplicada.";
                 statusDiv.style.color = "green";
                 setTimeout(() => statusDiv.textContent = "", 3000);
             } else {
-                statusDiv.textContent = "Error applying orientation.";
+                statusDiv.textContent = "Erro ao aplicar a orientação.";
                 statusDiv.style.color = "red";
             }
         })
         .catch(error => {
             console.error('Error saving display settings:', error);
-            statusDiv.textContent = "Connection error.";
+            statusDiv.textContent = "Erro de ligação.";
             statusDiv.style.color = "red";
         });
 }
@@ -1189,11 +1193,11 @@ function getWifiStatus() {
             const el = document.getElementById('wifi-status');
             if (!el) return;
             if (data.sta_connected) {
-                el.textContent = `Connected to "${data.sta_ssid}" (${data.sta_ip}), signal ${data.rssi} dBm.`;
+                el.textContent = `Ligado a "${data.sta_ssid}" (${data.sta_ip}), sinal de ${data.rssi} dBm.`;
             } else if (data.ap_active) {
-                el.textContent = `Hotspot mode — network "${data.ap_ssid}" at ${data.ap_ip}. Join a Wi-Fi network below to get online.`;
+                el.textContent = `Modo hotspot — rede "${data.ap_ssid}" em ${data.ap_ip}. Liga-te a uma rede Wi-Fi abaixo para ficar online.`;
             } else {
-                el.textContent = 'Not connected.';
+                el.textContent = 'Sem ligação.';
             }
         })
         .catch(error => console.error('Error loading Wi-Fi status:', error));
@@ -1203,7 +1207,7 @@ function scanWifi() {
     const sel = document.getElementById('wifi-ssid');
     const status = document.getElementById('wifi-connect-status');
     status.style.color = 'var(--accent)';
-    status.textContent = 'Scanning…';
+    status.textContent = 'A procurar…';
 
     let tries = 0;
     const poll = () => {
@@ -1212,13 +1216,13 @@ function scanWifi() {
             .then(data => {
                 if (!data) {
                     if (tries++ < 10) { setTimeout(poll, 1000); return; }
-                    status.textContent = 'Scan timed out. Try again.';
+                    status.textContent = 'A procura esgotou o tempo. Tenta outra vez.';
                     status.style.color = 'var(--danger)';
                     return;
                 }
                 const nets = (data.networks || []).filter(n => n.ssid);
                 if (nets.length === 0) {
-                    status.textContent = 'No networks found.';
+                    status.textContent = 'Nenhuma rede encontrada.';
                     status.style.color = 'var(--text-secondary)';
                     return;
                 }
@@ -1230,12 +1234,12 @@ function scanWifi() {
                 sel.innerHTML = nets.map(n =>
                     `<option value="${escapeAttr(n.ssid)}">${escapeHtml(n.ssid)} (${n.rssi} dBm)${n.secure ? ' 🔒' : ''}</option>`
                 ).join('');
-                status.textContent = `Found ${nets.length} network(s).`;
+                status.textContent = `${nets.length} rede(s) encontrada(s).`;
                 status.style.color = 'var(--success)';
             })
             .catch(error => {
                 console.error('Wi-Fi scan failed:', error);
-                status.textContent = 'Scan error.';
+                status.textContent = 'Erro na procura.';
                 status.style.color = 'var(--danger)';
             });
     };
@@ -1248,12 +1252,12 @@ function connectWifi() {
     const status = document.getElementById('wifi-connect-status');
 
     if (!ssid) {
-        status.textContent = 'Select a network first (tap Scan).';
+        status.textContent = 'Escolhe primeiro uma rede (toca em Procurar).';
         status.style.color = 'var(--danger)';
         return;
     }
 
-    status.textContent = `Connecting to "${ssid}"…`;
+    status.textContent = `A ligar a "${ssid}"…`;
     status.style.color = 'var(--accent)';
 
     fetch('/api/wifi/connect', {
@@ -1268,13 +1272,13 @@ function connectWifi() {
                 .then(response => response.json())
                 .then(data => {
                     if (data.sta_connected) {
-                        status.textContent = `Connected! Book32 is online at ${data.sta_ip}. You can rejoin your home Wi-Fi on your phone.`;
+                        status.textContent = `Ligado! O Book32 está online em ${data.sta_ip}. Já podes voltar à tua rede Wi-Fi no telemóvel.`;
                         status.style.color = 'var(--success)';
                         getWifiStatus();
                     } else if (tries++ < 15) {
                         setTimeout(poll, 1000);
                     } else {
-                        status.textContent = 'Could not connect — check the password and try again.';
+                        status.textContent = 'Não foi possível ligar — verifica a palavra-passe e tenta outra vez.';
                         status.style.color = 'var(--danger)';
                     }
                 })
@@ -1283,7 +1287,7 @@ function connectWifi() {
         })
         .catch(error => {
             console.error('Wi-Fi connect failed:', error);
-            status.textContent = 'Connection request failed.';
+            status.textContent = 'O pedido de ligação falhou.';
             status.style.color = 'var(--danger)';
         });
 }
