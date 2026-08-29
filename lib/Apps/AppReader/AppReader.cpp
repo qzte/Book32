@@ -10,6 +10,8 @@
 #include "ProgressStore.h"
 #include "PageCountStore.h"
 #include "BookmarkStore.h"
+#include "BookTitleStore.h"
+#include "BookTitleLogic.h"
 #include "GoToPercentStore.h"
 #include "WebMgr.h"
 #include <WiFi.h>
@@ -216,6 +218,13 @@ void AppReader::scanBooks() {
     std::map<String, String> metadata;
     loadBookMetadata(metadata);
 
+    // v1.17.0: títulos já lidos de dentro dos EPUB. Os que faltarem ficam com
+    // o nome do ficheiro e são resolvidos depois, um por passagem do update()
+    // (ver resolveNextBookTitle) — abrir aqui o ZIP de cada livro punha o
+    // caminho de entrar na biblioteca a depender do tamanho da biblioteca.
+    std::map<String, String> epubTitles;
+    BookTitleStore::getInstance().loadAll(epubTitles);
+
     File root = EbookFS.open("/");
     if(!root || !root.isDirectory()) return;
     File file = root.openNextFile();
@@ -232,7 +241,10 @@ void AppReader::scanBooks() {
             // the WebUI reads titles from books_meta.json, so UTF-8 is
             // preserved where it matters and collapsed where the display needs it.
             entry.originalName = (meta != metadata.end()) ? meta->second : fileName;
-            entry.title = FontMgr::utf8ToLatin1(titleFromFilename(entry.originalName));
+            auto cachedTitle = epubTitles.find(entry.originalName);
+            entry.titleResolved = (cachedTitle != epubTitles.end());
+            entry.title = FontMgr::utf8ToLatin1(entry.titleResolved ? cachedTitle->second
+                                                                    : titleFromFilename(entry.originalName));
             _books.push_back(entry);
         }
         file.close();
@@ -252,6 +264,8 @@ void AppReader::scanBooks() {
         // v1.14.0: same pruning rule for bookmarks — a bookmark for a book
         // that's no longer on flash is dead weight, same as a progress entry.
         BookmarkStore::getInstance().reconcile(present);
+        // v1.17.0: e o mesmo para os títulos lidos dos EPUB.
+        BookTitleStore::getInstance().reconcile(present);
 
         for (auto& b : _books) {
             BookProgress p;
@@ -288,6 +302,69 @@ void AppReader::scanBooks() {
                 }
             }
         }
+    }
+}
+
+// v1.17.0: o nome do ficheiro em disco vem cortado aos 28 caracteres (é o
+// tecto que o upload impõe, ver WebMgr), por isso derivar dele o título dava
+// sempre uma linha só e cortada a meio da palavra. O título a sério está no
+// <dc:title> do OPF, dentro do EPUB.
+//
+// Abrir o ZIP custa demasiado para o fazer no scanBooks() (que corre antes do
+// primeiro desenho da biblioteca) e muito mais para o fazer dentro do ciclo de
+// desenho, que repete a página. Fica aqui: um livro por passagem do update(),
+// só na biblioteca, e o resultado vai para o BookTitleStore — a partir daí a
+// lista já abre com os títulos certos.
+void AppReader::resolveNextBookTitle() {
+    // O descritor do ZIP é global (ver zipFd em EpubLoader.cpp): abrir outro
+    // livro com um aberto puxava-lhe o ficheiro debaixo dos pés. Na biblioteca
+    // não há nenhum aberto, mas a guarda é barata e a invariante não é óbvia.
+    if (_epubLoader) return;
+
+    int index = -1;
+    for (size_t i = 0; i < _books.size(); i++) {
+        if (!_books[i].titleResolved) {
+            index = (int)i;
+            break;
+        }
+    }
+
+    if (index < 0) {
+        // Lote terminado: um único repintar para todos os títulos que mudaram.
+        if (_titlesDirty) {
+            _titlesDirty = false;
+            _librarySelectionOnlyRedraw = false;
+            _needsRedraw = true;
+        }
+        return;
+    }
+
+    BookEntry& book = _books[index];
+    // Marcar antes de tentar: um EPUB sem <dc:title>, ou que não abre, não
+    // pode ficar a ser reaberto a cada passagem do update().
+    book.titleResolved = true;
+
+    String fullPath = "/ebooks" + book.path;
+    String rawTitle;
+    EpubLoader loader;
+    if (loader.open(fullPath.c_str())) {
+        rawTitle = loader.getTitle();
+        loader.close();
+    }
+
+    // O <dc:title> é texto de um ficheiro do utilizador: pode trazer marcação,
+    // entidades XML e as mudanças de linha da indentação do OPF.
+    String title = book32::sanitizeBookTitleT<String>(rawTitle);
+    if (title.length() == 0) return; // fica-se pelo nome do ficheiro
+
+    BookTitleStore::getInstance().set(book.originalName, title);
+
+    // Latin-1 à entrada do desenho, como no scanBooks(): a lista mede e
+    // desenha estes bytes directamente.
+    String shown = FontMgr::utf8ToLatin1(title);
+    if (shown != book.title) {
+        book.title = shown;
+        _titlesDirty = true;
     }
 }
 
@@ -959,34 +1036,31 @@ void AppReader::drawLibrary() {
 
                 uint16_t textColor = GxEPD_BLACK;
 
-                // Draw book title with word wrapping
-                String title = book.title;
+                // Título em duas linhas, seleccionado ou não. Duas por três
+                // razões: a terceira linha do item seleccionado (base em y+90)
+                // aterrava por cima do "pag. x/y" (base em y+88); duas linhas
+                // dão altura igual a todos os itens, o que mantém as caixas da
+                // lista alinhadas; e chegam para os títulos reais dos EPUB.
                 const GFXfont* titleFont = isSelected ? &FreeSansBold12pt8b : &FreeSans12pt8b;
-                int textX = ITEM_PADDING + COVER_WIDTH + 44;
-                int textY = y + (isSelected ? 36 : 34);
-                int lineCount = 0;
-                const int MAX_LINES = isSelected ? 3 : 2;
-                const int LINE_HEIGHT = isSelected ? 27 : 25;
+                const int textX = ITEM_PADDING + COVER_WIDTH + 44;
+                const int TITLE_MAX_LINES = 2;
+                const int LINE_HEIGHT = 26;
                 const int MAX_WIDTH = display.width() - textX - 28;
 
-                int pos = 0;
-                while (pos < (int)title.length() && lineCount < MAX_LINES) {
-                    String line = "";
-                    while (pos < (int)title.length()) {
-                        int nextSpace = title.indexOf(' ', pos);
-                        if (nextSpace == -1) nextSpace = title.length();
-                        String word = title.substring(pos, nextSpace);
-                        String testLine = line.length() > 0 ? line + " " + word : word;
-                        if (textWidthForFont(display, testLine.c_str(), titleFont) > MAX_WIDTH && line.length() > 0) break;
-                        line = testLine;
-                        pos = nextSpace + 1;
-                    }
-                    if (lineCount == MAX_LINES - 1 && pos < (int)title.length() && line.length() > 3) {
-                        line = line.substring(0, line.length() - 3) + "...";
-                    }
+                // A quebra vive no BookTitleLogic.h (testada em host): mede com
+                // a fonte do item, parte palavras que não caibam sozinhas e só
+                // põe reticências quando sobra mesmo texto — e encolhe a linha
+                // até as reticências caberem, em vez de tirar três caracteres à
+                // sorte e voltar a transbordar.
+                std::vector<String> titleLines = book32::wrapBookTitleT<String>(
+                    book.title, TITLE_MAX_LINES, MAX_WIDTH, [&display, titleFont](const String& text) {
+                        return textWidthForFont(display, text.c_str(), titleFont);
+                    });
+
+                int textY = y + 34;
+                for (const String& line : titleLines) {
                     drawTextWithFont(display, line.c_str(), textX, textY, titleFont, textColor);
                     textY += LINE_HEIGHT;
-                    lineCount++;
                 }
 
                 // v1.8.0: saved position. No percentage: paginating the whole
@@ -1087,6 +1161,10 @@ void AppReader::update() {
     // Independent of the counting above — different state, no shared
     // renderer — so both can run in the same session without conflict.
     if (_percentSeekActive) updatePercentSeek();
+
+    // Fora da leitura, aproveitar uma passagem para ler o título de dentro de
+    // um EPUB que ainda não o tenha em cache (um por passagem).
+    if (_state == VIEW_LIBRARY && _booksScanned) resolveNextBookTitle();
 
     // Commit a deferred reading position once the page has been still for a
     // while. Page turns only mark it dirty (see saveReadingProgress), so a

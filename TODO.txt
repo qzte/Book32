@@ -80,3 +80,26 @@ a regra do startedAt mais antigo a ganhar.
 Concorrencia: o PageCountStore passou a ter mutex porque o GET /api/books o le
 a partir da tarefa do servidor. Confirmar que abrir a web UI enquanto uma
 contagem de paginas esta a decorrer nao trava nem corrompe o total.
+
+=== v1.17.0 — a verificar no dispositivo (nao coberto pelos testes de host) ===
+(ver docs/plans/2026-08-29-titulo-do-livro-na-biblioteca-design.md; pio run nao
+correu neste ambiente, so os testes de host da logica pura)
+Primeira visita a biblioteca depois de actualizar: os titulos comecam pelos
+nomes de ficheiro cortados e passam aos titulos do EPUB ao fim de algumas
+passagens, com UM so refresh no fim do lote e nao um por livro.
+Confirmar que os botoes continuam a responder enquanto os titulos sao lidos —
+cada passagem abre um ZIP, e e a unica coisa nova no caminho do update().
+Segunda visita (e reinicio): a lista abre ja com os titulos certos, sem
+reabrir os EPUB (/book_titles.json no SystemFS ja os tem).
+Titulo longo: confirmar as duas linhas, e que a segunda linha nao toca no
+"pag. x/y" nem com o item seleccionado (era o caso das tres linhas antigas).
+Titulo muito longo: confirmar as reticencias no fim da segunda linha, dentro
+da caixa, sem transbordar para a margem.
+EPUB sem <dc:title> ou com o OPF ilegivel: fica o nome do ficheiro e o livro
+NAO volta a ser reaberto a cada passagem (ver no monitor serie que nao ha
+actividade repetida de ZIP na biblioteca parada).
+Apagar um livro pela web UI: a entrada correspondente sai do
+/book_titles.json no scan seguinte (mesmo ponto onde as posicoes e os
+marcadores sao podados).
+Acentos: um titulo com caracteres portugueses (Ó, ç, ã) desenhado a partir do
+<dc:title> em UTF-8 tem de aparecer certo depois da conversao para Latin-1.
