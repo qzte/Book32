@@ -4,8 +4,10 @@
 [![Release](https://img.shields.io/github/v/release/qzte/Book32)](https://github.com/qzte/Book32/releases/latest)
 
 Book32 is a custom E-Ink application OS for the Seeed Studio XIAO ESP32-S3
-TRMNL 7.5 inch OG DIY kit. It includes an EPUB reader and a local web
-interface for books, settings, and OTA updates.
+TRMNL 7.5 inch OG DIY kit. It includes an EPUB reader — reading progress,
+bookmarks, reading status and Portuguese hyphenation — and a local web
+interface (in European Portuguese) for books, settings, and signed OTA
+updates.
 
 ## Hardware
 
@@ -151,13 +153,19 @@ No GitHub personal access token is required. Every release published by
 - `firmware.bin`
 - `littlefs.bin`
 - a SHA-256 checksum for each asset in the release notes
+- an Ed25519 signature over each of those checksums (since v1.11.0)
 
 The device downloads those public release assets directly when you run an update
-from the web interface or the device menu, and refuses to install an asset
-whose checksum is missing or does not match — see [Releases](https://github.com/qzte/Book32/releases)
-for the published versions. A brand-new board flashed by USB with an older
-firmware picks up subsequent releases over the air automatically; there is no
-separate bootstrap step.
+from the web interface or the device menu. Both checks are fail-closed: an asset
+whose checksum is missing or does not match is refused, and so is one whose
+Ed25519 signature is missing, malformed, or does not verify against the public
+key built into the firmware (`lib/Book32_Core/OtaEd25519PublicKey.h`). The
+digest is compared and the signature verified before the update is committed,
+so a rejected image never becomes the boot partition. See
+[Releases](https://github.com/qzte/Book32/releases) for the published versions.
+
+A brand-new board flashed by USB with an older firmware picks up subsequent
+releases over the air automatically; there is no separate bootstrap step.
 
 ## Useful PlatformIO Commands
 
@@ -193,16 +201,61 @@ python -m platformio device monitor
 
 ## Features
 
-- Polished boot screen with E-Ink progress feedback
+Reader:
+
 - EPUB reader with per-book reading progress and boot resume
+- Book titles read from the EPUB metadata, shown over two lines in the library
+- European Portuguese hyphenation, so long words break with a hyphen instead of
+  mid-digraph (the hyphen is visual only and never shifts the saved position)
+- Six bundled fonts, adjustable text size and screen rotation
+- Named bookmarks and "go to %", both set from the web interface and applied the
+  next time the book is opened on the device
 - Per-book reading status (unread / reading % / read) with manual override
-- Reading dates: started, finished and last read
+- Reading dates: started, finished and last read, from SNTP once WiFi is up
+- Library menu optimized for E-Ink, with a full-refresh key and standby
+
+Web interface (in European Portuguese):
+
+- Dashboard with battery, uptime and free ebook storage
+- Upload and delete books, and reorder the device library
+- Filter by reading status and sort by device order, title or progress
 - PC library folder diffed against the device, with batch sending
 - Library state export/import (progress, status, dates, names and manual order)
-- Library menu optimized for E-Ink
-- Local web interface for uploading and deleting books
+- Reader settings, sleep timeout, screen rotation and WiFi/hotspot setup
+- Signed OTA updates for both firmware and the web UI
+
+Device:
+
+- Polished boot screen with E-Ink progress feedback
+- On-device settings menu mirroring the main web settings
 - Battery indicator and charging status
-- Public GitHub OTA firmware and web UI updates
+
+## Development
+
+Host tests cover the pure logic (page fitting, hyphenation, progress merging,
+semver, OTA digests, and so on) and need nothing but a compiler:
+
+```bash
+for t in tools/tests/test_*.cpp; do
+  g++ -std=c++17 -Wall -Werror -I lib/Book32_Core "$t" -o "/tmp/$(basename "$t" .cpp)"
+  "/tmp/$(basename "$t" .cpp)"
+done
+```
+
+CI (`.github/workflows/ci.yml`) runs those tests, builds the firmware and the
+filesystem image, syntax-checks `data/script.js`, and runs `clang-format` over
+the lines a pull request changed. Library versions and the Espressif platform
+are pinned to exact versions in `platformio.ini` so a tagged release stays
+reproducible.
+
+Other tools:
+
+- `tools/format.sh` — run clang-format locally
+- `tools/slim_epub.py` — shrink an EPUB before sending it to the device
+- `tools/converter` — font and asset conversion helper
+
+Design notes for each feature live in `docs/plans/`, and `TODO.txt` tracks the
+on-device checks that the host tests cannot cover.
 
 ## Partition Notes
 
