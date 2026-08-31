@@ -1,6 +1,7 @@
 #include "CoverImage.h"
 #include <JPEGDEC.h>
 #include <cstring>
+#include <new>
 
 // Estado partilhado com o callback de desenho da JPEGDEC (JPEG_DRAW_CALLBACK
 // é um ponteiro de função simples, sem contexto capturável — mesma limitação
@@ -75,13 +76,28 @@ bool decodeJpegCoverToBitmap(const uint8_t* jpegData, size_t jpegSize, int outWi
                              uint8_t* outBuffer) {
     if (!jpegData || jpegSize == 0 || !outBuffer || outWidth <= 0 || outHeight <= 0) return false;
 
-    JPEGDEC jpg;
-    if (!jpg.openRAM(const_cast<uint8_t*>(jpegData), (int)jpegSize, coverJpegDrawCallback)) return false;
+    // JPEGDEC embute várias KB de tabelas Huffman/quantização directamente na
+    // struct (não são ponteiros para heap) — como objecto local isto empurra
+    // a stack do loopTask (8 KB por omissão no Arduino-ESP32, nunca ajustada
+    // neste projecto) para além do limite ao descodificar uma capa real, e
+    // produz "Guru Meditation Error ... Stack canary watchpoint triggered
+    // (loopTask)" bem depois deste ponto, no dispositivo — nunca reproduzido
+    // nos testes desta sessão porque usavam bytes aleatórios/JPEGs triviais
+    // que nunca chegavam a uma descodificação de verdade. Alocar no heap tira
+    // esta struct da stack; o resto do trabalho (canvas/ditherBuf abaixo) já
+    // era heap/PSRAM.
+    JPEGDEC* jpg = new (std::nothrow) JPEGDEC();
+    if (!jpg) return false;
+    if (!jpg->openRAM(const_cast<uint8_t*>(jpegData), (int)jpegSize, coverJpegDrawCallback)) {
+        delete jpg;
+        return false;
+    }
 
-    int nativeW = jpg.getWidth();
-    int nativeH = jpg.getHeight();
+    int nativeW = jpg->getWidth();
+    int nativeH = jpg->getHeight();
     if (nativeW <= 0 || nativeH <= 0) {
-        jpg.close();
+        jpg->close();
+        delete jpg;
         return false;
     }
 
@@ -108,7 +124,8 @@ bool decodeJpegCoverToBitmap(const uint8_t* jpegData, size_t jpegSize, int outWi
     int canvasW = nativeW / scaleFactor;
     int canvasH = nativeH / scaleFactor;
     if (canvasW <= 0 || canvasH <= 0) {
-        jpg.close();
+        jpg->close();
+        delete jpg;
         return false;
     }
 
@@ -125,7 +142,8 @@ bool decodeJpegCoverToBitmap(const uint8_t* jpegData, size_t jpegSize, int outWi
     uint8_t* canvas = (uint8_t*)ps_malloc(canvasSize);
     if (!canvas) canvas = (uint8_t*)malloc(canvasSize);
     if (!canvas) {
-        jpg.close();
+        jpg->close();
+        delete jpg;
         return false;
     }
     memset(canvas, 0xFF, canvasSize); // 0xFF = tudo branco (convenção ONE_BIT_DITHERED), cobre a folga
@@ -135,7 +153,8 @@ bool decodeJpegCoverToBitmap(const uint8_t* jpegData, size_t jpegSize, int outWi
     if (!ditherBuf) ditherBuf = (uint8_t*)malloc(ditherSize);
     if (!ditherBuf) {
         free(canvas);
-        jpg.close();
+        jpg->close();
+        delete jpg;
         return false;
     }
 
@@ -144,9 +163,10 @@ bool decodeJpegCoverToBitmap(const uint8_t* jpegData, size_t jpegSize, int outWi
     g_canvasWAlloc = canvasWAlloc;
     g_canvasHAlloc = canvasHAlloc;
 
-    jpg.setPixelType(ONE_BIT_DITHERED);
-    int decodeOk = jpg.decodeDither(0, 0, ditherBuf, scaleOption);
-    jpg.close();
+    jpg->setPixelType(ONE_BIT_DITHERED);
+    int decodeOk = jpg->decodeDither(0, 0, ditherBuf, scaleOption);
+    jpg->close();
+    delete jpg;
     free(ditherBuf);
     g_canvas = nullptr; // nunca deixar um ponteiro pendurado para a próxima chamada
 
