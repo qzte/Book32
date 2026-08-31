@@ -28,7 +28,10 @@ if not defined PYTHON (
 rem Escolhe aqui o que manter (por omissao remove tudo: imagens, fontes,
 rem CSS, JS e media -- nenhuma delas usada pelo leitor). --keep-cover fica
 rem ligado por omissao porque o Book32 ja mostra a capa real na biblioteca;
-rem o custo em tamanho e so o da propria capa. Outras opcoes uteis:
+rem o custo em tamanho e so o da propria capa. Se a capa nao for JPEG, o
+rem script tenta converte-la com Pillow ("pip install pillow"); sem Pillow
+rem instalado a capa e so removida, como sempre foi -- nunca fica um formato
+rem que o firmware nao saiba abrir. Outras opcoes uteis:
 rem   set SLIM_ARGS=--keep-cover --keep-images
 rem   set SLIM_ARGS=--keep-cover --keep-fonts
 rem   set SLIM_ARGS=  (sem opcoes, remove tudo incluindo a capa)
