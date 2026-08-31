@@ -15,16 +15,23 @@ A única excepção real é a capa: o firmware descodifica JPEG e mostra a capa
 verdadeira na biblioteca (EpubLoader::getCoverImageData + CoverImage.cpp), por
 isso --keep-cover vale a pena por omissão para quem quiser essa miniatura —
 o custo é só o tamanho da própria capa, não de todas as ilustrações do livro.
+O descodificador do firmware só sabe ler JPEG: dar-lhe outro formato arrisca
+crash no dispositivo em vez de simplesmente não mostrar capa. Por isso, com
+--keep-cover, uma capa que não seja JPEG (PNG/GIF/WebP são comuns em EPUB) é
+convertida para JPEG com Pillow (`pip install pillow`), se estiver instalado;
+sem Pillow, ou se a conversão falhar por algum motivo, a capa é removida como
+antes — nunca é escrito no EPUB um formato que o firmware não saiba abrir.
 
 Uso:
     python tools/slim_epub.py livro.epub                 # cria livro.slim.epub
     python tools/slim_epub.py livro.epub -o saida.epub
     python tools/slim_epub.py *.epub --in-place          # substitui o original
-    python tools/slim_epub.py livro.epub --keep-cover     # mantém só a capa
+    python tools/slim_epub.py livro.epub --keep-cover     # mantém a capa (converte para JPEG se preciso)
     python tools/slim_epub.py livro.epub --keep-images --keep-fonts
 """
 
 import argparse
+import io
 import os
 import re
 import shutil
@@ -136,6 +143,38 @@ def find_cover_href(xml, items):
     return None
 
 
+def convert_cover_to_jpeg(data):
+    """Converte bytes de imagem (tipicamente PNG) para JPEG baseline, para a
+    capa poder ficar no EPUB mesmo não tendo nascido em JPEG — CoverImage.cpp
+    só descodifica esse formato. Nunca levanta excepção: devolve None se o
+    Pillow não estiver instalado, os bytes não forem uma imagem reconhecível,
+    ou a conversão falhar por qualquer razão (o chamador cai então para o
+    comportamento seguro de sempre, remover a capa).
+    """
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+    try:
+        img = Image.open(io.BytesIO(data))
+        img.load()
+        if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+            # Achata a transparência sobre fundo branco em vez de a deixar o
+            # Pillow descartar sem mais (ficaria preto por omissão) — o ecrã
+            # e-ink é branco, por isso um fundo transparente deve ficar branco.
+            img = img.convert("RGBA")
+            background = Image.new("RGB", img.size, (255, 255, 255))
+            background.paste(img, mask=img.split()[-1])
+            img = background
+        else:
+            img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=85)  # baseline por omissao: progressivo e mais arriscado num descodificador embutido
+        return buf.getvalue()
+    except Exception:
+        return None
+
+
 def parse_items(xml):
     """Lista (id, href, media-type, properties) de cada <item> do manifesto."""
     items = []
@@ -156,20 +195,27 @@ def parse_items(xml):
     return items
 
 
-def clean_opf(xml, opf_path, keep_categories, keep_cover):
+def clean_opf(xml, opf_path, keep_categories, keep_cover, convert_cover=None, existing_paths=frozenset()):
     """Retira do manifesto os itens que vamos remover do ZIP.
 
     Deixar entradas penduradas faria o leitor procurar ficheiros inexistentes,
-    por isso o manifesto tem de acompanhar. Devolve (xml_novo, caminhos_zip,
-    caminho_zip_da_capa_ou_None) — a capa é devolvida mesmo quando mantida,
-    para o chamador a poder excluir da limpeza de encryption.xml.
+    por isso o manifesto tem de acompanhar. convert_cover, se dado, é chamado
+    com o caminho ZIP de uma capa não-JPEG e devolve bytes JPEG (ou None se
+    não conseguir); existing_paths evita que o novo nome ".jpg" colida com um
+    ficheiro que já exista no ZIP. Devolve (xml_novo, caminhos_zip_removidos,
+    caminho_zip_da_capa_mantida_ou_None, {caminho_zip_novo: bytes_jpeg}).
     """
     items = parse_items(xml)
     cover_href = find_cover_href(xml, items)
-    cover_path = resolve(opf_path, cover_href) if cover_href else None
 
     removed_ids = set()
     removed_paths = set()
+    kept_cover_path = [None]  # células mutáveis só para o closure poder escrever
+    extra_files = {}
+
+    def is_jpeg(href, media):
+        ext = os.path.splitext(href)[1].lower()
+        return ext in (".jpg", ".jpeg") or media.lower() == "image/jpeg"
 
     def drop_item(match):
         tag = match.group(0)
@@ -177,11 +223,30 @@ def clean_opf(xml, opf_path, keep_categories, keep_cover):
         if not href:
             return tag
         media = re.search(r'media-type\s*=\s*"([^"]*)"', tag)
-        cat = classify(href.group(1), media.group(1) if media else "")
+        media_val = media.group(1) if media else ""
+        cat = classify(href.group(1), media_val)
         if cat is None or cat in keep_categories:
             return tag
         if cat == "images" and keep_cover and href.group(1) == cover_href:
-            return tag
+            if is_jpeg(href.group(1), media_val):
+                kept_cover_path[0] = resolve(opf_path, href.group(1))
+                return tag
+            # Não é JPEG: CoverImage.cpp só sabe descodificar esse formato,
+            # por isso só fica se convert_cover a conseguir converter — senão
+            # cai para o strip normal abaixo, tal como sempre foi.
+            if convert_cover is not None:
+                jpeg_bytes = convert_cover(resolve(opf_path, href.group(1)))
+                if jpeg_bytes is not None:
+                    dst_href = os.path.splitext(href.group(1))[0] + ".jpg"
+                    dst_path = resolve(opf_path, dst_href)
+                    if dst_path not in existing_paths and dst_path not in extra_files:
+                        extra_files[dst_path] = jpeg_bytes
+                        kept_cover_path[0] = dst_path
+                        removed_paths.add(resolve(opf_path, href.group(1)))  # o original é substituído, não mantido
+                        new_tag = re.sub(r'href\s*=\s*"[^"]*"', 'href="%s"' % dst_href, tag, count=1)
+                        if media:
+                            new_tag = re.sub(r'media-type\s*=\s*"[^"]*"', 'media-type="image/jpeg"', new_tag, count=1)
+                        return new_tag
         item_id = re.search(r'\bid\s*=\s*"([^"]*)"', tag)
         if item_id:
             removed_ids.add(item_id.group(1))
@@ -208,7 +273,7 @@ def clean_opf(xml, opf_path, keep_categories, keep_cover):
         return tag
 
     xml = re.sub(r"<meta\b[^>]*/?>", drop_meta, xml)
-    return xml, removed_paths, cover_path
+    return xml, removed_paths, kept_cover_path[0], extra_files
 
 
 def clean_encryption(xml, removed_paths):
@@ -243,22 +308,36 @@ def slim(src, dst, keep_categories=frozenset(), keep_cover=False):
     conjunto. Devolve (bytes_originais, bytes_finais, n_removidos).
     """
     with zipfile.ZipFile(src) as zin:
+        names = zin.namelist()
+        existing_paths = set(names)
+
+        def try_convert_cover(zip_path):
+            try:
+                data = zin.read(zip_path)
+            except KeyError:
+                return None
+            return convert_cover_to_jpeg(data)
+
+        convert_cover = try_convert_cover if keep_cover else None
+
         opf_paths = find_opf_paths(zin)
         rewritten = {}
         from_manifest = set()
         cover_paths = set()
+        extra_files = {}
         for opf in opf_paths:
             try:
                 xml = zin.read(opf).decode("utf-8", "replace")
             except KeyError:
                 continue
-            new_xml, removed, cover_path = clean_opf(xml, opf, keep_categories, keep_cover)
+            new_xml, removed, cover_path, extras = clean_opf(
+                xml, opf, keep_categories, keep_cover, convert_cover, existing_paths)
             rewritten[opf] = new_xml.encode("utf-8")
             from_manifest |= removed
+            extra_files.update(extras)
             if cover_path:
                 cover_paths.add(cover_path)
 
-        names = zin.namelist()
         # A extensão manda; o manifesto apanha o resto. Ficheiros dentro do ZIP
         # que nem sequer estão no manifesto (comuns em EPUBs gerados por
         # ferramentas) são apanhados pela extensão na mesma.
@@ -293,6 +372,8 @@ def slim(src, dst, keep_categories=frozenset(), keep_cover=False):
                     continue
                 data = rewritten.get(info.filename) or zin.read(info.filename)
                 zout.writestr(info.filename, data, zipfile.ZIP_DEFLATED)
+            for path, data in extra_files.items():
+                zout.writestr(path, data, zipfile.ZIP_DEFLATED)
 
     return os.path.getsize(src), os.path.getsize(dst), len(to_remove)
 
@@ -320,7 +401,7 @@ def main(argv=None):
     parser.add_argument(
         "--keep-cover",
         action="store_true",
-        help="mantem a capa do livro (o firmware ja mostra a capa real em JPEG na biblioteca)",
+        help="mantem a capa do livro; converte para JPEG com Pillow se nao ja for (o firmware so descodifica JPEG)",
     )
     parser.add_argument(
         "--keep-images",
