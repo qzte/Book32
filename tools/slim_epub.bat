@@ -29,7 +29,7 @@ if "%~1"=="" goto :pasta
 
 rem Arrastar ficheiros passa-os como argumentos. Um a um, para que um EPUB
 rem partido nao impeca os restantes de serem processados.
-echo Book32 - a remover imagens e fontes embutidas...
+echo Book32 - a remover imagens, fontes e outros recursos nao suportados...
 echo.
 for %%F in (%*) do (
     %PYTHON% "%SLIM%" "%%~fF"
@@ -62,7 +62,7 @@ if errorlevel 1 (
     exit /b 0
 )
 
-echo Book32 - a remover imagens e fontes embutidas...
+echo Book32 - a remover imagens, fontes e outros recursos nao suportados...
 echo.
 for %%F in ("epubs\*.epub") do (
     echo %%~nxF| findstr /i /c:".slim.epub" >nul || %PYTHON% "%SLIM%" "%%~fF"

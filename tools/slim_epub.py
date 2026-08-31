@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Remove imagens e fontes embutidas de ficheiros EPUB.
+"""Remove imagens, fontes e outros recursos não suportados de ficheiros EPUB.
 
 A partição de ebooks do Book32 tem ~9,9 MB. Um EPUB comercial gasta a maior
 parte do tamanho em capas, ilustrações e fontes embutidas — nenhuma das quais o
 leitor usa: o EpubLoader só extrai texto e o render usa as fontes compiladas no
-firmware (lib/Book32_Core/Fonts/). Retirar esse peso costuma reduzir um livro a
-menos de um décimo do tamanho, sem perder uma linha de texto.
+firmware (lib/Book32_Core/Fonts/). O mesmo vale para CSS, JavaScript e áudio/
+vídeo embutidos: o TextRenderer não interpreta CSS (só atributos style= inline)
+e o leitor não corre scripts nem reproduz media overlays. Retirar esse peso
+costuma reduzir um livro a menos de um décimo do tamanho, sem perder uma linha
+de texto.
 
 Uso:
     python tools/slim_epub.py livro.epub                 # cria livro.slim.epub
@@ -22,14 +25,19 @@ import tempfile
 import zipfile
 
 # Extensões removidas. SVG entra aqui por ser imagem: o leitor ignora-o e há
-# ficheiros SVG de capa com centenas de KB.
+# ficheiros SVG de capa com centenas de KB. CSS entra porque o TextRenderer
+# nunca lê folhas de estilo (externas ou <style>), só style= inline.
 STRIP_EXTENSIONS = {
     ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".svg",
     ".ttf", ".otf", ".woff", ".woff2", ".eot",
+    ".css",
+    ".js", ".mjs",
+    ".mp3", ".m4a", ".mp4", ".m4v", ".ogg", ".oga", ".wav", ".webm",
+    ".smil",
 }
 
 # Tipos MIME correspondentes, para apanhar recursos com extensão invulgar.
-STRIP_MIME_PREFIXES = ("image/", "font/")
+STRIP_MIME_PREFIXES = ("image/", "font/", "audio/", "video/")
 STRIP_MIME_EXACT = {
     "application/x-font-ttf",
     "application/x-font-truetype",
@@ -37,7 +45,18 @@ STRIP_MIME_EXACT = {
     "application/vnd.ms-opentype",
     "application/font-woff",
     "application/font-sfnt",
+    "text/css",
+    "application/javascript",
+    "text/javascript",
+    "application/x-javascript",
+    "application/smil+xml",
 }
+
+# META-INF/encryption.xml descreve a ofuscação de fontes (IDPF/Adobe): cada
+# <enc:EncryptedData> tem um CipherReference cujo URI é o caminho dentro do
+# ZIP (relativo à raiz do EPUB, não ao OPF). Depois de remover as fontes, essas
+# entradas passam a referir ficheiros inexistentes.
+ENCRYPTION_PATH = "META-INF/encryption.xml"
 
 
 def is_strippable(name, media_type=""):
@@ -117,8 +136,32 @@ def clean_opf(xml, opf_path):
     return xml, removed_paths
 
 
+def clean_encryption(xml, removed_paths):
+    """Retira do encryption.xml as entradas dos ficheiros removidos.
+
+    Devolve o XML reescrito, ou None se não sobrar nenhuma
+    <enc:EncryptedData> — nesse caso o chamador remove o ficheiro todo.
+    """
+    def drop_entry(match):
+        block = match.group(0)
+        uri = re.search(r'URI\s*=\s*"([^"]+)"', block)
+        if uri and uri.group(1).lstrip("/") in removed_paths:
+            return ""
+        return block
+
+    new_xml = re.sub(
+        r"<enc:EncryptedData\b.*?</enc:EncryptedData>",
+        drop_entry,
+        xml,
+        flags=re.DOTALL,
+    )
+    if not re.search(r"<enc:EncryptedData\b", new_xml):
+        return None
+    return new_xml
+
+
 def slim(src, dst):
-    """Escreve em dst uma cópia de src sem imagens nem fontes.
+    """Escreve em dst uma cópia de src sem imagens, fontes, CSS/JS nem media.
 
     Devolve (bytes_originais, bytes_finais, n_removidos).
     """
@@ -142,7 +185,15 @@ def slim(src, dst):
         to_remove = {n for n in names if is_strippable(n)} | from_manifest
         to_remove &= set(names)
 
-        with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as zout:
+        if ENCRYPTION_PATH in names:
+            enc_xml = zin.read(ENCRYPTION_PATH).decode("utf-8", "replace")
+            new_enc = clean_encryption(enc_xml, to_remove)
+            if new_enc is None:
+                to_remove.add(ENCRYPTION_PATH)
+            elif new_enc != enc_xml:
+                rewritten[ENCRYPTION_PATH] = new_enc.encode("utf-8")
+
+        with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zout:
             # "mimetype" tem de ser a primeira entrada e não comprimida, senão
             # alguns leitores recusam o ficheiro.
             if "mimetype" in names:
@@ -171,7 +222,7 @@ def human(n):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Remove imagens e fontes embutidas de EPUBs para o Book32."
+        description="Remove imagens, fontes, CSS/JS e media embutidos de EPUBs para o Book32."
     )
     parser.add_argument("files", nargs="+", help="ficheiros .epub a processar")
     parser.add_argument("-o", "--output", help="ficheiro de saida (so com um input)")
