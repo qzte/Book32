@@ -123,3 +123,28 @@ podados).
 Trocar o livro por uma edicao diferente com o mesmo nome (contagem de
 capitulos diferente): confirmar que o indice antigo e descartado e
 reconstruido, em vez de ficar desalinhado com a spine actual.
+
+=== v1.19.0 — a verificar no dispositivo (nao coberto pelos testes de host) ===
+(ver docs/plans/2026-08-31-capas-reais-biblioteca-design.md; pio run nao
+correu neste ambiente, so os testes de host da logica pura, que esta versao
+nem sequer toca — e tudo E/S e uma biblioteca de terceiros nova, JPEGDEC)
+Qualidade visual do dithering: abrir a biblioteca com livros de capas JPEG
+reais e ver se o resultado a preto-e-branco no e-ink e legivel/reconhecivel,
+nao so "compila". E o primeiro ponto a confirmar, antes de tudo o resto.
+Abrir a biblioteca pela primeira vez com livros novos e confirmar que as
+capas se constroem em segundo plano (uma por passagem, intercalada com os
+titulos) sem travar os botoes nem a abertura da biblioteca.
+Reabrir a biblioteca depois de fechada: as capas ja resolvidas aparecem logo
+(ver /covers/*.thumb em EbookFS), sem reconstrucao.
+Livro sem capa no manifest (nem EPUB3 nem EPUB2) e livro com capa PNG: ambos
+ficam com o desenho generico de sempre, sem tentar reabrir o ZIP a cada
+visita a biblioteca (confirmar no monitor serie que nao ha reaberturas
+repetidas).
+Apagar um livro pela web UI: o /covers/<nome>.thumb correspondente
+desaparece (a limpeza em WebMgr.cpp e anterior a esta funcionalidade, so
+falta confirmar que bate certo com o nome real gravado).
+Espaco em EbookFS: enviar livros suficientes para a particao ficar quase
+cheia e confirmar que uma escrita de capa falhada (sem espaco) nao trava o
+leitor nem deixa um .thumb a meio escrito a ser lido como capa valida.
+Capa de resolucao muito alta (ex.: scan de varios MB): confirmar que a
+descodificacao nao demora tanto que pareca que o dispositivo bloqueou.

@@ -158,6 +158,24 @@ bool EpubLoader::parseOpf() {
     int manifestEnd = xml.indexOf("</manifest>");
     if(manifestStart == -1 || manifestEnd == -1) return false;
 
+    // Capa (recurso EPUB2): <meta name="cover" content="ID_DO_MANIFEST"/>,
+    // normalmente dentro de <metadata>, antes do <manifest>. O id só se pode
+    // resolver depois de o manifest estar todo lido (linha abaixo), por isso
+    // fica só guardado aqui.
+    String coverMetaId;
+    {
+        int metaPos = xml.indexOf("name=\"cover\"");
+        if (metaPos == -1) metaPos = xml.indexOf("name='cover'");
+        if (metaPos != -1) {
+            int tagStart = xml.lastIndexOf('<', metaPos);
+            int tagEnd = xml.indexOf('>', metaPos);
+            if (tagStart != -1 && tagEnd != -1 && tagEnd > tagStart) {
+                String metaTag = xml.substring(tagStart, tagEnd + 1);
+                coverMetaId = extractAttribute(metaTag, "meta", "content");
+            }
+        }
+    }
+
     String manifestBlock = xml.substring(manifestStart, manifestEnd);
     int pos = 0;
     while(true) {
@@ -176,6 +194,13 @@ bool EpubLoader::parseOpf() {
         String mediaType = extractAttribute(itemTag, "item", "media-type");
         if(id.length() > 0 && href.length() > 0) {
             manifest[id] = href;
+            // Capa (EPUB3): properties="cover-image" no próprio <item>. Tem
+            // prioridade sobre o <meta name="cover"> do EPUB2 abaixo — é a
+            // forma actual do standard e não depende de resolver um id.
+            String properties = extractAttribute(itemTag, "item", "properties");
+            if (coverHref.length() == 0 && properties.indexOf("cover-image") != -1) {
+                coverHref = href;
+            }
             String hrefLower = href; hrefLower.toLowerCase();
             if(hrefLower.endsWith(".ttf") || hrefLower.endsWith(".otf") || mediaType.indexOf("font") != -1) {
                 FontInfo font; font.path = rootDir + href;
@@ -194,6 +219,13 @@ bool EpubLoader::parseOpf() {
         }
         pos = itemEnd + 1;
     }
+
+    // Resolve o recurso EPUB2, agora que o manifest está todo lido, só se o
+    // EPUB3 acima não encontrou nada.
+    if (coverHref.length() == 0 && coverMetaId.length() > 0 && manifest.count(coverMetaId)) {
+        coverHref = manifest[coverMetaId];
+    }
+
     int spineStart = xml.indexOf("<spine"), spineEnd = xml.indexOf("</spine>");
     if(spineStart == -1 || spineEnd == -1) return false;
     String spineBlock = xml.substring(spineStart, spineEnd);
@@ -230,6 +262,13 @@ uint8_t* EpubLoader::getFontData(String path, size_t* outSize) {
     zip->closeCurrentFile();
     *outSize = size;
     return buffer;
+}
+
+uint8_t* EpubLoader::getCoverImageData(size_t* outSize) {
+    if (coverHref.length() == 0) return nullptr;
+    String fullPath = rootDir + coverHref;
+    if (fullPath.startsWith("./")) fullPath = fullPath.substring(2);
+    return getFontData(fullPath, outSize); // mesmo mecanismo de leitura do ZIP, nome à parte
 }
 
 String EpubLoader::extractAttribute(const String& xml, const String& tag, const String& attr) {

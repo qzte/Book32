@@ -112,7 +112,21 @@ public:
     std::vector<FontInfo> getFonts();
     uint8_t* getFontData(String path, size_t* outSize);
 
-private:
+    // Capa: href dentro do ZIP encontrado no manifest via
+    // properties="cover-image" (EPUB3) ou <meta name="cover" content="ID">
+    // (EPUB2, resolvido contra o manifest depois de o analisar). O tipo de
+    // imagem não é guardado aqui — não se confia no media-type do OPF; quem
+    // descodifica (CoverImage.h) tenta abrir como JPEG e falha em silêncio
+    // se não for.
+    bool hasCoverImage() {
+        return coverHref.length() > 0;
+    }
+    // Aloca o buffer com ps_malloc/malloc, tal como getFontData(); quem chama
+    // é responsável por libertá-lo. nullptr se não houver capa ou a leitura
+    // do ZIP falhar.
+    uint8_t* getCoverImageData(size_t* outSize);
+
+  private:
     // Metadata
     String bookTitle;
     String bookAuthor;
@@ -136,6 +150,7 @@ private:
 
     std::vector<SpineItem> spine;
     std::map<String, String> manifest; // id -> href
+    String coverHref;                  // "" quando o manifest não indica capa nenhuma
 
     // Allocate UNZIP in PSRAM to avoid memory issues with the 41KB internal buffer
     UNZIP* zip;
