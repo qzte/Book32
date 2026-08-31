@@ -99,7 +99,15 @@ public:
     int getChapterCount();
     String getChapterContent(int index);  // Legacy plain text
     std::vector<ContentNode> getChapterContentRich(int index);  // Rich formatted content
-    
+
+    // Título heurístico do capítulo `index`: o texto do primeiro nó com
+    // estilo de cabeçalho (h1-h4, incluindo os números de capítulo isolados
+    // que a heurística de parseHtmlToRichContent já promove a cabeçalho)
+    // devolvido por getChapterContentRich(). "" quando o capítulo não tem
+    // nenhum cabeçalho detectável — o chamador decide o texto de recurso
+    // (ver ChapterTocStore / AppReader::updateTocBuild).
+    String getChapterTitle(int index);
+
     // Font support
     std::vector<FontInfo> getFonts();
     uint8_t* getFontData(String path, size_t* outSize);

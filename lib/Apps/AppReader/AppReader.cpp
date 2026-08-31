@@ -13,6 +13,8 @@
 #include "BookTitleStore.h"
 #include "BookTitleLogic.h"
 #include "GoToPercentStore.h"
+#include "ChapterTocStore.h"
+#include "GoToChapterStore.h"
 #include "WebMgr.h"
 #include <WiFi.h>
 #include <LittleFS.h>
@@ -119,6 +121,8 @@ AppReader::AppReader() {
     _countPagesSoFar = 0;
     _percentSeekActive = false;
     _percentSeekTargetPercent = 0;
+    _tocBuildActive = false;
+    _tocBuildChapter = 0;
     _currentPageRender = {0, 0, false, 0, 0};
     _currentPageRenderValid = false;
     _pageTurnsSinceRefresh = 0;
@@ -266,6 +270,8 @@ void AppReader::scanBooks() {
         BookmarkStore::getInstance().reconcile(present);
         // v1.17.0: e o mesmo para os títulos lidos dos EPUB.
         BookTitleStore::getInstance().reconcile(present);
+        // v1.18.0: e para os índices de capítulo já construídos.
+        ChapterTocStore::getInstance().reconcile(present);
 
         for (auto& b : _books) {
             BookProgress p;
@@ -516,6 +522,7 @@ bool AppReader::openBook(const String& path, bool restoreProgress) {
 
     _state = VIEW_READING;
     startTotalPagesCounting();
+    startTocBuild();
 
     // v1.14.0: a "go to %" requested from the web UI while this book wasn't
     // open (see GoToPercentStore) applies now, overriding the position just
@@ -530,6 +537,19 @@ bool AppReader::openBook(const String& path, bool restoreProgress) {
         // followed by a second full e-ink refresh a moment later.
         _needsRedraw = false;
     } else {
+        // v1.18.0: same "web sets it, device applies it on open" shape for a
+        // "go to chapter" request (GoToChapterStore, WebMgr's
+        // /api/reader/goto-chapter) — only checked when no percent jump is
+        // pending, so an unrelated chapter request left for a later open
+        // isn't silently dropped here. Unlike the percent case this resolves
+        // immediately: the index came straight from ChapterTocStore, so
+        // there's nothing to scan for before landing on screen.
+        int pendingChapter = -1;
+        bool hasPendingChapterJump =
+            GoToChapterStore::getInstance().takePendingFor(progressKey, pendingChapter);
+        if (hasPendingChapterJump && pendingChapter >= 0 && pendingChapter < _epubLoader->getChapterCount()) {
+            applyChapterJump(pendingChapter);
+        }
         _needsRedraw = true;
     }
 
@@ -616,6 +636,9 @@ void AppReader::closeBook(bool markInactive) {
     _countingActive = false;
     _countChapterContent.clear();
     if (_countRenderer) { delete _countRenderer; _countRenderer = nullptr; }
+
+    _tocBuildActive = false;
+    _tocBuildTitles.clear();
 }
 
 // Kicks off (or resumes from cache) the total page count for the book that
@@ -716,6 +739,91 @@ void AppReader::updateTotalPagesCount() {
             PageCountStore::getInstance().setCheckpoint(key, _fontSizePt, _fontFamily, checkpoint);
         }
     }
+}
+
+// Kicks off (or skips, if already cached) the chapter-title index for the
+// book that just opened in _epubLoader/_currentBookPath. A cached index from
+// a previous build (validated against the current chapter count, in case the
+// .epub was replaced by a different edition) means there's nothing to do —
+// ChapterTocStore is the only reader of this data (see WebMgr's /api/toc),
+// so a valid cache already satisfies it. Otherwise updateTocBuild() walks
+// the book from update(), a bounded slice at a time, same shape as
+// startTotalPagesCounting/updateTotalPagesCount but without a checkpoint —
+// the scan itself is much cheaper (no TextRenderer, no font measurement,
+// just the parsing getChapterContentRich() already does), so restarting it
+// from chapter 0 after a standby mid-scan is cheap enough not to need one.
+void AppReader::startTocBuild() {
+    _tocBuildActive = false;
+    _tocBuildChapter = 0;
+    _tocBuildTitles.clear();
+
+    if (!_epubLoader || _currentBookPath.length() == 0) return;
+
+    String key = getOriginalFilename(normalizedBookName(_currentBookPath));
+    std::vector<String> cached;
+    if (ChapterTocStore::getInstance().get(key, cached) &&
+        (int)cached.size() == _epubLoader->getChapterCount()) {
+        return;
+    }
+    _tocBuildActive = true;
+}
+
+// Advances the chapter-title index by a time-boxed slice (same budget as
+// updateTotalPagesCount/updatePercentSeek: don't stall the main loop
+// measuring a big book in one shot). Each tick resolves one more chapter's
+// title with EpubLoader::getChapterTitle() — the same parse
+// updateTotalPagesCount() and updatePercentSeek() already do per chapter,
+// just reading the heading it finds instead of a length or a full
+// pagination. Once every chapter is resolved, the whole list is persisted to
+// ChapterTocStore in one write (see that store's header for why a single
+// write, not one per chapter) — that store is the only reader of this data.
+void AppReader::updateTocBuild() {
+    if (!_epubLoader) {
+        _tocBuildActive = false;
+        return;
+    }
+    int totalChapters = _epubLoader->getChapterCount();
+
+    unsigned long budgetEnd = millis() + TOTAL_PAGES_BUDGET_MS;
+    while (_tocBuildActive && millis() < budgetEnd) {
+        if (_tocBuildChapter >= totalChapters) {
+            _tocBuildActive = false;
+            if (!_tocBuildTitles.empty()) {
+                String key = getOriginalFilename(normalizedBookName(_currentBookPath));
+                ChapterTocStore::getInstance().set(key, _tocBuildTitles);
+            }
+            return;
+        }
+        _tocBuildTitles.push_back(_epubLoader->getChapterTitle(_tocBuildChapter));
+        _tocBuildChapter++;
+    }
+}
+
+// Applies a "go to chapter" request already resolved to an exact index (see
+// GoToChapterStore) — no scanning needed, unlike updatePercentSeek(): the
+// web UI already knows which chapter it wants, from the same ChapterTocStore
+// list this build fills in. Same best-effort global-page approximation as
+// updatePercentSeek's own landing spot: exact only once the total is cached,
+// and proportional to the chapter's position in the book otherwise — this is
+// still just a number in the footer, never used to resume from (the reader
+// always resumes from chapter/nodeIndex/charOffset).
+void AppReader::applyChapterJump(int targetChapter) {
+    loadChapter(targetChapter);
+    // loadChapter() can fall through to a later chapter if the target one
+    // turned out empty (see its own fallback loop) — only place the pointer
+    // and page number as if we landed where asked when we actually did.
+    if (_currentChapter != targetChapter) return;
+
+    _currentPagePointer = {0, 0};
+    _currentPageRenderValid = false;
+
+    int totalChapters = _epubLoader ? _epubLoader->getChapterCount() : 0;
+    _globalPageNumber = (_totalPages > 0 && totalChapters > 0)
+                            ? max(1, (int)(((long)_totalPages * (long)targetChapter) / totalChapters))
+                            : 1;
+
+    _readingFirstDraw = true; // full refresh: clears whatever was last on screen
+    saveReadingProgress(true);
 }
 
 // Sums the character length of a chapter's already-parsed rich content —
@@ -1156,6 +1264,12 @@ void AppReader::update() {
     // pages, if it isn't already known. Runs between draw() calls only (see
     // updateTotalPagesCount), so it never overlaps an actual page render.
     if (_countingActive) updateTotalPagesCount();
+
+    // v1.18.0: same budgeted-slice treatment for the chapter-title index.
+    // Independent of the counting above — different state, no shared
+    // renderer (this one needs none) — so both run in the same session
+    // without conflict.
+    if (_tocBuildActive) updateTocBuild();
 
     // v1.14.0: same budgeted-slice treatment for a pending "go to %" jump.
     // Independent of the counting above — different state, no shared

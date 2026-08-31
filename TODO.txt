@@ -103,3 +103,23 @@ Apagar um livro pela web UI: a entrada correspondente sai do
 marcadores sao podados).
 Acentos: um titulo com caracteres portugueses (Ó, ç, ã) desenhado a partir do
 <dc:title> em UTF-8 tem de aparecer certo depois da conversao para Latin-1.
+
+=== v1.18.0 — a verificar no dispositivo (nao coberto pelos testes de host) ===
+(ver docs/plans/2026-08-31-toc-titulos-capitulo-design.md; pio run nao correu
+neste ambiente, so os testes de host da logica pura)
+Abrir um livro pela primeira vez e confirmar que o indice se constroi em
+segundo plano (sem travar a abertura nem os botoes) e que GET /api/toc passa
+de "ready":false a "ready":true com os titulos, sem reabrir o livro.
+Reabrir o mesmo livro depois de fechado: o indice aparece logo em
+"ready":true, sem reconstrucao (ver /chapter_toc.json no SystemFS).
+Livro sem nenhum cabecalho detectavel nalguns capitulos: confirmar que esses
+capitulos ficam com titulo vazio na resposta da API (a UI mostra "Capitulo N")
+em vez de a construcao falhar ou saltar esses capitulos.
+Ir para capitulo a partir da web UI: confirmar que so faz efeito ao reabrir o
+livro no dispositivo, e que aterra no inicio exacto do capitulo pedido.
+Apagar um livro pela web UI: a entrada correspondente sai do
+/chapter_toc.json no scan seguinte (mesmo ponto onde titulos e marcadores sao
+podados).
+Trocar o livro por uma edicao diferente com o mesmo nome (contagem de
+capitulos diferente): confirmar que o indice antigo e descartado e
+reconstruido, em vez de ficar desalinhado com a spine actual.

@@ -21,6 +21,8 @@
 #include "../Book32_Core/ProgressStore.h"
 #include "../Book32_Core/BookmarkStore.h"
 #include "../Book32_Core/GoToPercentStore.h"
+#include "../Book32_Core/ChapterTocStore.h"
+#include "../Book32_Core/GoToChapterStore.h"
 #include "../Book32_Update/GitHubMgr.h"
 #include "../Book32_Core/BatteryMgr.h"
 #include "../Book32_Core/AppMgr.h"
@@ -1292,6 +1294,61 @@ void WebMgr::setupEndpoints() {
         });
     goToPercentHandler->setMethod(HTTP_POST);
     server->addHandler(goToPercentHandler);
+
+    // API (v1.18.0): Table of contents — chapter titles built on-device from
+    // headings already detected while parsing each chapter (see
+    // EpubLoader::getChapterTitle), cached in ChapterTocStore once a book has
+    // been opened on the device and the background scan has finished (see
+    // AppReader::startTocBuild/updateTocBuild). "ready":false with an empty
+    // "chapters" array means that hasn't happened yet — same "not known yet"
+    // shape as the page-count fields elsewhere in this API.
+    server->on("/api/toc", HTTP_GET, [](AsyncWebServerRequest* request) {
+        if (!request->hasParam("book")) {
+            request->send(400, "application/json", "{\"error\":\"missing 'book'\"}");
+            return;
+        }
+        String book = request->getParam("book")->value();
+        std::vector<String> titles;
+        bool ready = ChapterTocStore::getInstance().get(book, titles);
+
+        AsyncResponseStream* response = request->beginResponseStream("application/json");
+        response->printf("{\"book\":\"%s\",\"ready\":%s,\"chapters\":[", jsonEscape(book).c_str(),
+                         ready ? "true" : "false");
+        for (size_t i = 0; i < titles.size(); i++) {
+            if (i > 0) response->print(",");
+            response->printf("{\"index\":%d,\"title\":\"%s\"}", (int)i, jsonEscape(titles[i]).c_str());
+        }
+        response->print("]}");
+        request->send(response);
+    });
+
+    // API (v1.18.0): Go to an exact chapter. Body: {"book":"...","chapter":N}.
+    // Unlike /api/reader/goto (percent), this needs no background scan on
+    // open: the index comes straight from the /api/toc list this UI already
+    // fetched, so AppReader can jump to it immediately the next time the
+    // book opens (see GoToChapterStore, AppReader::applyChapterJump).
+    // Validated against ChapterTocStore's own chapter count, same as the
+    // percent endpoint validates its range — a request for a book with no
+    // index yet, or a chapter past the end, is rejected rather than queued.
+    AsyncCallbackJsonWebHandler* goToChapterHandler = new AsyncCallbackJsonWebHandler(
+        "/api/reader/goto-chapter", [](AsyncWebServerRequest* request, JsonVariant& json) {
+            String book = json["book"] | "";
+            int chapter = json["chapter"] | -1;
+            if (book.length() == 0 || chapter < 0) {
+                request->send(400, "application/json", "{\"error\":\"invalid 'book' or 'chapter'\"}");
+                return;
+            }
+            std::vector<String> titles;
+            if (!ChapterTocStore::getInstance().get(book, titles) || chapter >= (int)titles.size()) {
+                request->send(404, "application/json",
+                              "{\"error\":\"no chapter index for this book yet, or chapter out of range\"}");
+                return;
+            }
+            GoToChapterStore::getInstance().setPending(book, chapter);
+            request->send(200, "application/json", "{\"status\":\"ok\"}");
+        });
+    goToChapterHandler->setMethod(HTTP_POST);
+    server->addHandler(goToChapterHandler);
 
     // API (v1.8.0): Export library state — reading progress, original-name
     // metadata and the manual order. No .epub files: those go through /send.

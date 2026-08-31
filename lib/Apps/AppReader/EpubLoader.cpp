@@ -667,3 +667,28 @@ std::vector<ContentNode> EpubLoader::getChapterContentRich(int index) {
     String content = readFileFromZip(fullPath.c_str());
     return parseHtmlToRichContent(content);
 }
+
+// Tecto do título devolvido por getChapterTitle: um cabeçalho HTML pode, na
+// prática, ser um parágrafo inteiro mal marcado (ex.: um "capitulo-titulo"
+// com uma citação lá dentro), e isso não cabe numa lista de índice.
+static const int BOOK32_MAX_CHAPTER_TITLE_LEN = 60;
+
+String EpubLoader::getChapterTitle(int index) {
+    std::vector<ContentNode> content = getChapterContentRich(index);
+    for (const ContentNode& node : content) {
+        if (node.type != CONTENT_TEXT) continue;
+        TextStyle style = node.textNode.style;
+        if (style != STYLE_HEADER1 && style != STYLE_HEADER2 && style != STYLE_HEADER3 &&
+            style != STYLE_HEADER4)
+            continue;
+
+        String title = node.textNode.text;
+        title.trim();
+        if (title.length() == 0) continue; // cabeçalho vazio: continua a procurar o próximo
+        if ((int)title.length() > BOOK32_MAX_CHAPTER_TITLE_LEN) {
+            title = title.substring(0, BOOK32_MAX_CHAPTER_TITLE_LEN - 3) + "...";
+        }
+        return title;
+    }
+    return "";
+}

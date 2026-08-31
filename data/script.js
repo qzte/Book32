@@ -864,6 +864,7 @@ function getReaderProgress() {
             currentLastBook = data.exists ? (data.lastBook || '') : '';
             updateBookScopedLabels();
             loadBookmarks();
+            loadToc();
 
             if (!status) return;
             if (data.exists) {
@@ -882,7 +883,7 @@ function updateBookScopedLabels() {
     // um nome de ficheiro como este texto generico, e nenhuma preposicao fixa
     // servia os dois cartoes que partilham o rotulo.
     const label = currentLastBook || 'o livro actual';
-    ['bookmarks-book-name', 'goto-percent-book-name'].forEach(id => {
+    ['bookmarks-book-name', 'goto-percent-book-name', 'toc-book-name'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.textContent = label;
     });
@@ -1070,6 +1071,87 @@ function goToPercent() {
         .catch(error => {
             console.error('Error setting go-to-percent:', error);
             status.textContent = 'Não foi possível marcar o salto.';
+            status.style.color = 'red';
+        });
+}
+
+// === Table of contents (v1.18.0) ===
+// Chapter titles built on the device from headings already detected while
+// parsing each chapter (see EpubLoader::getChapterTitle), so this list only
+// exists for a book once it has actually been opened there. Same "web sets
+// it, device applies it on next open" shape as bookmarks and "go to %"
+// above.
+
+function loadToc() {
+    const list = document.getElementById('toc-list');
+    const emptyHint = document.getElementById('toc-empty-hint');
+    if (!list) return;
+
+    if (!currentLastBook) {
+        list.innerHTML = '';
+        if (emptyHint) emptyHint.classList.remove('hidden');
+        return;
+    }
+    if (emptyHint) emptyHint.classList.add('hidden');
+
+    fetch('/api/toc?book=' + encodeURIComponent(currentLastBook))
+        .then(response => response.json())
+        .then(data => renderToc(data.chapters || [], !!data.ready))
+        .catch(error => {
+            console.error('Error loading table of contents:', error);
+            list.innerHTML = '<p class="error">Erro ao carregar o índice.</p>';
+        });
+}
+
+function renderToc(chapters, ready) {
+    const list = document.getElementById('toc-list');
+    if (!list) return;
+
+    if (!ready || !chapters.length) {
+        list.innerHTML = '<p class="hint">Ainda não há índice para este livro — abre-o no dispositivo para o construir.</p>';
+        return;
+    }
+    list.innerHTML = chapters.map(c => {
+        const label = c.title && c.title.length ? c.title : `Capítulo ${c.index + 1}`;
+        return `
+        <div class="book-item">
+            <span class="book-title">${escapeHtml(label)}</span>
+            <button class="btn-order" data-index="${c.index}" title="Aplica-se da próxima vez que este livro abrir no dispositivo">Ir</button>
+        </div>`;
+    }).join('');
+    bindTocListActions();
+}
+
+let tocListBound = false;
+function bindTocListActions() {
+    if (tocListBound) return;
+    const list = document.getElementById('toc-list');
+    if (!list) return;
+    list.addEventListener('click', e => {
+        const btn = e.target.closest('button[data-index]');
+        if (!btn) return;
+        gotoChapter(Number(btn.dataset.index));
+    });
+    tocListBound = true;
+}
+
+function gotoChapter(index) {
+    const status = document.getElementById('toc-status');
+    fetch('/api/reader/goto-chapter', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ book: currentLastBook, chapter: index })
+    })
+        .then(response => response.json().then(data => ({ ok: response.ok, data })))
+        .then(({ ok, data }) => {
+            if (!ok) throw new Error(data.error || 'O pedido falhou');
+            status.textContent = 'Salta para esse capítulo da próxima vez que este livro abrir no dispositivo.';
+            status.style.color = 'green';
+            setTimeout(() => status.textContent = '', 5000);
+        })
+        .catch(error => {
+            console.error('Error jumping to chapter:', error);
+            status.textContent = 'Não foi possível saltar para o capítulo: ' + error.message;
             status.style.color = 'red';
         });
 }

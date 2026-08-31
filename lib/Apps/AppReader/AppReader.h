@@ -120,6 +120,27 @@ private:
     void startTotalPagesCounting();
     void updateTotalPagesCount();
 
+    // v1.18.0: título por capítulo, reaproveitando a detecção de cabeçalhos
+    // já feita pelo EpubLoader ao analisar cada capítulo (ver
+    // EpubLoader::getChapterTitle). Construído uma vez por livro, em fatias
+    // orçamentadas a partir de update() — mesmo padrão do "ir para %"
+    // abaixo, só que mais simples (não depende de tamanho de letra, por
+    // isso só precisa de correr uma vez por livro, nunca mais enquanto o
+    // EPUB não mudar) — e cacheado em ChapterTocStore. Não há botão físico
+    // livre para um ecrã de lista de capítulos no dispositivo (ver
+    // docs/plans/2026-08-29-bookmarks-and-goto-percent-design.md), por isso
+    // é a web UI que mostra o índice e pede o salto de capítulo — ver
+    // GoToChapterStore e applyChapterJump().
+    bool _tocBuildActive;
+    int _tocBuildChapter;
+    std::vector<String> _tocBuildTitles;
+    void startTocBuild();
+    void updateTocBuild();
+    // Aplica um pedido de "ir para capítulo" vindo da web (GoToChapterStore).
+    // Ao contrário do "ir para %", o capítulo já é exacto — não há nada para
+    // resolver em segundo plano, salta-se logo que o livro abre.
+    void applyChapterJump(int targetChapter);
+
     // v1.14.0: "go to %" requested from the web UI (see GoToPercentStore),
     // applied the next time this specific book is opened. Content-length
     // proportional (see GoToPercentLogic.h for why), not exact-page: chapters
