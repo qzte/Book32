@@ -14,3 +14,6 @@ dist/
 # Copias de seguranca deixadas por editores
 *.bk
 *.orig
+
+__pycache__/
+*.pyc
