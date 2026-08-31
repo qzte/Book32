@@ -15,6 +15,7 @@
 #include "GoToPercentStore.h"
 #include "ChapterTocStore.h"
 #include "GoToChapterStore.h"
+#include "CoverImage.h"
 #include "WebMgr.h"
 #include <WiFi.h>
 #include <LittleFS.h>
@@ -48,6 +49,25 @@ static void drawTextWithFont(Book32Display& display, const char* text, int x, in
     display.setTextSize(1);
     display.setCursor(x, y);
     display.print(text);
+}
+
+// v1.19.0: tamanho fixo do item da biblioteca — capa real e desenho genérico
+// partilham-no (ver drawLibrary, resolveNextBookCover, drawBookCoverThumb).
+static const int BOOK32_COVER_WIDTH = 60;
+static const int BOOK32_COVER_HEIGHT = 80;
+static const size_t BOOK32_COVER_THUMB_BYTES =
+    (size_t)((BOOK32_COVER_WIDTH + 7) / 8) * (size_t)BOOK32_COVER_HEIGHT;
+
+// Deriva o caminho do bitmap de capa cacheado a partir do caminho do livro
+// (ex.: "/Foo Bar.epub" -> "/covers/Foo Bar.thumb"). Extensão retirada pela
+// posição do último ponto, como a limpeza em WebMgr.cpp já faz ao apagar um
+// livro — mesma razão: String::replace(".epub") acertaria na primeira
+// ocorrência em qualquer sítio do nome, não só no fim.
+static String coverThumbPathFor(const String& bookPath) {
+    String name = normalizedBookName(bookPath);
+    int dot = name.lastIndexOf('.');
+    String base = (dot > 0) ? name.substring(0, dot) : name;
+    return "/covers/" + base + ".thumb";
 }
 
 static String titleFromFilename(String name) {
@@ -249,6 +269,20 @@ void AppReader::scanBooks() {
             entry.titleResolved = (cachedTitle != epubTitles.end());
             entry.title = FontMgr::utf8ToLatin1(entry.titleResolved ? cachedTitle->second
                                                                     : titleFromFilename(entry.originalName));
+
+            // v1.19.0: ao contrário do título, isto é só um stat + tamanho do
+            // ficheiro (sem abrir o ZIP), por isso faz-se aqui como
+            // hasProgress/totalPages abaixo, não em resolveNextBookCover().
+            String thumbPath = coverThumbPathFor(entry.path);
+            if (EbookFS.exists(thumbPath)) {
+                entry.coverAttempted = true;
+                File coverFile = EbookFS.open(thumbPath, FILE_READ);
+                if (coverFile) {
+                    entry.hasCoverThumb = (coverFile.size() == BOOK32_COVER_THUMB_BYTES);
+                    coverFile.close();
+                }
+            }
+
             _books.push_back(entry);
         }
         file.close();
@@ -321,11 +355,15 @@ void AppReader::scanBooks() {
 // desenho, que repete a página. Fica aqui: um livro por passagem do update(),
 // só na biblioteca, e o resultado vai para o BookTitleStore — a partir daí a
 // lista já abre com os títulos certos.
-void AppReader::resolveNextBookTitle() {
+// Devolve true quando abriu mesmo um ZIP nesta chamada (havia um título por
+// resolver), false quando não havia nada a fazer — usado por update() para
+// intercalar isto com resolveNextBookCover() em vez de arriscar as duas
+// abrirem um ZIP na mesma passagem (ver ali).
+bool AppReader::resolveNextBookTitle() {
     // O descritor do ZIP é global (ver zipFd em EpubLoader.cpp): abrir outro
     // livro com um aberto puxava-lhe o ficheiro debaixo dos pés. Na biblioteca
     // não há nenhum aberto, mas a guarda é barata e a invariante não é óbvia.
-    if (_epubLoader) return;
+    if (_epubLoader) return false;
 
     int index = -1;
     for (size_t i = 0; i < _books.size(); i++) {
@@ -342,7 +380,7 @@ void AppReader::resolveNextBookTitle() {
             _librarySelectionOnlyRedraw = false;
             _needsRedraw = true;
         }
-        return;
+        return false;
     }
 
     BookEntry& book = _books[index];
@@ -361,7 +399,7 @@ void AppReader::resolveNextBookTitle() {
     // O <dc:title> é texto de um ficheiro do utilizador: pode trazer marcação,
     // entidades XML e as mudanças de linha da indentação do OPF.
     String title = book32::sanitizeBookTitleT<String>(rawTitle);
-    if (title.length() == 0) return; // fica-se pelo nome do ficheiro
+    if (title.length() == 0) return true; // fica-se pelo nome do ficheiro, mas o ZIP abriu-se
 
     BookTitleStore::getInstance().set(book.originalName, title);
 
@@ -372,6 +410,82 @@ void AppReader::resolveNextBookTitle() {
         book.title = shown;
         _titlesDirty = true;
     }
+    return true;
+}
+
+// v1.19.0: mesma forma do resolveNextBookTitle() acima — um livro por
+// passagem do update(), só na biblioteca, com a mesma guarda de
+// exclusividade do ZIP (loadChapter/getChapterContentRich partilham o
+// descritor global, ver zipFd em EpubLoader.cpp). Ao contrário dos títulos,
+// não há um store à parte: o próprio ficheiro /covers/<nome>.thumb em
+// EbookFS É o cache — presente e do tamanho certo = capa real; presente e
+// vazio = "já tentado, sem capa"; ausente = por tentar (ver scanBooks(),
+// que já preenche coverAttempted/hasCoverThumb com um simples stat).
+void AppReader::resolveNextBookCover() {
+    if (_epubLoader) return;
+
+    int index = -1;
+    for (size_t i = 0; i < _books.size(); i++) {
+        if (!_books[i].coverAttempted) {
+            index = (int)i;
+            break;
+        }
+    }
+
+    if (index < 0) {
+        // Lote terminado: um único repintar, mesma razão do resolveNextBookTitle().
+        if (_coversDirty) {
+            _coversDirty = false;
+            _librarySelectionOnlyRedraw = false;
+            _needsRedraw = true;
+        }
+        return;
+    }
+
+    BookEntry& book = _books[index];
+    book.coverAttempted = true; // marcar antes de tentar: sem capa não pode ficar a ser reaberto sempre
+
+    if (!EbookFS.exists("/covers")) EbookFS.mkdir("/covers");
+    String thumbPath = coverThumbPathFor(book.path);
+
+    bool wroteCover = false;
+    String fullPath = "/ebooks" + book.path;
+    EpubLoader loader;
+    if (loader.open(fullPath.c_str())) {
+        if (loader.hasCoverImage()) {
+            size_t jpegSize = 0;
+            uint8_t* jpegData = loader.getCoverImageData(&jpegSize);
+            if (jpegData) {
+                if (jpegSize > 0) {
+                    uint8_t bitmap[BOOK32_COVER_THUMB_BYTES];
+                    // Só JPEG é suportado: um EPUB com capa PNG (ou outro
+                    // formato) devolve false aqui e fica sem capa em vez de
+                    // arriscar um segundo descodificador não verificável
+                    // nesta sessão — ver CoverImage.h.
+                    if (decodeJpegCoverToBitmap(jpegData, jpegSize, BOOK32_COVER_WIDTH, BOOK32_COVER_HEIGHT,
+                                                bitmap)) {
+                        File f = EbookFS.open(thumbPath, FILE_WRITE);
+                        if (f) {
+                            f.write(bitmap, sizeof(bitmap));
+                            f.close();
+                            wroteCover = true;
+                        }
+                    }
+                }
+                free(jpegData);
+            }
+        }
+        loader.close();
+    }
+
+    if (!wroteCover) {
+        // Marcador "sem capa" (ficheiro vazio): não voltar a tentar este livro.
+        File f = EbookFS.open(thumbPath, FILE_WRITE);
+        if (f) f.close();
+    }
+
+    book.hasCoverThumb = wroteCover;
+    _coversDirty = true;
 }
 
 void AppReader::drawBookTile(Book32Display& display, int x, int y, int w, int h, bool selected) {
@@ -391,6 +505,27 @@ void AppReader::drawBookTile(Book32Display& display, int x, int y, int w, int h,
     if (selected) {
         display.fillRect(x + w - 9, y + 8, 4, h - 16, GxEPD_BLACK);
     }
+}
+
+// Desenha a capa real já cacheada por resolveNextBookCover(). A moldura
+// (fundo branco + contorno) é sempre desenhada primeiro, para que uma cache
+// em falta ou de tamanho errado — livro apagado entre o scan e este desenho,
+// ou chamado com um w/h diferente do cache — deixe uma caixa vazia em vez de
+// nada ou de lixo no ecrã; o bitmap só é desenhado por cima se tudo bater certo.
+void AppReader::drawBookCoverThumb(Book32Display& display, const String& bookPath, int x, int y, int w,
+                                   int h) {
+    display.fillRect(x, y, w, h, GxEPD_WHITE);
+    display.drawRect(x, y, w, h, GxEPD_BLACK);
+    if (w != BOOK32_COVER_WIDTH || h != BOOK32_COVER_HEIGHT) return;
+
+    File f = EbookFS.open(coverThumbPathFor(bookPath), FILE_READ);
+    if (!f) return;
+    uint8_t buf[BOOK32_COVER_THUMB_BYTES];
+    size_t n = f.read(buf, sizeof(buf));
+    f.close();
+    if (n != sizeof(buf)) return;
+
+    display.drawBitmap(x, y, buf, BOOK32_COVER_WIDTH, BOOK32_COVER_HEIGHT, GxEPD_BLACK);
 }
 
 void AppReader::handleInput(InputAction action) {
@@ -1070,8 +1205,8 @@ void AppReader::drawLibrary() {
 
     const int HEADER_H = 76;
     const int BACK_ITEM_HEIGHT = 48;
-    const int COVER_WIDTH = 60;
-    const int COVER_HEIGHT = 80;
+    const int COVER_WIDTH = BOOK32_COVER_WIDTH;
+    const int COVER_HEIGHT = BOOK32_COVER_HEIGHT;
     const int ITEM_HEIGHT = 110;
     const int ITEM_PADDING = 24;
 
@@ -1136,7 +1271,11 @@ void AppReader::drawLibrary() {
                 int coverH = COVER_HEIGHT;
                 int coverX = ITEM_PADDING + 12;
                 int coverY = y + (ITEM_HEIGHT - coverH) / 2;
-                drawBookTile(display, coverX, coverY, coverW, coverH, isSelected);
+                if (book.hasCoverThumb) {
+                    drawBookCoverThumb(display, book.path, coverX, coverY, coverW, coverH);
+                } else {
+                    drawBookTile(display, coverX, coverY, coverW, coverH, isSelected);
+                }
                 if (isSelected) {
                     display.drawRect(coverX - 3, coverY - 3, coverW + 6, coverH + 6, GxEPD_BLACK);
                     display.drawRect(coverX - 2, coverY - 2, coverW + 4, coverH + 4, GxEPD_BLACK);
@@ -1278,7 +1417,15 @@ void AppReader::update() {
 
     // Fora da leitura, aproveitar uma passagem para ler o título de dentro de
     // um EPUB que ainda não o tenha em cache (um por passagem).
-    if (_state == VIEW_LIBRARY && _booksScanned) resolveNextBookTitle();
+    // v1.19.0: no máximo um ZIP aberto por passagem entre título e capa — se
+    // já não havia título nenhum por resolver, tenta a capa; caso contrário
+    // fica-se pelo título e a capa espera pela próxima passagem. Duplicar o
+    // custo de abrir ZIP (e, para a capa, descodificar um JPEG) na mesma
+    // passagem arriscava a resposta aos botões que o TODO.txt da v1.17.0 já
+    // pede para verificar.
+    if (_state == VIEW_LIBRARY && _booksScanned) {
+        if (!resolveNextBookTitle()) resolveNextBookCover();
+    }
 
     // Commit a deferred reading position once the page has been still for a
     // while. Page turns only mark it dirty (see saveReadingProgress), so a

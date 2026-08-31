@@ -25,8 +25,18 @@ struct BookEntry {
     // corta aos 28 caracteres). O título a sério vem do <dc:title> do EPUB,
     // lido fora do desenho — ver AppReader::resolveNextBookTitle().
     bool titleResolved;
+    // v1.19.0: false até se tentar extrair a capa deste livro (ver
+    // AppReader::resolveNextBookCover) — independente de a tentativa ter
+    // encontrado capa ou não, para não reabrir o ZIP de um livro sem capa a
+    // cada visita à biblioteca.
+    bool coverAttempted;
+    // Só true quando a tentativa encontrou e descodificou uma capa a sério;
+    // controla se drawLibrary() desenha o bitmap real ou o desenho genérico.
+    bool hasCoverThumb;
 
-    BookEntry() : hasProgress(false), globalPage(1), totalPages(0), titleResolved(false) {}
+    BookEntry()
+        : hasProgress(false), globalPage(1), totalPages(0), titleResolved(false), coverAttempted(false),
+          hasCoverThumb(false) {}
 };
 
 class AppReader : public App {
@@ -80,14 +90,26 @@ private:
     // cache e guarda-o (BookTitleStore). Um livro por chamada, a partir do
     // update() e só na biblioteca: abrir um ZIP demora o suficiente para se
     // notar, e nenhuma biblioteca precisa disto mais do que uma vez por livro.
-    void resolveNextBookTitle();
+    bool resolveNextBookTitle(); // true = abriu um ZIP nesta chamada (ver update())
     // Um repintar por lote de títulos em vez de um por título: cada refresh
     // e-ink custa quase um segundo, e a lista inteira costuma resolver-se em
     // poucas passagens.
     bool _titlesDirty = false;
+
+    // v1.19.0: mesma forma do resolveNextBookTitle() acima, mas para a capa
+    // — um livro por passagem do update(), na biblioteca, com o resultado
+    // (bitmap 1bpp já do tamanho do item) escrito para /covers/<nome>.thumb
+    // em EbookFS. Sem índice à parte: a presença/tamanho do próprio ficheiro
+    // é o cache, ver BookEntry::coverAttempted/hasCoverThumb e
+    // coverThumbPathFor() em AppReader.cpp.
+    void resolveNextBookCover();
+    bool _coversDirty = false;
     void drawLibrary();
     void updateLibraryScroll();
     void drawBookTile(Book32Display& display, int x, int y, int w, int h, bool selected);
+    // Desenha a capa real já cacheada para este livro (ver resolveNextBookCover);
+    // chamada só quando BookEntry::hasCoverThumb é true.
+    void drawBookCoverThumb(Book32Display& display, const String& bookPath, int x, int y, int w, int h);
 
     // Settings
     int _refreshEveryNPages;
