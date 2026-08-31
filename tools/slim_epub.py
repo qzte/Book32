@@ -15,6 +15,10 @@ A única excepção real é a capa: o firmware descodifica JPEG e mostra a capa
 verdadeira na biblioteca (EpubLoader::getCoverImageData + CoverImage.cpp), por
 isso --keep-cover vale a pena por omissão para quem quiser essa miniatura —
 o custo é só o tamanho da própria capa, não de todas as ilustrações do livro.
+Mesmo com --keep-cover, uma capa que não seja JPEG (PNG/GIF/WebP são comuns
+em EPUB) é sempre removida: o descodificador do firmware só sabe ler JPEG e
+dar-lhe outro formato arrisca crash no dispositivo em vez de simplesmente não
+mostrar capa.
 
 Uso:
     python tools/slim_epub.py livro.epub                 # cria livro.slim.epub
@@ -161,15 +165,24 @@ def clean_opf(xml, opf_path, keep_categories, keep_cover):
 
     Deixar entradas penduradas faria o leitor procurar ficheiros inexistentes,
     por isso o manifesto tem de acompanhar. Devolve (xml_novo, caminhos_zip,
-    caminho_zip_da_capa_ou_None) — a capa é devolvida mesmo quando mantida,
-    para o chamador a poder excluir da limpeza de encryption.xml.
+    caminho_zip_da_capa_mantida_ou_None) — só devolve a capa quando ela foi
+    mesmo mantida (ver is_jpeg abaixo), para o chamador a poder excluir da
+    limpeza de encryption.xml e do corte por extensão.
     """
     items = parse_items(xml)
     cover_href = find_cover_href(xml, items)
-    cover_path = resolve(opf_path, cover_href) if cover_href else None
 
     removed_ids = set()
     removed_paths = set()
+    kept_cover_path = [None]  # célula mutável só para o closure poder escrever
+
+    def is_jpeg(href, media):
+        # CoverImage.cpp só sabe descodificar JPEG (JPEGDEC): dar-lhe um PNG,
+        # GIF ou WebP como se fosse JPEG arrisca um crash no firmware em vez
+        # da falha silenciosa que EpubLoader.h assume — por isso uma capa
+        # que não seja JPEG é sempre removida, mesmo com --keep-cover.
+        ext = os.path.splitext(href)[1].lower()
+        return ext in (".jpg", ".jpeg") or media.lower() == "image/jpeg"
 
     def drop_item(match):
         tag = match.group(0)
@@ -177,10 +190,12 @@ def clean_opf(xml, opf_path, keep_categories, keep_cover):
         if not href:
             return tag
         media = re.search(r'media-type\s*=\s*"([^"]*)"', tag)
-        cat = classify(href.group(1), media.group(1) if media else "")
+        media_val = media.group(1) if media else ""
+        cat = classify(href.group(1), media_val)
         if cat is None or cat in keep_categories:
             return tag
-        if cat == "images" and keep_cover and href.group(1) == cover_href:
+        if cat == "images" and keep_cover and href.group(1) == cover_href and is_jpeg(href.group(1), media_val):
+            kept_cover_path[0] = resolve(opf_path, href.group(1))
             return tag
         item_id = re.search(r'\bid\s*=\s*"([^"]*)"', tag)
         if item_id:
@@ -208,7 +223,7 @@ def clean_opf(xml, opf_path, keep_categories, keep_cover):
         return tag
 
     xml = re.sub(r"<meta\b[^>]*/?>", drop_meta, xml)
-    return xml, removed_paths, cover_path
+    return xml, removed_paths, kept_cover_path[0]
 
 
 def clean_encryption(xml, removed_paths):
@@ -320,7 +335,7 @@ def main(argv=None):
     parser.add_argument(
         "--keep-cover",
         action="store_true",
-        help="mantem a capa do livro (o firmware ja mostra a capa real em JPEG na biblioteca)",
+        help="mantem a capa do livro, so se for JPEG (o firmware so descodifica esse formato)",
     )
     parser.add_argument(
         "--keep-images",
