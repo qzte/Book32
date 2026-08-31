@@ -25,14 +25,23 @@ if not defined PYTHON (
     exit /b 1
 )
 
+rem Escolhe aqui o que manter (por omissao remove tudo: imagens, fontes,
+rem CSS, JS e media -- nenhuma delas usada pelo leitor). --keep-cover fica
+rem ligado por omissao porque o Book32 ja mostra a capa real na biblioteca;
+rem o custo em tamanho e so o da propria capa. Outras opcoes uteis:
+rem   set SLIM_ARGS=--keep-cover --keep-images
+rem   set SLIM_ARGS=--keep-cover --keep-fonts
+rem   set SLIM_ARGS=  (sem opcoes, remove tudo incluindo a capa)
+set SLIM_ARGS=--keep-cover
+
 if "%~1"=="" goto :pasta
 
 rem Arrastar ficheiros passa-os como argumentos. Um a um, para que um EPUB
 rem partido nao impeca os restantes de serem processados.
-echo Book32 - a remover imagens e fontes embutidas...
+echo Book32 - a remover imagens, fontes e outros recursos nao suportados...
 echo.
 for %%F in (%*) do (
-    %PYTHON% "%SLIM%" "%%~fF"
+    %PYTHON% "%SLIM%" %SLIM_ARGS% "%%~fF"
 )
 echo.
 echo Concluido. Envia os ficheiros .slim.epub para o Book32 em
@@ -62,10 +71,10 @@ if errorlevel 1 (
     exit /b 0
 )
 
-echo Book32 - a remover imagens e fontes embutidas...
+echo Book32 - a remover imagens, fontes e outros recursos nao suportados...
 echo.
 for %%F in ("epubs\*.epub") do (
-    echo %%~nxF| findstr /i /c:".slim.epub" >nul || %PYTHON% "%SLIM%" "%%~fF"
+    echo %%~nxF| findstr /i /c:".slim.epub" >nul || %PYTHON% "%SLIM%" %SLIM_ARGS% "%%~fF"
 )
 echo.
 echo Concluido. Envia os ficheiros .slim.epub para o Book32 em

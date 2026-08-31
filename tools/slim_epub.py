@@ -1,16 +1,27 @@
 #!/usr/bin/env python3
-"""Remove imagens e fontes embutidas de ficheiros EPUB.
+"""Remove imagens, fontes e outros recursos não suportados de ficheiros EPUB.
 
 A partição de ebooks do Book32 tem ~9,9 MB. Um EPUB comercial gasta a maior
-parte do tamanho em capas, ilustrações e fontes embutidas — nenhuma das quais o
-leitor usa: o EpubLoader só extrai texto e o render usa as fontes compiladas no
-firmware (lib/Book32_Core/Fonts/). Retirar esse peso costuma reduzir um livro a
-menos de um décimo do tamanho, sem perder uma linha de texto.
+parte do tamanho em capas, ilustrações e fontes embutidas — a esmagadora
+maioria das quais o leitor não usa: o EpubLoader só extrai texto (os
+capítulos/spine nunca são tocados por este script) e o render usa as fontes
+compiladas no firmware (lib/Book32_Core/Fonts/). O mesmo vale para CSS,
+JavaScript e áudio/vídeo embutidos: o TextRenderer não interpreta CSS (só
+atributos style= inline) e o leitor não corre scripts nem reproduz media
+overlays. Retirar esse peso costuma reduzir um livro a menos de um décimo do
+tamanho, sem perder uma linha de texto.
+
+A única excepção real é a capa: o firmware descodifica JPEG e mostra a capa
+verdadeira na biblioteca (EpubLoader::getCoverImageData + CoverImage.cpp), por
+isso --keep-cover vale a pena por omissão para quem quiser essa miniatura —
+o custo é só o tamanho da própria capa, não de todas as ilustrações do livro.
 
 Uso:
     python tools/slim_epub.py livro.epub                 # cria livro.slim.epub
     python tools/slim_epub.py livro.epub -o saida.epub
     python tools/slim_epub.py *.epub --in-place          # substitui o original
+    python tools/slim_epub.py livro.epub --keep-cover     # mantém só a capa
+    python tools/slim_epub.py livro.epub --keep-images --keep-fonts
 """
 
 import argparse
@@ -21,30 +32,64 @@ import sys
 import tempfile
 import zipfile
 
-# Extensões removidas. SVG entra aqui por ser imagem: o leitor ignora-o e há
-# ficheiros SVG de capa com centenas de KB.
-STRIP_EXTENSIONS = {
-    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".svg",
-    ".ttf", ".otf", ".woff", ".woff2", ".eot",
+# Recursos agrupados por categoria, para permitir escolher o que manter
+# (--keep-cover/--keep-images/--keep-fonts/--keep-css/--keep-js/--keep-media).
+# SVG entra em "images" por ser imagem: o leitor ignora-o e há ficheiros SVG
+# de capa com centenas de KB. CSS entra porque o TextRenderer nunca lê
+# folhas de estilo (externas ou <style>), só style= inline.
+CATEGORIES = {
+    "images": {
+        "ext": {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".svg"},
+        "mime_prefixes": ("image/",),
+        "mime_exact": set(),
+    },
+    "fonts": {
+        "ext": {".ttf", ".otf", ".woff", ".woff2", ".eot"},
+        "mime_prefixes": ("font/",),
+        "mime_exact": {
+            "application/x-font-ttf",
+            "application/x-font-truetype",
+            "application/x-font-opentype",
+            "application/vnd.ms-opentype",
+            "application/font-woff",
+            "application/font-sfnt",
+        },
+    },
+    "css": {
+        "ext": {".css"},
+        "mime_prefixes": (),
+        "mime_exact": {"text/css"},
+    },
+    "js": {
+        "ext": {".js", ".mjs"},
+        "mime_prefixes": (),
+        "mime_exact": {"application/javascript", "text/javascript", "application/x-javascript"},
+    },
+    "media": {
+        "ext": {".mp3", ".m4a", ".mp4", ".m4v", ".ogg", ".oga", ".wav", ".webm", ".smil"},
+        "mime_prefixes": ("audio/", "video/"),
+        "mime_exact": {"application/smil+xml"},
+    },
 }
 
-# Tipos MIME correspondentes, para apanhar recursos com extensão invulgar.
-STRIP_MIME_PREFIXES = ("image/", "font/")
-STRIP_MIME_EXACT = {
-    "application/x-font-ttf",
-    "application/x-font-truetype",
-    "application/x-font-opentype",
-    "application/vnd.ms-opentype",
-    "application/font-woff",
-    "application/font-sfnt",
-}
+# META-INF/encryption.xml descreve a ofuscação de fontes (IDPF/Adobe): cada
+# <enc:EncryptedData> tem um CipherReference cujo URI é o caminho dentro do
+# ZIP (relativo à raiz do EPUB, não ao OPF). Depois de remover as fontes, essas
+# entradas passam a referir ficheiros inexistentes.
+ENCRYPTION_PATH = "META-INF/encryption.xml"
 
 
-def is_strippable(name, media_type=""):
-    if os.path.splitext(name)[1].lower() in STRIP_EXTENSIONS:
-        return True
+def classify(name, media_type=""):
+    """Devolve a categoria do recurso (ver CATEGORIES), ou None se não for
+    um dos tipos que este script sabe remover (ex.: XHTML, OPF, NCX)."""
+    ext = os.path.splitext(name)[1].lower()
     media_type = media_type.lower()
-    return media_type.startswith(STRIP_MIME_PREFIXES) or media_type in STRIP_MIME_EXACT
+    for cat, spec in CATEGORIES.items():
+        if ext in spec["ext"]:
+            return cat
+        if media_type and (media_type in spec["mime_exact"] or media_type.startswith(spec["mime_prefixes"])):
+            return cat
+    return None
 
 
 def find_opf_paths(zf):
@@ -71,12 +116,58 @@ def resolve(opf_path, href):
     return os.path.normpath(joined).replace("\\", "/")
 
 
-def clean_opf(xml, opf_path):
+def find_cover_href(xml, items):
+    """Href (tal como está no manifesto) do item de capa, ou None.
+
+    Mesma prioridade que o firmware usa (EpubLoader::parseOpf): primeiro o
+    <item properties="cover-image"> do EPUB3, senão o <meta name="cover"
+    content="ID"> do EPUB2 resolvido contra o manifesto.
+    """
+    for item_id, href, media, properties in items:
+        if properties and "cover-image" in properties.split():
+            return href
+    meta = re.search(r'<meta\b[^>]*\bname\s*=\s*"cover"[^>]*/?>', xml)
+    if meta:
+        content = re.search(r'content\s*=\s*"([^"]*)"', meta.group(0))
+        if content:
+            for item_id, href, media, properties in items:
+                if item_id == content.group(1):
+                    return href
+    return None
+
+
+def parse_items(xml):
+    """Lista (id, href, media-type, properties) de cada <item> do manifesto."""
+    items = []
+    for match in re.finditer(r"<item\b[^>]*/?>", xml):
+        tag = match.group(0)
+        href = re.search(r'href\s*=\s*"([^"]*)"', tag)
+        if not href:
+            continue
+        item_id = re.search(r'\bid\s*=\s*"([^"]*)"', tag)
+        media = re.search(r'media-type\s*=\s*"([^"]*)"', tag)
+        properties = re.search(r'\bproperties\s*=\s*"([^"]*)"', tag)
+        items.append((
+            item_id.group(1) if item_id else "",
+            href.group(1),
+            media.group(1) if media else "",
+            properties.group(1) if properties else "",
+        ))
+    return items
+
+
+def clean_opf(xml, opf_path, keep_categories, keep_cover):
     """Retira do manifesto os itens que vamos remover do ZIP.
 
     Deixar entradas penduradas faria o leitor procurar ficheiros inexistentes,
-    por isso o manifesto tem de acompanhar. Devolve (xml_novo, caminhos_zip).
+    por isso o manifesto tem de acompanhar. Devolve (xml_novo, caminhos_zip,
+    caminho_zip_da_capa_ou_None) — a capa é devolvida mesmo quando mantida,
+    para o chamador a poder excluir da limpeza de encryption.xml.
     """
+    items = parse_items(xml)
+    cover_href = find_cover_href(xml, items)
+    cover_path = resolve(opf_path, cover_href) if cover_href else None
+
     removed_ids = set()
     removed_paths = set()
 
@@ -86,7 +177,10 @@ def clean_opf(xml, opf_path):
         if not href:
             return tag
         media = re.search(r'media-type\s*=\s*"([^"]*)"', tag)
-        if not is_strippable(href.group(1), media.group(1) if media else ""):
+        cat = classify(href.group(1), media.group(1) if media else "")
+        if cat is None or cat in keep_categories:
+            return tag
+        if cat == "images" and keep_cover and href.group(1) == cover_href:
             return tag
         item_id = re.search(r'\bid\s*=\s*"([^"]*)"', tag)
         if item_id:
@@ -105,7 +199,7 @@ def clean_opf(xml, opf_path):
     xml = re.sub(r"<itemref\b[^>]*/?>", drop_itemref, xml)
 
     # <meta name="cover" content="id-da-capa"/> aponta para uma imagem que
-    # deixou de existir.
+    # deixou de existir (a não ser que a capa tenha sido mantida).
     def drop_meta(match):
         tag = match.group(0)
         content = re.search(r'content\s*=\s*"([^"]*)"', tag)
@@ -114,35 +208,76 @@ def clean_opf(xml, opf_path):
         return tag
 
     xml = re.sub(r"<meta\b[^>]*/?>", drop_meta, xml)
-    return xml, removed_paths
+    return xml, removed_paths, cover_path
 
 
-def slim(src, dst):
-    """Escreve em dst uma cópia de src sem imagens nem fontes.
+def clean_encryption(xml, removed_paths):
+    """Retira do encryption.xml as entradas dos ficheiros removidos.
 
-    Devolve (bytes_originais, bytes_finais, n_removidos).
+    Devolve o XML reescrito, ou None se não sobrar nenhuma
+    <enc:EncryptedData> — nesse caso o chamador remove o ficheiro todo.
+    """
+    def drop_entry(match):
+        block = match.group(0)
+        uri = re.search(r'URI\s*=\s*"([^"]+)"', block)
+        if uri and uri.group(1).lstrip("/") in removed_paths:
+            return ""
+        return block
+
+    new_xml = re.sub(
+        r"<enc:EncryptedData\b.*?</enc:EncryptedData>",
+        drop_entry,
+        xml,
+        flags=re.DOTALL,
+    )
+    if not re.search(r"<enc:EncryptedData\b", new_xml):
+        return None
+    return new_xml
+
+
+def slim(src, dst, keep_categories=frozenset(), keep_cover=False):
+    """Escreve em dst uma cópia de src sem os recursos não escolhidos para manter.
+
+    keep_categories é um subconjunto de {"images", "fonts", "css", "js",
+    "media"}; keep_cover mantém a capa mesmo com "images" fora desse
+    conjunto. Devolve (bytes_originais, bytes_finais, n_removidos).
     """
     with zipfile.ZipFile(src) as zin:
         opf_paths = find_opf_paths(zin)
         rewritten = {}
         from_manifest = set()
+        cover_paths = set()
         for opf in opf_paths:
             try:
                 xml = zin.read(opf).decode("utf-8", "replace")
             except KeyError:
                 continue
-            new_xml, removed = clean_opf(xml, opf)
+            new_xml, removed, cover_path = clean_opf(xml, opf, keep_categories, keep_cover)
             rewritten[opf] = new_xml.encode("utf-8")
             from_manifest |= removed
+            if cover_path:
+                cover_paths.add(cover_path)
 
         names = zin.namelist()
         # A extensão manda; o manifesto apanha o resto. Ficheiros dentro do ZIP
         # que nem sequer estão no manifesto (comuns em EPUBs gerados por
         # ferramentas) são apanhados pela extensão na mesma.
-        to_remove = {n for n in names if is_strippable(n)} | from_manifest
+        stripped_cats = {n: classify(n) for n in names}
+        to_remove = {n for n, cat in stripped_cats.items() if cat and cat not in keep_categories}
+        to_remove |= from_manifest
+        if keep_cover:
+            to_remove -= cover_paths
         to_remove &= set(names)
 
-        with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as zout:
+        if ENCRYPTION_PATH in names:
+            enc_xml = zin.read(ENCRYPTION_PATH).decode("utf-8", "replace")
+            new_enc = clean_encryption(enc_xml, to_remove)
+            if new_enc is None:
+                to_remove.add(ENCRYPTION_PATH)
+            elif new_enc != enc_xml:
+                rewritten[ENCRYPTION_PATH] = new_enc.encode("utf-8")
+
+        with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zout:
             # "mimetype" tem de ser a primeira entrada e não comprimida, senão
             # alguns leitores recusam o ficheiro.
             if "mimetype" in names:
@@ -171,7 +306,9 @@ def human(n):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Remove imagens e fontes embutidas de EPUBs para o Book32."
+        description="Remove imagens, fontes, CSS/JS e media embutidos de EPUBs para o Book32.",
+        epilog="Os capítulos (o XHTML da spine) nunca são tocados por este script, "
+               "independentemente das opções --keep-*.",
     )
     parser.add_argument("files", nargs="+", help="ficheiros .epub a processar")
     parser.add_argument("-o", "--output", help="ficheiro de saida (so com um input)")
@@ -180,12 +317,38 @@ def main(argv=None):
         action="store_true",
         help="substitui o original em vez de criar um .slim.epub",
     )
+    parser.add_argument(
+        "--keep-cover",
+        action="store_true",
+        help="mantem a capa do livro (o firmware ja mostra a capa real em JPEG na biblioteca)",
+    )
+    parser.add_argument(
+        "--keep-images",
+        action="store_true",
+        help="mantem todas as imagens, nao so a capa (o leitor nao as mostra dentro do texto)",
+    )
+    parser.add_argument("--keep-fonts", action="store_true", help="mantem as fontes embutidas (o leitor usa sempre as fontes do firmware)")
+    parser.add_argument("--keep-css", action="store_true", help="mantem CSS embutido (o leitor nao o interpreta)")
+    parser.add_argument("--keep-js", action="store_true", help="mantem JavaScript embutido (o leitor nao o executa)")
+    parser.add_argument("--keep-media", action="store_true", help="mantem audio/video/SMIL embutidos (o leitor nao os reproduz)")
     args = parser.parse_args(argv)
 
     if args.output and len(args.files) > 1:
         parser.error("-o so pode ser usado com um ficheiro de entrada")
     if args.output and args.in_place:
         parser.error("-o e --in-place sao mutuamente exclusivos")
+
+    keep_categories = set()
+    if args.keep_images:
+        keep_categories.add("images")
+    if args.keep_fonts:
+        keep_categories.add("fonts")
+    if args.keep_css:
+        keep_categories.add("css")
+    if args.keep_js:
+        keep_categories.add("js")
+    if args.keep_media:
+        keep_categories.add("media")
 
     total_before = total_after = 0
     failures = 0
@@ -214,7 +377,7 @@ def main(argv=None):
         tmp_fd, tmp_path = tempfile.mkstemp(suffix=".epub", dir=os.path.dirname(os.path.abspath(dst)))
         os.close(tmp_fd)
         try:
-            before, after, removed = slim(src, tmp_path)
+            before, after, removed = slim(src, tmp_path, keep_categories, args.keep_cover)
             shutil.move(tmp_path, dst)
         except Exception as exc:  # noqa: BLE001 - qualquer falha é do ficheiro
             if os.path.exists(tmp_path):
