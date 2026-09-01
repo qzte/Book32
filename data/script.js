@@ -1111,6 +1111,26 @@ function loadToc() {
         });
 }
 
+// Rótulos em português para o tipo bruto do <guide> do OPF (ChapterGuideTypeStore,
+// via /api/toc), usados só como recurso quando a entrada não tem título
+// detectado — ver isNarrativeGuideType em EpubLoader.cpp para a lista
+// completa de tipos reconhecidos.
+const TOC_GUIDE_TYPE_LABELS = {
+    'cover': 'Capa',
+    'toc': 'Índice do Livro',
+    'title-page': 'Página de Rosto',
+    'copyright-page': 'Direitos de Autor',
+    'dedication': 'Dedicatória',
+    'index': 'Índice Remissivo',
+    'glossary': 'Glossário',
+    'bibliography': 'Bibliografia',
+    'colophon': 'Colofão',
+    'acknowledgements': 'Agradecimentos',
+    'loi': 'Lista de Ilustrações',
+    'lot': 'Lista de Tabelas',
+    'notes': 'Notas',
+};
+
 function renderToc(chapters, ready) {
     const picker = document.getElementById('toc-picker');
     const select = document.getElementById('toc-select');
@@ -1126,7 +1146,14 @@ function renderToc(chapters, ready) {
     if (unavailableHint) unavailableHint.classList.add('hidden');
 
     select.innerHTML = chapters.map(c => {
-        const label = c.title && c.title.length ? c.title : `Capítulo ${c.index + 1}`;
+        let label;
+        if (c.title && c.title.length) {
+            label = c.title;
+        } else if (c.guideType && TOC_GUIDE_TYPE_LABELS[c.guideType]) {
+            label = TOC_GUIDE_TYPE_LABELS[c.guideType];
+        } else {
+            label = `Capítulo ${c.index + 1}`;
+        }
         // narrative undefined (livro indexado antes desta funcionalidade
         // existir, ver ChapterNarrativeStore) conta como narrativo — mesmo
         // comportamento de sempre, sem marcação nenhuma.

@@ -200,7 +200,12 @@ void EpubLoader::parseGuide(const String& xml) {
 
     // href -> não-narrativo, resolvido depois de percorrer todo o <guide>
     // (mais do que uma <reference> pode apontar para o mesmo documento).
+    // guideTypeForHref guarda o tipo cru (ex.: "cover") para o mesmo href, só
+    // para os não-narrativos — é a informação que nonNarrativeHref já não
+    // carrega, usada para rotular a entrada quando não há título detectável
+    // (ver EpubLoader::getChapterGuideType / AppReader::updateTocBuild).
     std::map<String, bool> nonNarrativeHref;
+    std::map<String, String> guideTypeForHref;
 
     int pos = 0;
     while (true) {
@@ -216,19 +221,31 @@ void EpubLoader::parseGuide(const String& xml) {
         int hashPos = href.indexOf('#');
         if (hashPos != -1)
             href = href.substring(0, hashPos); // referências ao próprio ficheiro, ignora o fragmento
-        if (!isNarrativeGuideType(type)) nonNarrativeHref[href] = true;
+        if (!isNarrativeGuideType(type)) {
+            nonNarrativeHref[href] = true;
+            guideTypeForHref[href] = type;
+        }
     }
     if (nonNarrativeHref.empty()) return;
 
     nonNarrativeChapters.assign(spine.size(), false);
+    chapterGuideType.assign(spine.size(), "");
     for (size_t i = 0; i < spine.size(); i++) {
-        if (nonNarrativeHref.count(spine[i].href)) nonNarrativeChapters[i] = true;
+        if (nonNarrativeHref.count(spine[i].href)) {
+            nonNarrativeChapters[i] = true;
+            chapterGuideType[i] = guideTypeForHref[spine[i].href];
+        }
     }
 }
 
 bool EpubLoader::isChapterNarrative(int index) const {
     if (index < 0 || index >= (int)nonNarrativeChapters.size()) return true;
     return !nonNarrativeChapters[index];
+}
+
+String EpubLoader::getChapterGuideType(int index) const {
+    if (index < 0 || index >= (int)chapterGuideType.size()) return "";
+    return chapterGuideType[index];
 }
 
 uint8_t* EpubLoader::getFontData(String path, size_t* outSize) {
@@ -730,7 +747,12 @@ String EpubLoader::getChapterTitle(int index) {
         if ((int)title.length() > BOOK32_MAX_CHAPTER_TITLE_LEN) {
             title = title.substring(0, BOOK32_MAX_CHAPTER_TITLE_LEN - 3) + "...";
         }
-        return title;
+        // node.textNode.text já passou por FontMgr::utf8ToLatin1() dentro de
+        // parseHtmlToRichContent(), para o renderizador do ecrã. Este título,
+        // em vez disso, acaba em JSON via /api/toc (ChapterTocStore) para a
+        // UI web, por isso tem de voltar a UTF-8 — caso contrário os acentos
+        // chegam ao browser como bytes Latin-1 inválidos em UTF-8 (mojibake).
+        return FontMgr::latin1ToUtf8(title);
     }
     return "";
 }

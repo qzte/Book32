@@ -121,6 +121,14 @@ public:
     // docs/plans/2026-09-01-filtrar-capitulos-nao-narrativos-design.md.
     bool isChapterNarrative(int index) const;
 
+    // Tipo bruto de <guide><reference type="..."> (OPF2) referenciado pelo
+    // capítulo `index` — "cover", "title-page", "copyright-page", etc., ver
+    // isNarrativeGuideType em EpubLoader.cpp. "" quando o capítulo é
+    // narrativo ou o índice está fora do intervalo. O chamador decide o
+    // rótulo em português (ver AppReader::updateTocBuild / data/script.js) —
+    // este método só expõe o valor cru do OPF.
+    String getChapterGuideType(int index) const;
+
     // Font support
     std::vector<FontInfo> getFonts();
     uint8_t* getFontData(String path, size_t* outSize);
@@ -167,6 +175,11 @@ public:
     // Um bool por capítulo (mesma ordem/tamanho da spine), preenchido por
     // parseGuide(); vazio quando o OPF não tem <guide> nenhum.
     std::vector<bool> nonNarrativeChapters;
+    // Espelha nonNarrativeChapters: o tipo bruto do <guide> ("cover",
+    // "title-page", ...) por capítulo, em vez de só o bool. String vazia
+    // onde nonNarrativeChapters seria false (ou o vector está vazio).
+    // Preenchido no mesmo passo de parseGuide(), sem custo de parsing extra.
+    std::vector<String> chapterGuideType;
 
     // Allocate UNZIP in PSRAM to avoid memory issues with the 41KB internal buffer
     UNZIP* zip;
