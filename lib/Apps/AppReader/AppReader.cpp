@@ -14,6 +14,7 @@
 #include "BookTitleLogic.h"
 #include "GoToPercentStore.h"
 #include "ChapterTocStore.h"
+#include "ChapterNarrativeStore.h"
 #include "GoToChapterStore.h"
 #include "CoverImage.h"
 #include "WebMgr.h"
@@ -306,6 +307,8 @@ void AppReader::scanBooks() {
         BookTitleStore::getInstance().reconcile(present);
         // v1.18.0: e para os índices de capítulo já construídos.
         ChapterTocStore::getInstance().reconcile(present);
+        // e para a classificação narrativo/não-narrativo por capítulo.
+        ChapterNarrativeStore::getInstance().reconcile(present);
 
         for (auto& b : _books) {
             BookProgress p;
@@ -926,6 +929,18 @@ void AppReader::updateTocBuild() {
             if (!_tocBuildTitles.empty()) {
                 String key = getOriginalFilename(normalizedBookName(_currentBookPath));
                 ChapterTocStore::getInstance().set(key, _tocBuildTitles);
+
+                // O <guide> do OPF já foi lido inteiro quando o EPUB abriu
+                // (EpubLoader::open -> parseOpf -> parseGuide): isto não
+                // reabre o ZIP nem repete trabalho por capítulo, ao contrário
+                // do loop de títulos acima — por isso persiste-se de uma vez,
+                // sem precisar de orçamento por passagem.
+                std::vector<bool> narrative;
+                narrative.reserve(totalChapters);
+                for (int i = 0; i < totalChapters; i++) {
+                    narrative.push_back(_epubLoader->isChapterNarrative(i));
+                }
+                ChapterNarrativeStore::getInstance().set(key, narrative);
             }
             return;
         }

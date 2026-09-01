@@ -167,7 +167,68 @@ bool EpubLoader::parseOpf() {
         pos = itemRefEnd + 1;
     }
 
+    parseGuide(xml);
+
     return true;
+}
+
+// Tipos de <reference type="..."> do <guide> (OPF2, secção 2.6) que não são
+// conteúdo de leitura corrido. Conservador de propósito: fica de fora tudo o
+// que costuma ter texto que o utilizador quer mesmo ler (prefácio, posfácio,
+// epígrafe, o próprio "text") — só os tipos inequivocamente estruturais
+// entram aqui, mesmos exemplos concretos apontados em
+// docs/plans/2026-08-31-avaliacao-gestao-epub.md (página de rosto, página de
+// créditos, a própria página de navegação).
+static bool isNarrativeGuideType(const String& type) {
+    static const char* NON_NARRATIVE[] = {
+        "cover", "toc",      "title-page",   "copyright-page", "dedication",
+        "index", "glossary", "bibliography", "colophon",       "acknowledgements",
+        "loi",   "lot",      "notes",
+    };
+    for (const char* t : NON_NARRATIVE) {
+        if (type.equalsIgnoreCase(t)) return false;
+    }
+    return true;
+}
+
+void EpubLoader::parseGuide(const String& xml) {
+    int guideStart = xml.indexOf("<guide");
+    if (guideStart == -1) return; // comum em EPUB3 puro — sem <guide>, tudo fica narrativo
+    int guideEnd = xml.indexOf("</guide>", guideStart);
+    if (guideEnd == -1) return;
+    String guideBlock = xml.substring(guideStart, guideEnd);
+
+    // href -> não-narrativo, resolvido depois de percorrer todo o <guide>
+    // (mais do que uma <reference> pode apontar para o mesmo documento).
+    std::map<String, bool> nonNarrativeHref;
+
+    int pos = 0;
+    while (true) {
+        int refStart = guideBlock.indexOf("<reference", pos);
+        if (refStart == -1) break;
+        int refEnd = guideBlock.indexOf(">", refStart);
+        if (refEnd == -1) break; // OPF truncado — falha em silêncio, mesma regra do manifest/spine
+        String refTag = guideBlock.substring(refStart, refEnd + 1);
+        String type = extractAttribute(refTag, "reference", "type");
+        String href = extractAttribute(refTag, "reference", "href");
+        pos = refEnd + 1;
+        if (href.length() == 0 || type.length() == 0) continue;
+        int hashPos = href.indexOf('#');
+        if (hashPos != -1)
+            href = href.substring(0, hashPos); // referências ao próprio ficheiro, ignora o fragmento
+        if (!isNarrativeGuideType(type)) nonNarrativeHref[href] = true;
+    }
+    if (nonNarrativeHref.empty()) return;
+
+    nonNarrativeChapters.assign(spine.size(), false);
+    for (size_t i = 0; i < spine.size(); i++) {
+        if (nonNarrativeHref.count(spine[i].href)) nonNarrativeChapters[i] = true;
+    }
+}
+
+bool EpubLoader::isChapterNarrative(int index) const {
+    if (index < 0 || index >= (int)nonNarrativeChapters.size()) return true;
+    return !nonNarrativeChapters[index];
 }
 
 uint8_t* EpubLoader::getFontData(String path, size_t* outSize) {

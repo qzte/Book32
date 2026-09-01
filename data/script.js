@@ -1113,9 +1113,15 @@ function renderToc(chapters, ready) {
     }
     list.innerHTML = chapters.map(c => {
         const label = c.title && c.title.length ? c.title : `Capítulo ${c.index + 1}`;
+        // narrative undefined (livro indexado antes desta funcionalidade
+        // existir, ver ChapterNarrativeStore) conta como narrativo — mesmo
+        // comportamento de sempre, sem marcação nenhuma.
+        const isNarrative = c.narrative !== false;
+        const itemClass = isNarrative ? 'book-item' : 'book-item book-item-non-narrative';
+        const tag = isNarrative ? '' : ' <span class="toc-non-narrative-tag">(não narrativo)</span>';
         return `
-        <div class="book-item">
-            <span class="book-title">${escapeHtml(label)}</span>
+        <div class="${itemClass}">
+            <span class="book-title">${escapeHtml(label)}${tag}</span>
             <button class="btn-order" data-index="${c.index}" title="Aplica-se da próxima vez que este livro abrir no dispositivo">Ir</button>
         </div>`;
     }).join('');

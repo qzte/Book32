@@ -110,6 +110,17 @@ public:
     // (ver ChapterTocStore / AppReader::updateTocBuild).
     String getChapterTitle(int index);
 
+    // false quando o capítulo `index` está referenciado no <guide> do OPF
+    // (EPUB2) com um tipo não-narrativo (capa, índice, página de rosto,
+    // créditos, dedicatória, etc. — ver isNarrativeGuideType em
+    // EpubLoader.cpp). true por omissão: um EPUB sem <guide> (comum em
+    // EPUB3 puro, que usa antes um nav.xhtml de landmarks ainda não lido
+    // aqui) ou um índice fora do intervalo da spine mantém-se narrativo,
+    // que é o comportamento de sempre. Não muda getChapterCount() nem a
+    // ordem/índices da spine — só classifica; ver
+    // docs/plans/2026-09-01-filtrar-capitulos-nao-narrativos-design.md.
+    bool isChapterNarrative(int index) const;
+
     // Font support
     std::vector<FontInfo> getFonts();
     uint8_t* getFontData(String path, size_t* outSize);
@@ -153,6 +164,9 @@ public:
     std::vector<SpineItem> spine;
     std::map<String, String> manifest; // id -> href
     String coverHref;                  // "" quando o manifest não indica capa nenhuma
+    // Um bool por capítulo (mesma ordem/tamanho da spine), preenchido por
+    // parseGuide(); vazio quando o OPF não tem <guide> nenhum.
+    std::vector<bool> nonNarrativeChapters;
 
     // Allocate UNZIP in PSRAM to avoid memory issues with the 41KB internal buffer
     UNZIP* zip;
@@ -163,6 +177,11 @@ public:
     String extractTagContent(const String& xml, const String& tag);
     // Helper to extract metadata from OPF
     String extractMetadata(const String& xml, const String& tag);
+    // Lê o <guide> do OPF (EPUB2) e marca em nonNarrativeChapters os índices
+    // da spine cujo href é referenciado com um tipo não-narrativo. Chamado
+    // por parseOpf() depois de a spine estar completa (precisa dela para
+    // resolver href -> índice).
+    void parseGuide(const String& xml);
 
     // Helper to read file from zip
     String readFileFromZip(const char* path);

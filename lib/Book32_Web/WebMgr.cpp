@@ -22,6 +22,7 @@
 #include "../Book32_Core/BookmarkStore.h"
 #include "../Book32_Core/GoToPercentStore.h"
 #include "../Book32_Core/ChapterTocStore.h"
+#include "../Book32_Core/ChapterNarrativeStore.h"
 #include "../Book32_Core/GoToChapterStore.h"
 #include "../Book32_Update/GitHubMgr.h"
 #include "../Book32_Core/BatteryMgr.h"
@@ -1302,6 +1303,18 @@ void WebMgr::setupEndpoints() {
     // AppReader::startTocBuild/updateTocBuild). "ready":false with an empty
     // "chapters" array means that hasn't happened yet — same "not known yet"
     // shape as the page-count fields elsewhere in this API.
+    //
+    // "narrative" (added by the non-narrative chapter filtering work) is
+    // read from the sibling ChapterNarrativeStore, classified from the OPF
+    // <guide> (see EpubLoader::isChapterNarrative) — cover/toc/title-page/
+    // copyright-page/etc. entries come back false so the web UI can grey
+    // them out or skip them in "ir para capítulo", without touching the
+    // chapter *indices* themselves (those still match the EPUB spine 1:1,
+    // exactly as ProgressStore/PageCountStore/GoToPercentLogic expect). A
+    // book indexed before this field existed has no ChapterNarrativeStore
+    // entry yet, so every chapter defaults to true (narrative) — the same
+    // "show everything" behaviour as before this feature, until the book is
+    // reindexed. See docs/plans/2026-09-01-filtrar-capitulos-nao-narrativos-design.md.
     server->on("/api/toc", HTTP_GET, [](AsyncWebServerRequest* request) {
         if (!request->hasParam("book")) {
             request->send(400, "application/json", "{\"error\":\"missing 'book'\"}");
@@ -1310,13 +1323,17 @@ void WebMgr::setupEndpoints() {
         String book = request->getParam("book")->value();
         std::vector<String> titles;
         bool ready = ChapterTocStore::getInstance().get(book, titles);
+        std::vector<bool> narrative;
+        ChapterNarrativeStore::getInstance().get(book, narrative); // ok if this stays empty
 
         AsyncResponseStream* response = request->beginResponseStream("application/json");
         response->printf("{\"book\":\"%s\",\"ready\":%s,\"chapters\":[", jsonEscape(book).c_str(),
                          ready ? "true" : "false");
         for (size_t i = 0; i < titles.size(); i++) {
             if (i > 0) response->print(",");
-            response->printf("{\"index\":%d,\"title\":\"%s\"}", (int)i, jsonEscape(titles[i]).c_str());
+            bool isNarrative = (i < narrative.size()) ? narrative[i] : true;
+            response->printf("{\"index\":%d,\"title\":\"%s\",\"narrative\":%s}", (int)i,
+                             jsonEscape(titles[i]).c_str(), isNarrative ? "true" : "false");
         }
         response->print("]}");
         request->send(response);
