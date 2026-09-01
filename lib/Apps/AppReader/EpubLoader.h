@@ -35,7 +35,9 @@ struct RichTextNode {
     int indent;
     int listNumber; // <ol> item ordinal (1-based); 0 for <ul>/no list
 
-    RichTextNode() : style(STYLE_NORMAL), align(ALIGN_LEFT), isListItem(false), isBlockStart(true), indent(0), listNumber(0) {}
+    RichTextNode()
+        : style(STYLE_NORMAL), align(ALIGN_LEFT), isListItem(false), isBlockStart(true), indent(0),
+          listNumber(0) {}
 };
 
 // Table structures

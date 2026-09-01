@@ -442,9 +442,13 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(const String& html) 
     String currentText;
     int i = 0;
     // One entry per open <ol>/<ul>, innermost last.
-    struct OpenList { bool ordered; int nextNumber; };
+    struct OpenList {
+        bool ordered;
+        int nextNumber;
+    };
     std::vector<OpenList> listStack;
-    static const int LIST_INDENT_STEP = 20; // px per nesting level, matches the renderer's flat left-margin model
+    static const int LIST_INDENT_STEP =
+        20; // px per nesting level, matches the renderer's flat left-margin model
     while(i < (int)html.length()) {
         char c = html.charAt(i);
         if(c == '<') {
@@ -522,24 +526,20 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(const String& html) 
                    styleStack.back() == STYLE_HEADER2 || styleStack.back() == STYLE_HEADER3)) {
                     styleStack.pop_back();
                 }
-            }
-            else if((tag == "ol" || tag == "ul") && !isClosing) {
+            } else if ((tag == "ol" || tag == "ul") && !isClosing) {
                 listStack.push_back({tag == "ol", 1});
-            }
-            else if(tag == "ol" || tag == "ul") { // closing
-                if(!listStack.empty()) listStack.pop_back();
-            }
-            else if(tag == "li" && !isClosing) {
+            } else if (tag == "ol" || tag == "ul") { // closing
+                if (!listStack.empty()) listStack.pop_back();
+            } else if (tag == "li" && !isClosing) {
                 isListItem = true;
                 nextIsBlockStart = true;
                 currentIndent = LIST_INDENT_STEP * (int)listStack.size();
-                if(!listStack.empty() && listStack.back().ordered) {
+                if (!listStack.empty() && listStack.back().ordered) {
                     currentListNumber = listStack.back().nextNumber++;
                 } else {
                     currentListNumber = 0;
                 }
-            }
-            else if(tag == "table" && !isClosing) {
+            } else if (tag == "table" && !isClosing) {
                 int tableEnd = html.indexOf("</table>", i);
                 if(tableEnd != -1) {
                     String tableHtml = html.substring(i, tableEnd + 8);
@@ -554,16 +554,15 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(const String& html) 
                     nextIsBlockStart = true;
                     continue;
                 }
-            }
-            else if(tag == "script" || tag == "style" || tag == "head" || tag == "figure" || tag == "svg" || tag == "figcaption") {
+            } else if (tag == "script" || tag == "style" || tag == "head" || tag == "figure" ||
+                       tag == "svg" || tag == "figcaption") {
                 int skipEnd = html.indexOf("</" + tag + ">", i);
                 if(skipEnd != -1) { i = skipEnd + tag.length() + 3; continue; }
             }
             // Skip self-closing image tags
-            else if(tag == "img" || tag == "image") {
+            else if (tag == "img" || tag == "image") {
                 // Just skip - nothing to do for self-closing tags
-            }
-            else if(tag == "br") {
+            } else if (tag == "br") {
                 currentText += "\n";
             }
             i = tagEnd + 1;

@@ -1164,7 +1164,10 @@ void AppReader::prevChapter() {
             // has no renderable content (nav/cover/divider pages) just as
             // reliably as the old length-of-stripped-text check did.
             std::vector<ContentNode> chapterContent = _epubLoader->getChapterContentRich(tryChapter);
-            if (chapterContent.size() > 0) { loadChapter(tryChapter); return; }
+            if (chapterContent.size() > 0) {
+                loadChapter(tryChapter);
+                return;
+            }
             tryChapter--;
         }
     }
