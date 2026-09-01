@@ -255,7 +255,9 @@ Other tools:
 - `tools/converter` — font and asset conversion helper
 
 Design notes for each feature live in `docs/plans/`, and `TODO.txt` tracks the
-on-device checks that the host tests cannot cover.
+on-device checks that the host tests cannot cover. Run
+[`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md) on real hardware
+before tagging a release.
 
 ## Partition Notes
 
