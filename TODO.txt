@@ -83,3 +83,23 @@ Build normal (upload + uploadfs) depois de remover B32Reader.{h,cpp} e
 tools/converter/: confirmar que compila e que o comportamento do leitor de
 EPUB fica inalterado — este codigo nunca era instanciado, por isso nao deve
 haver diferenca nenhuma visivel.
+
+=== Filtrar capitulos nao-narrativos do indice — a verificar no dispositivo (nao coberto pelos testes de host) ===
+(ver docs/plans/2026-09-01-filtrar-capitulos-nao-narrativos-design.md; pio
+run nao correu neste ambiente, so revisao manual do diff)
+EPUB real com <guide> no OPF (a maioria dos gerados por Calibre/Sigil tem):
+abrir o livro no dispositivo, esperar o indice construir (card "Indice" na
+web UI), confirmar que as entradas de capa/pagina de rosto/creditos
+aparecem com menos destaque (opacity reduzida + etiqueta "(nao narrativo)")
+e que "Ir" continua a saltar para la sem erro.
+EPUB sem <guide> nenhum (comum em EPUB3 puro): confirmar que o indice fica
+exactamente como antes desta alteracao, sem nenhuma entrada marcada.
+Confirmar em /api/toc (curl ou devtools) que o campo "narrative" aparece
+por capitulo e bate certo com o <guide> do EPUB de teste.
+Livro cujo indice ja tinha sido construido por uma firmware anterior a esta
+alteracao: confirmar a limitacao conhecida do design doc — fica sem
+classificacao (tudo "narrative":true) ate ser reindexado, sem crashar nem
+mostrar dados errados.
+Apagar um livro pela web UI: confirmar que /chapter_narrative.json perde a
+entrada correspondente no scan seguinte, no mesmo ponto onde titulos e
+posicoes ja sao podados.
