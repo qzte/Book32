@@ -252,7 +252,6 @@ Other tools:
 
 - `tools/format.sh` — run clang-format locally
 - `tools/slim_epub.py` — shrink an EPUB before sending it to the device
-- `tools/converter` — font and asset conversion helper
 
 Design notes for each feature live in `docs/plans/`, and `TODO.txt` tracks the
 on-device checks that the host tests cannot cover. Run

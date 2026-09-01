@@ -61,83 +61,6 @@ void EpubLoader::close() {
 String EpubLoader::getTitle() { return bookTitle; }
 int EpubLoader::getChapterCount() { return spine.size(); }
 
-String EpubLoader::getChapterContent(int index) {
-    if(index < 0 || index >= (int)spine.size()) return "";
-    String href = spine[index].href;
-    String fullPath = rootDir + href;
-    if(fullPath.startsWith("./")) fullPath = fullPath.substring(2);
-    String content = readFileFromZip(fullPath.c_str());
-    if (content.length() == 0) return "";
-    
-    // --- ADVANCED HTML PARSING ---
-    String clean;
-    clean.reserve(content.length());
-    bool inTag = false, skipContent = false;
-    String currentTag;
-    
-    for(int i = 0; i < (int)content.length(); i++) {
-        char c = content.charAt(i);
-        if(c == '<') {
-            inTag = true; currentTag = ""; int j = i + 1;
-            while(j < (int)content.length() && content.charAt(j) != '>' && content.charAt(j) != ' ' && j - i < 20) { currentTag += (char)tolower(content.charAt(j)); j++; }
-            
-            // BLOCK ELEMENTS: cause a newline
-            if(currentTag == "p" || currentTag == "/p" || currentTag == "div" || currentTag == "/div" || currentTag == "br" || currentTag == "br/" || currentTag.startsWith("h")) {
-                if(clean.length() > 0 && clean.charAt(clean.length()-1) != '\n') clean += "\n";
-            }
-            else if(currentTag == "li") {
-                if(clean.length() > 0 && clean.charAt(clean.length()-1) != '\n') clean += "\n";
-                clean += "• ";
-            }
-            // Skip image/media elements completely
-            else if(currentTag == "img" || currentTag == "svg" || currentTag == "figure" || currentTag == "image") {
-                // Skip - these are self-closing or we don't want their content
-            }
-            else if(currentTag == "/figure" || currentTag == "/svg") {
-                // End of skipped elements
-            }
-            else if(currentTag == "script" || currentTag == "style" || currentTag == "head") skipContent = true;
-            else if(currentTag == "/script" || currentTag == "/style" || currentTag == "/head") skipContent = false;
-        } else if (c == '>') {
-            inTag = false;
-        } else if (!inTag && !skipContent) {
-            if(c == '\n' || c == '\r' || c == '\t') c = ' ';
-            clean += c;
-        }
-    }
-
-    // --- AGGRESSIVE CLEANING ---
-    // Handle Windows-1252 / UTF-8 mix-up artifacts seen in Sanderson EPUBs
-    clean.replace("¶Ç8", " -- ");
-    clean.replace("¶ÇÖ", "'");
-    clean.replace("¶Çö", "'");
-    clean.replace("¶Ç£", "\"");
-    clean.replace("¶Ç¥", "\"");
-    clean.replace("¶Çª", "-");
-    clean.replace("¶ÇÜ", "...");
-    clean.replace("¶Ç", ""); // Wipe any remaining prefix
-    
-    // Standard UTF-8
-    clean.replace("\xE2\x80\x9C", "\""); clean.replace("\xE2\x80\x9D", "\"");
-    clean.replace("\xE2\x80\x98", "'"); clean.replace("\xE2\x80\x99", "'");
-    clean.replace("\xE2\x80\x94", " -- "); clean.replace("\xE2\x80\x93", " - ");
-    clean.replace("\xE2\x80\xA6", "...");
-    
-    // Strip accidental newlines before punctuation (fixes the orphan comma/dot)
-    clean.replace("\n,", ",");
-    clean.replace("\n.", ".");
-    clean.replace("\n?", "?");
-    clean.replace("\n!", "!");
-    clean.replace("\n\"", "\"");
-    clean.replace("\n'", "'");
-    
-    // Collapse multiple spaces
-    while(clean.indexOf("  ") != -1) clean.replace("  ", " ");
-    
-    clean.trim();
-    return clean;
-}
-
 bool EpubLoader::parseContainer() {
     String xml = readFileFromZip("META-INF/container.xml");
     if(xml.length() == 0) return false;
@@ -514,9 +437,14 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(const String& html) 
     TextAlign currentAlign = ALIGN_LEFT;
     int currentIndent = 0;
     bool isListItem = false;
+    int currentListNumber = 0; // Set from listStack when a <li> opens; 0 = no number (<ul> or no list)
     bool nextIsBlockStart = true;
     String currentText;
     int i = 0;
+    // One entry per open <ol>/<ul>, innermost last.
+    struct OpenList { bool ordered; int nextNumber; };
+    std::vector<OpenList> listStack;
+    static const int LIST_INDENT_STEP = 20; // px per nesting level, matches the renderer's flat left-margin model
     while(i < (int)html.length()) {
         char c = html.charAt(i);
         if(c == '<') {
@@ -528,11 +456,13 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(const String& html) 
                 node.textNode.align = currentAlign;
                 node.textNode.isListItem = isListItem;
                 node.textNode.indent = currentIndent;
+                node.textNode.listNumber = currentListNumber;
                 node.textNode.isBlockStart = nextIsBlockStart;
                 nodes.push_back(node);
                 currentText = "";
                 isListItem = false;
                 currentIndent = 0;
+                currentListNumber = 0;
                 nextIsBlockStart = false; // Next node in same block is not a start
             }
             int tagEnd = html.indexOf('>', i);
@@ -593,9 +523,21 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(const String& html) 
                     styleStack.pop_back();
                 }
             }
+            else if((tag == "ol" || tag == "ul") && !isClosing) {
+                listStack.push_back({tag == "ol", 1});
+            }
+            else if(tag == "ol" || tag == "ul") { // closing
+                if(!listStack.empty()) listStack.pop_back();
+            }
             else if(tag == "li" && !isClosing) {
                 isListItem = true;
                 nextIsBlockStart = true;
+                currentIndent = LIST_INDENT_STEP * (int)listStack.size();
+                if(!listStack.empty() && listStack.back().ordered) {
+                    currentListNumber = listStack.back().nextNumber++;
+                } else {
+                    currentListNumber = 0;
+                }
             }
             else if(tag == "table" && !isClosing) {
                 int tableEnd = html.indexOf("</table>", i);
@@ -644,6 +586,7 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(const String& html) 
         node.textNode.align = currentAlign;
         node.textNode.isListItem = isListItem;
         node.textNode.indent = currentIndent;
+        node.textNode.listNumber = currentListNumber;
         node.textNode.isBlockStart = nextIsBlockStart;
         nodes.push_back(node);
     }

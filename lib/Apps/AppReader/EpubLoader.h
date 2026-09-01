@@ -32,9 +32,10 @@ struct RichTextNode {
     TextAlign align;
     bool isListItem;
     bool isBlockStart; // Starts a new paragraph/block
-    int indent; 
-    
-    RichTextNode() : style(STYLE_NORMAL), align(ALIGN_LEFT), isListItem(false), isBlockStart(true), indent(0) {}
+    int indent;
+    int listNumber; // <ol> item ordinal (1-based); 0 for <ul>/no list
+
+    RichTextNode() : style(STYLE_NORMAL), align(ALIGN_LEFT), isListItem(false), isBlockStart(true), indent(0), listNumber(0) {}
 };
 
 // Table structures
@@ -97,7 +98,6 @@ public:
     
     // Content getters
     int getChapterCount();
-    String getChapterContent(int index);  // Legacy plain text
     std::vector<ContentNode> getChapterContentRich(int index);  // Rich formatted content
 
     // Título heurístico do capítulo `index`: o texto do primeiro nó com
