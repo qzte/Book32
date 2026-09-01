@@ -163,6 +163,10 @@ harness assim em CI é provavelmente desproporcionado — mas um checklist de
 fumo manual (arranque, upload de EPUB, OTA, standby/wake) corrido antes de
 cada tag `vX.Y.Z` capturaria grande parte do valor a um custo muito menor.
 
+✅ Checklist escrito em 2026-09-01: [`docs/RELEASE_CHECKLIST.md`](../RELEASE_CHECKLIST.md).
+Falta ainda ser corrido num Book32 real antes da próxima tag — o documento
+existe, mas nenhuma passagem por ele aconteceu em hardware.
+
 ## O que não é transferível (e porquê)
 
 - **Deep sleep entre atualizações**: faz sentido para um dashboard que só
@@ -194,7 +198,7 @@ cada tag `vX.Y.Z` capturaria grande parte do valor a um custo muito menor.
 | 4 | ✅ "Esquecer rede" nas definições | Baixo (UX) | Baixo |
 | 5 | ✅⚠️ Confirmar `app_valid` pós-OTA para rollback automático | Médio (robustez) | Médio |
 | 6 | ✅ Fixar versões exatas em `lib_deps` | Baixo (reprodutibilidade) | Baixo |
-| 7 | Checklist de fumo manual pré-release | Baixo (qualidade) | Baixo |
+| 7 | ✅⚠️ Checklist de fumo manual pré-release (escrito, por correr em hardware) | Baixo (qualidade) | Baixo |
 
 Os pontos 1 e 2 são os que trazem mais valor por esforço: o primeiro porque
 o próprio projeto já sabe que está em aberto, o segundo porque é uma troca

@@ -62,3 +62,16 @@ Se a hipótese acima se confirmar, as opções são:
 
 Não persegui a opção 1 nesta sessão — é uma decisão maior a tomar com
 hardware disponível para validar, não algo para decidir às cegas.
+
+## Como fechar esta dúvida (adicionado 2026-09-01)
+
+Tentei confirmar isto por código/config (sdkconfig do pacote
+`framework-arduinoespressif32` publicado) sem acesso a hardware nem a um
+ambiente PlatformIO com o pacote já descarregado, e não foi possível
+verificar com confiança — continua a ser uma pergunta que só um teste em
+hardware real responde. Escrevi o protocolo de teste concreto na secção 6
+de [`docs/RELEASE_CHECKLIST.md`](../RELEASE_CHECKLIST.md): simula uma OTA
+que nunca chama `esp_ota_mark_app_valid_cancel_rollback()` e observa, pelo
+monitor série ao longo de vários ciclos de arranque, se o bootloader
+reverte sozinho para a partição anterior. É um teste de correr uma vez, não
+a cada release — falta só ser executado num Book32 real.
