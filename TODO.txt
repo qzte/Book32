@@ -65,3 +65,21 @@ cheia e confirmar que uma escrita de capa falhada (sem espaco) nao trava o
 leitor nem deixa um .thumb a meio escrito a ser lido como capa valida.
 Capa de resolucao muito alta (ex.: scan de varios MB): confirmar que a
 descodificacao nao demora tanto que pareca que o dispositivo bloqueou.
+
+=== Pos-limpeza de EpubLoader (getChapterContent, B32Reader, numeracao <ol>) — a verificar no dispositivo (nao coberto pelos testes de host) ===
+(ver docs/plans/2026-08-31-avaliacao-gestao-epub.md, itens 6 e 8; pio run nao
+correu neste ambiente, so revisao manual do diff — mudanca em codigo Arduino,
+sem stub de host para EpubLoader/TextRenderer)
+Recuar de capitulo (prevChapter, ex.: KEY1 no inicio de um capitulo) continua
+a saltar paginas de nav/rosto vazias tal como antes, agora usando
+getChapterContentRich(...).size()>0 em vez do parser de texto simples
+removido — testar num livro cuja spine tenha uma pagina de nav ou rosto sem
+texto a seguir a um capitulo com conteudo.
+Listas <ol> num EPUB real: confirmar que os itens aparecem numerados "1. ",
+"2. ", ... em vez do travessao "- " de sempre, que listas <ul> continuam com
+"- ", e que uma <ol> dentro de outra <ol>/<ul> fica mais indentada que a
+lista exterior sem sobrepor o texto ao traço/numero.
+Build normal (upload + uploadfs) depois de remover B32Reader.{h,cpp} e
+tools/converter/: confirmar que compila e que o comportamento do leitor de
+EPUB fica inalterado — este codigo nunca era instanciado, por isso nao deve
+haver diferenca nenhuma visivel.

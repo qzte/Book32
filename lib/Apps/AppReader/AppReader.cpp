@@ -1158,8 +1158,16 @@ void AppReader::prevChapter() {
     if (_currentChapter > 0) {
         int tryChapter = _currentChapter - 1;
         while (tryChapter >= 0) {
-            String chapterText = _epubLoader->getChapterContent(tryChapter);
-            if (chapterText.length() > 0) { loadChapter(tryChapter); return; }
+            // Reuses the rich-content parser instead of the old plain-text
+            // one: parseHtmlToRichContent() already drops empty text nodes
+            // (EpubLoader.cpp), so an empty result here means the chapter
+            // has no renderable content (nav/cover/divider pages) just as
+            // reliably as the old length-of-stripped-text check did.
+            std::vector<ContentNode> chapterContent = _epubLoader->getChapterContentRich(tryChapter);
+            if (chapterContent.size() > 0) {
+                loadChapter(tryChapter);
+                return;
+            }
             tryChapter--;
         }
     }

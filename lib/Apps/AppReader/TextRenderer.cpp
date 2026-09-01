@@ -201,8 +201,19 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
                 int segment_width = 0;
                 
                 if (node.textNode.isListItem && pos == currentOffset) {
-                    strcpy(lineBuf, "- ");
-                    segment_width = _gfxCharWidths['-'] + _gfxCharWidths[' '];
+                    // Ordered (<ol>) items carry their 1-based ordinal in
+                    // listNumber; unordered (<ul>) items and lists that
+                    // never resolved to a stack depth (listNumber == 0)
+                    // keep the plain dash marker.
+                    if (node.textNode.listNumber > 0) {
+                        snprintf(lineBuf, sizeof(lineBuf), "%d. ", node.textNode.listNumber);
+                    } else {
+                        strcpy(lineBuf, "- ");
+                    }
+                    segment_width = 0;
+                    for (const char* m = lineBuf; *m; m++) {
+                        segment_width += _gfxCharWidths[(unsigned char)*m];
+                    }
                 }
 
                 while (pos + line_chars < textLen) {

@@ -185,9 +185,9 @@ pretendida pelo editor perde-se hoje, mesmo sem imagens.
 | 3 | Filtrar itens não-narrativos da contagem de "capítulos" | Baixo (depende de #2) | Médio | `nav.xhtml`/páginas de rosto/créditos hoje contam como capítulo de leitura. |
 | 4 | CSS externo/embutido (mesmo que parcial: classes comuns) | Alto | Médio-Alto | Maior impacto na fidelidade tipográfica do que imagens, para a maioria dos EPUB comerciais. |
 | 5 | Placeholder para imagens no corpo do texto | Baixo | Baixo-Médio | Ex.: "[imagem]" com uma linha em branco reservada, em vez de desaparecer sem rasto — intermédio antes de suporte a imagem real. |
-| 6 | Consolidar `getChapterContent()`/`parseHtmlToRichContent()` | Baixo | Manutenção | Elimina parser e correções de encoding duplicadas; `prevChapter()` passa a usar `getChapterContentRich().size()>0`. |
+| 6 | ✅ Consolidar `getChapterContent()`/`parseHtmlToRichContent()` | Baixo | Manutenção | Feito em 2026-09-01: `prevChapter()` passou a usar `getChapterContentRich(...).size() > 0` (`parseHtmlToRichContent` já remove nós de texto vazios, ver `EpubLoader.cpp`), e `getChapterContent()` foi removido por ficar sem chamadores. |
 | 7 | Numeração de `<ol>` / indentação de listas aninhadas | Baixo | Baixo | Cosmético. |
-| 8 | Decidir o destino de `B32Reader`/`tools/converter` | Baixo | Manutenção | Código morto no firmware actual; remover ou documentar como descontinuado evita confusão futura. |
+| 8 | ✅ Decidir o destino de `B32Reader`/`tools/converter` | Baixo | Manutenção | Removidos em 2026-09-01: nenhum ficheiro no firmware instanciava `B32Reader`, e `tools/converter` só existia para gerar o `.b32` que ele lia. As capas reais chegaram entretanto (v1.19.0) por um pipeline totalmente diferente (JPEGDEC + `CoverImage.cpp`), pelo que `B32Reader::hasCover()`/`getCover()` já não serviam sequer de referência. |
 
 **Maior valor por esforço**: capa real na biblioteca (#1) é a melhoria de
 imagem mais visível e mais barata (o driver já suporta bitmap; falta só
