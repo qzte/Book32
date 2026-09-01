@@ -1083,12 +1083,14 @@ function goToPercent() {
 // above.
 
 function loadToc() {
-    const list = document.getElementById('toc-list');
+    const picker = document.getElementById('toc-picker');
     const emptyHint = document.getElementById('toc-empty-hint');
-    if (!list) return;
+    const unavailableHint = document.getElementById('toc-unavailable-hint');
+    if (!picker) return;
 
     if (!currentLastBook) {
-        list.innerHTML = '';
+        picker.classList.add('hidden');
+        if (unavailableHint) unavailableHint.classList.add('hidden');
         if (emptyHint) emptyHint.classList.remove('hidden');
         return;
     }
@@ -1099,46 +1101,46 @@ function loadToc() {
         .then(data => renderToc(data.chapters || [], !!data.ready))
         .catch(error => {
             console.error('Error loading table of contents:', error);
-            list.innerHTML = '<p class="error">Erro ao carregar o índice.</p>';
+            picker.classList.add('hidden');
+            if (unavailableHint) unavailableHint.classList.add('hidden');
+            const status = document.getElementById('toc-status');
+            if (status) {
+                status.textContent = 'Erro ao carregar o índice.';
+                status.style.color = 'red';
+            }
         });
 }
 
 function renderToc(chapters, ready) {
-    const list = document.getElementById('toc-list');
-    if (!list) return;
+    const picker = document.getElementById('toc-picker');
+    const select = document.getElementById('toc-select');
+    const unavailableHint = document.getElementById('toc-unavailable-hint');
+    if (!picker || !select) return;
 
     if (!ready || !chapters.length) {
-        list.innerHTML = '<p class="hint">Ainda não há índice para este livro — abre-o no dispositivo para o construir.</p>';
+        picker.classList.add('hidden');
+        select.innerHTML = '';
+        if (unavailableHint) unavailableHint.classList.remove('hidden');
         return;
     }
-    list.innerHTML = chapters.map(c => {
+    if (unavailableHint) unavailableHint.classList.add('hidden');
+
+    select.innerHTML = chapters.map(c => {
         const label = c.title && c.title.length ? c.title : `Capítulo ${c.index + 1}`;
         // narrative undefined (livro indexado antes desta funcionalidade
         // existir, ver ChapterNarrativeStore) conta como narrativo — mesmo
         // comportamento de sempre, sem marcação nenhuma.
         const isNarrative = c.narrative !== false;
-        const itemClass = isNarrative ? 'book-item' : 'book-item book-item-non-narrative';
-        const tag = isNarrative ? '' : ' <span class="toc-non-narrative-tag">(não narrativo)</span>';
-        return `
-        <div class="${itemClass}">
-            <span class="book-title">${escapeHtml(label)}${tag}</span>
-            <button class="btn-order" data-index="${c.index}" title="Aplica-se da próxima vez que este livro abrir no dispositivo">Ir</button>
-        </div>`;
+        const tag = isNarrative ? '' : ' (não narrativo)';
+        return `<option value="${c.index}">${escapeHtml(label + tag)}</option>`;
     }).join('');
-    bindTocListActions();
+    picker.classList.remove('hidden');
 }
 
-let tocListBound = false;
-function bindTocListActions() {
-    if (tocListBound) return;
-    const list = document.getElementById('toc-list');
-    if (!list) return;
-    list.addEventListener('click', e => {
-        const btn = e.target.closest('button[data-index]');
-        if (!btn) return;
-        gotoChapter(Number(btn.dataset.index));
-    });
-    tocListBound = true;
+function gotoSelectedChapter() {
+    const select = document.getElementById('toc-select');
+    if (!select || select.value === '') return;
+    gotoChapter(Number(select.value));
 }
 
 function gotoChapter(index) {

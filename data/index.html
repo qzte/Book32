@@ -120,7 +120,11 @@
                     <h3>Índice</h3>
                     <p class="hint">Lista de capítulos construída no dispositivo a partir dos títulos já detectados dentro do EPUB — só fica disponível depois de abrires este livro pelo menos uma vez lá. Saltar para um capítulo só faz efeito da próxima vez que abrires o livro no dispositivo. Livro: <strong id="toc-book-name">o livro actual</strong></p>
                     <p id="toc-empty-hint" class="hint hidden">Abre primeiro este livro no dispositivo — o índice só existe depois de ser construído lá.</p>
-                    <div id="toc-list"></div>
+                    <p id="toc-unavailable-hint" class="hint hidden">Ainda não há índice para este livro — abre-o no dispositivo para o construir.</p>
+                    <div id="toc-picker" class="setting-row hidden">
+                        <select id="toc-select" class="input-grow"></select>
+                        <button class="btn secondary" onclick="gotoSelectedChapter()">Ir</button>
+                    </div>
                     <div id="toc-status" class="status-msg"></div>
                 </div>
 
