@@ -55,7 +55,17 @@ public:
     static void utf8ToLatin1(const char* src, char* dst, size_t dstSize);
     static String utf8ToLatin1(const String& src);
 
-private:
+    // Reverse of utf8ToLatin1(): rebuilds valid UTF-8 from Latin-1 bytes that
+    // were already collapsed for the display layer (e.g. a chapter title
+    // read via the same rich-content parsing the reader uses to draw pages,
+    // but destined for JSON/the web UI instead of the screen). Every
+    // Latin-1 byte maps back to its own codepoint losslessly; only what
+    // utf8ToLatin1() already discarded going the other way (curly quotes
+    // folded to straight ones, "?" for unmapped codepoints, ...) stays lost
+    // -- the same text the e-ink screen itself would have shown.
+    static String latin1ToUtf8(const String& src);
+
+  private:
     FontMgr();
     ~FontMgr();
 

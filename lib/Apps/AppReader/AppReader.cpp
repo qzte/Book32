@@ -15,6 +15,7 @@
 #include "GoToPercentStore.h"
 #include "ChapterTocStore.h"
 #include "ChapterNarrativeStore.h"
+#include "ChapterGuideTypeStore.h"
 #include "GoToChapterStore.h"
 #include "CoverImage.h"
 #include "WebMgr.h"
@@ -309,6 +310,8 @@ void AppReader::scanBooks() {
         ChapterTocStore::getInstance().reconcile(present);
         // e para a classificação narrativo/não-narrativo por capítulo.
         ChapterNarrativeStore::getInstance().reconcile(present);
+        // e para o tipo de <guide> associado a cada capítulo não-narrativo.
+        ChapterGuideTypeStore::getInstance().reconcile(present);
 
         for (auto& b : _books) {
             BookProgress p;
@@ -937,10 +940,14 @@ void AppReader::updateTocBuild() {
                 // sem precisar de orçamento por passagem.
                 std::vector<bool> narrative;
                 narrative.reserve(totalChapters);
+                std::vector<String> guideTypes;
+                guideTypes.reserve(totalChapters);
                 for (int i = 0; i < totalChapters; i++) {
                     narrative.push_back(_epubLoader->isChapterNarrative(i));
+                    guideTypes.push_back(_epubLoader->getChapterGuideType(i));
                 }
                 ChapterNarrativeStore::getInstance().set(key, narrative);
+                ChapterGuideTypeStore::getInstance().set(key, guideTypes);
             }
             return;
         }

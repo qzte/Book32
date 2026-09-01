@@ -23,6 +23,7 @@
 #include "../Book32_Core/GoToPercentStore.h"
 #include "../Book32_Core/ChapterTocStore.h"
 #include "../Book32_Core/ChapterNarrativeStore.h"
+#include "../Book32_Core/ChapterGuideTypeStore.h"
 #include "../Book32_Core/GoToChapterStore.h"
 #include "../Book32_Update/GitHubMgr.h"
 #include "../Book32_Core/BatteryMgr.h"
@@ -1315,6 +1316,14 @@ void WebMgr::setupEndpoints() {
     // entry yet, so every chapter defaults to true (narrative) — the same
     // "show everything" behaviour as before this feature, until the book is
     // reindexed. See docs/plans/2026-09-01-filtrar-capitulos-nao-narrativos-design.md.
+    //
+    // "guideType" is the sibling ChapterGuideTypeStore's raw OPF <guide>
+    // type ("cover", "title-page", ...) for the same entry, "" when the
+    // chapter is narrative or has no <guide> reference — the web UI uses it
+    // to label a non-narrative entry that has no detected title (e.g. "Capa"
+    // instead of the generic "Capítulo N") instead of deciding a Portuguese
+    // label here, same "web decides the label" split as the rest of this
+    // endpoint.
     server->on("/api/toc", HTTP_GET, [](AsyncWebServerRequest* request) {
         if (!request->hasParam("book")) {
             request->send(400, "application/json", "{\"error\":\"missing 'book'\"}");
@@ -1325,6 +1334,8 @@ void WebMgr::setupEndpoints() {
         bool ready = ChapterTocStore::getInstance().get(book, titles);
         std::vector<bool> narrative;
         ChapterNarrativeStore::getInstance().get(book, narrative); // ok if this stays empty
+        std::vector<String> guideTypes;
+        ChapterGuideTypeStore::getInstance().get(book, guideTypes); // ok if this stays empty
 
         AsyncResponseStream* response = request->beginResponseStream("application/json");
         response->printf("{\"book\":\"%s\",\"ready\":%s,\"chapters\":[", jsonEscape(book).c_str(),
@@ -1332,8 +1343,10 @@ void WebMgr::setupEndpoints() {
         for (size_t i = 0; i < titles.size(); i++) {
             if (i > 0) response->print(",");
             bool isNarrative = (i < narrative.size()) ? narrative[i] : true;
-            response->printf("{\"index\":%d,\"title\":\"%s\",\"narrative\":%s}", (int)i,
-                             jsonEscape(titles[i]).c_str(), isNarrative ? "true" : "false");
+            String guideType = (i < guideTypes.size()) ? guideTypes[i] : "";
+            response->printf("{\"index\":%d,\"title\":\"%s\",\"narrative\":%s,\"guideType\":\"%s\"}", (int)i,
+                             jsonEscape(titles[i]).c_str(), isNarrative ? "true" : "false",
+                             jsonEscape(guideType).c_str());
         }
         response->print("]}");
         request->send(response);

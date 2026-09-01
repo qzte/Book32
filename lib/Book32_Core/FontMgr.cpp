@@ -147,6 +147,21 @@ String FontMgr::utf8ToLatin1(const String& src) {
     return out;
 }
 
+String FontMgr::latin1ToUtf8(const String& src) {
+    String out;
+    out.reserve(src.length() * 2);
+    for (size_t i = 0; i < src.length(); i++) {
+        uint8_t b = (uint8_t)src.charAt(i);
+        if (b < 0x80) {
+            out += (char)b;
+        } else {
+            out += (char)(0xC0 | (b >> 6));
+            out += (char)(0x80 | (b & 0x3F));
+        }
+    }
+    return out;
+}
+
 int FontMgr::getTextHeight(int fontSize) {
     const GFXfont* font = getFont(fontSize);
     return font->yAdvance;
