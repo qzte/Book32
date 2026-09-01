@@ -471,19 +471,6 @@ input:checked+.slider:before {
     border-bottom: none;
 }
 
-/* Índice (toc-list): capa/rosto/créditos/etc. classificados a partir do
-   <guide> do OPF (ver ChapterNarrativeStore) — continuam clicáveis ("Ir"
-   ainda funciona), só ficam visualmente secundários na lista. Mesmo
-   opacity:0.4 já usado para .btn:disabled acima. */
-.book-item-non-narrative {
-    opacity: 0.6;
-}
-
-.toc-non-narrative-tag {
-    font-size: 0.8em;
-    opacity: 0.7;
-}
-
 .book-title {
     flex: 1;
     min-width: 0;
