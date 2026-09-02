@@ -175,3 +175,47 @@ regrediu): interromper a contagem de paginas de um livro grande a meio
 (standby/idle sleep), reabrir e confirmar que continua a partir do capitulo
 onde ficou (PageCountStore/checkpoint), nao do capitulo 0 — mesmo com o
 indice/comprimentos ja construidos de outra sessao.
+
+=== Correcoes D8/D9 da avaliacao de codigo do eReader — a verificar no dispositivo (nao coberto pelos testes de host) ===
+(ver docs/plans/2026-09-02-avaliacao-codigo-ereader.md; pio run nao correu
+neste ambiente, so revisao manual do diff — muda o parser de HTML em
+EpubLoader.cpp, sem stub de host, ver seccao "Testabilidade" do documento)
+Heuristica de numero de capitulo restrita ao inicio (D8): um EPUB cujo
+primeiro paragrafo de um capitulo seja so um numero ("12") continua a sair
+como titulo grande e centrado, tal como antes. Um EPUB com um marcador de
+nota de rodape isolado ("3"), um numero de pagina de indice, um ano numa
+cronologia ou numeracao de versos LONGE do inicio do capitulo (para la do
+3o no) tem de continuar como texto normal, NAO como titulo de capitulo.
+Comentarios HTML nao aparecem como texto (D9): um EPUB com um comentario
+<!-- ... --> que contenha um ">" la dentro (ex.: <!-- <p>rascunho</p> -->,
+comum em ficheiros produzidos a mao ou pelo Sigil) nao pode mostrar nenhum
+fragmento do comentario no ecra — nem a marcacao interior, nem texto a
+seguir ao primeiro ">" do comentario.
+CDATA nao aparece como texto (D9): um EPUB com <![CDATA[ ... ]]> (raro, mas
+valido em XHTML) tem de ser ignorado por completo, sem nenhum fragmento do
+conteudo a aparecer como texto visivel.
+Sem regressao no resto do capitulo: um capitulo com um comentario ou CDATA
+a meio continua com o texto antes e depois desse bloco a aparecer
+normalmente (estilo, alinhamento e paragrafos intactos), so o proprio
+comentario/CDATA e que desaparece.
+
+=== Correcoes D12 (menores) da avaliacao de codigo do eReader — a verificar no dispositivo (nao coberto pelos testes de host) ===
+(ver docs/plans/2026-09-02-avaliacao-codigo-ereader.md; pio run nao correu
+neste ambiente, so revisao manual do diff — muda EpubLoader.cpp, sem stub
+de host, ver seccao "Testabilidade" do documento)
+Capitulo com bytes nulos no meio (raro, EPUB UTF-16 mal convertido): o
+capitulo tem de continuar completo ate ao fim, nao truncado no primeiro
+byte nulo.
+Capa com leitura curta do ZIP (dificil de reproduzir de propósito, mas
+confirmar que uma capa normal continua a aparecer): a capa continua a
+descodificar normalmente para livros com capa valida; nao deve haver
+nenhuma capa com "lixo" visual onde antes normalmente mostrava algo.
+text-indent fraccionario ("1.5em" no CSS de um paragrafo): o recuo da
+primeira linha tem de reflectir o valor fraccionario (mais recuo do que
+"1em"), nao ficar preso ao mesmo valor de "1em".
+Sem regressao nos atributos existentes: capa, fontes incorporadas, spine e
+manifest continuam a ler-se normalmente de um EPUB real (extractAttribute
+continua a encontrar id/href/media-type/properties/content sem falhar).
+Capitulo longo (100+ KB): abrir um livro com um capitulo grande e confirmar
+que abre num tempo semelhante (ou melhor) do que antes desta alteracao, sem
+regressao de resposta aos botoes.
