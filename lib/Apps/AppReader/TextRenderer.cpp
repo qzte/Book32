@@ -197,7 +197,8 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display,
         result.nextCharOffset = currentOffset;
         // nodesConsumed already reflects completed nodes
     }
-    // If currentNode >= content.size(), all content was displayed -> pageFull stays false (true end of chapter)
+    // If currentNode >= content.size(), all content was displayed -> pageFull stays false (true end of
+    // chapter)
 
     // Page number drawing moved to AppReader for consistency
     _cachedResult = result;
