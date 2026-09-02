@@ -247,3 +247,25 @@ nao do zero — mesma garantia de sempre, agora dentro de
 BookIndexer::start/advanceChapter.
 "Ir para %" com ChapterLengthStore ja em cache continua instantaneo (sem
 varrimento proprio) para um livro ja aberto antes desta alteracao.
+
+=== M4: strings de UI do leitor traduzidas para PT — a verificar no dispositivo (nao coberto pelos testes de host) ===
+(ver docs/plans/2026-09-02-avaliacao-codigo-ereader.md, seccao M4/D11; pio run
+nao correu neste ambiente, so revisao manual do diff — so texto apresentado,
+sem mudanca de layout, fonte ou logica; strings novas em
+lib/Apps/AppReader/ReaderStrings.h)
+Biblioteca em portugues: titulo "Biblioteca", contagem "%d livros", item
+"<  Voltar ao Menu", rodape "Seguinte: Mover | Manter: Abrir" e indicador
+"Menu" quando esse item esta seleccionado — confirmar que nenhum destes
+ficou cortado nem sobreposto ao numero de pagina do lado direito.
+Biblioteca vazia (sem nenhum EPUB enviado): confirmar "Nenhum livro
+encontrado." e "Envie EPUBs pela web." no lugar dos textos antigos em ingles.
+Rodape de leitura em portugues: "Pag. N de M" (livro com contagem de paginas
+ja calculada) e "Pag. N" (ainda sem total) centrados no rodape, sem
+transbordar para as margens num titulo/pagina de 3 digitos.
+Menu principal em portugues: rodape "Premir: Seguinte | Manter:
+Seleccionar" sem cortar nem sobrepor o texto de estado do Wi-Fi por baixo;
+estado "Wi-Fi a ligar" ao arrancar e "Wi-Fi desligado" sem ligacao nem
+hotspot activo.
+Actualizacao de firmware disponivel: o icone no menu principal mostra
+"Actualizar vX.Y.Z" (antes "Update vX.Y.Z"), sem o texto a sair da largura
+do icone.
