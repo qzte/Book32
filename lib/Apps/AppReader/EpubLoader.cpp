@@ -259,8 +259,15 @@ uint8_t* EpubLoader::getFontData(String path, size_t* outSize) {
     uint8_t* buffer = (uint8_t*)ps_malloc(size);
     if(!buffer) buffer = (uint8_t*)malloc(size);
     if(!buffer) { zip->closeCurrentFile(); return nullptr; }
-    zip->readCurrentFile(buffer, size);
+    // D12: a short or failed read used to fall through silently, handing
+    // JPEGDEC a buffer with uninitialized bytes past whatever did get read
+    // as if it were the whole cover image.
+    int bytesRead = zip->readCurrentFile(buffer, size);
     zip->closeCurrentFile();
+    if (bytesRead != (int)size) {
+        free(buffer);
+        return nullptr;
+    }
     *outSize = size;
     return buffer;
 }
@@ -272,9 +279,25 @@ uint8_t* EpubLoader::getCoverImageData(size_t* outSize) {
     return getFontData(fullPath, outSize); // mesmo mecanismo de leitura do ZIP, nome à parte
 }
 
+// D12: xml.indexOf(needle) alone matched needle anywhere in the tag, so a
+// search for "type=\"" matched inside "media-type=\"...\"" and a search for
+// "href=\"" matched inside "data-href=\"...\"". None of today's callers
+// actually hit this (the tags where "type" is searched don't carry
+// "media-type", etc.), but it's a latent trap for the next attribute added.
+// A real attribute is always preceded by whitespace (or starts the string),
+// never by another identifier character.
+static int findAttributeStart(const String& xml, const String& needle, int fromIndex) {
+    while (true) {
+        int pos = xml.indexOf(needle, fromIndex);
+        if (pos == -1) return -1;
+        if (pos == 0 || isspace((unsigned char)xml.charAt(pos - 1))) return pos;
+        fromIndex = pos + 1;
+    }
+}
+
 String EpubLoader::extractAttribute(const String& xml, const String& tag, const String& attr) {
-    int attrStart = xml.indexOf(attr + "=\"");
-    if(attrStart == -1) attrStart = xml.indexOf(attr + "='");
+    int attrStart = findAttributeStart(xml, attr + "=\"", 0);
+    if (attrStart == -1) attrStart = findAttributeStart(xml, attr + "='", 0);
     if(attrStart == -1) return "";
     int valStart = attrStart + attr.length() + 2; 
     char quote = xml.charAt(attrStart + attr.length() + 1); 
@@ -324,8 +347,12 @@ String EpubLoader::readFileFromZip(const char* path) {
         int toRead = remaining > 512 ? 512 : remaining;
         int bytesRead = zip->readCurrentFile((uint8_t*)buffer, toRead);
         if (bytesRead <= 0) break;
-        buffer[bytesRead] = '\0';
-        str += buffer;
+        // D12: str += buffer relied on the '\0' just written at
+        // buffer[bytesRead] and stopped there — a literal null byte inside
+        // the XHTML itself (rare, but seen in badly-converted UTF-16 files)
+        // silently truncated the rest of the chapter. concat(buffer, len)
+        // copies exactly bytesRead bytes regardless of what's in them.
+        str.concat(buffer, bytesRead);
         remaining -= bytesRead;
         yield();
     }
@@ -424,9 +451,15 @@ int extractIndentFromStyle(String styleAttr) {
         String val = styleAttr.substring(valStart, valEnd);
         val.trim();
         // Handle em, px, %
-        if (val.endsWith("em")) return val.substring(0, val.length()-2).toInt() * 20; // Rough 1em = 20px
-        if (val.endsWith("px")) return val.substring(0, val.length()-2).toInt();
-        return val.toInt();
+        // D12: String::toInt() parses only the leading digits, so a
+        // fractional value like "1.5em" (a real text-indent in EPUB CSS)
+        // stopped at the '.' and came back as 1 instead of 1.5. atof()
+        // reads the whole number; the (int) truncation below is the same
+        // "round toward zero" toInt() already did for whole numbers.
+        if (val.endsWith("em"))
+            return (int)(atof(val.substring(0, val.length() - 2).c_str()) * 20); // Rough 1em = 20px
+        if (val.endsWith("px")) return (int)atof(val.substring(0, val.length() - 2).c_str());
+        return (int)atof(val.c_str());
     }
     return 0;
 }
@@ -529,6 +562,16 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(const String& html) 
     // parser this is (see M3 for the real fix).
     std::vector<size_t> blockStack;
     String currentText;
+    // D12: currentText grows one character at a time below (`currentText +=
+    // c`), and String::concat() only ever grows the buffer to exactly what
+    // the new length needs — no doubling — so every single-char append past
+    // the current capacity reallocates. A 100+ KB chapter is tens of
+    // thousands of one-byte reallocations without this. Reserving a
+    // reasonable head start per text run (below, wherever currentText resets
+    // to "") covers ordinary paragraphs with zero reallocations and still
+    // only reallocates a handful of times for a long one.
+    static const size_t TEXT_RUN_RESERVE = 256;
+    currentText.reserve(TEXT_RUN_RESERVE);
     int i = 0;
     // One entry per open <ol>/<ul>, innermost last.
     struct OpenList {
@@ -554,6 +597,7 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(const String& html) 
                 node.textNode.softBreak = nextIsSoftBreak;
                 nodes.push_back(node);
                 currentText = "";
+                currentText.reserve(TEXT_RUN_RESERVE);
                 isListItem = false;
                 currentIndent = 0;
                 currentListNumber = 0;
