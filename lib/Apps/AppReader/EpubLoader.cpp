@@ -15,110 +15,72 @@
 
 static int zipFd = -1;
 
-void* myOpen(const char* filename, int32_t* size) {
-    if (zipFd >= 0) {
-        close(zipFd);
-        zipFd = -1;
-    }
+void *myOpen(const char *filename, int32_t *size) {
+    if (zipFd >= 0) { close(zipFd); zipFd = -1; }
     String fullPath = filename;
-    if (!fullPath.startsWith("/littlefs") && !fullPath.startsWith("/ebooks"))
-        fullPath = "/littlefs" + fullPath;
+    if (!fullPath.startsWith("/littlefs") && !fullPath.startsWith("/ebooks")) fullPath = "/littlefs" + fullPath;
     zipFd = open(fullPath.c_str(), O_RDONLY);
     if (zipFd < 0) return NULL;
     struct stat st;
-    if (fstat(zipFd, &st) != 0) {
-        close(zipFd);
-        zipFd = -1;
-        return NULL;
-    }
+    if (fstat(zipFd, &st) != 0) { close(zipFd); zipFd = -1; return NULL; }
     *size = st.st_size;
     return (void*)(intptr_t)(zipFd + 1);
 }
 
-void myClose(void* p) {
-    if (zipFd >= 0) {
-        close(zipFd);
-        zipFd = -1;
-    }
-}
-int32_t myRead(void* p, uint8_t* buffer, int32_t length) {
+void myClose(void *p) { if (zipFd >= 0) { close(zipFd); zipFd = -1; } }
+int32_t myRead(void *p, uint8_t *buffer, int32_t length) {
     if (zipFd < 0 || !buffer || length <= 0) return -1;
     return (int32_t)read(zipFd, buffer, length);
 }
-int32_t mySeek(void* p, int32_t position, int iType) {
+int32_t mySeek(void *p, int32_t position, int iType) {
     if (zipFd < 0) return -1;
     return (int32_t)lseek(zipFd, position, iType);
 }
 
 EpubLoader::EpubLoader() {
     zip = (UNZIP*)ps_malloc(sizeof(UNZIP));
-    if (!zip)
-        zip = new (std::nothrow) UNZIP();
-    else
-        new (zip) UNZIP();
+    if (!zip) zip = new (std::nothrow) UNZIP();
+    else new (zip) UNZIP();
 }
 
-EpubLoader::~EpubLoader() {
-    if (zip) {
-        zip->~UNZIP();
-        free(zip);
-        zip = nullptr;
-    }
-}
+EpubLoader::~EpubLoader() { if (zip) { zip->~UNZIP(); free(zip); zip = nullptr; } }
 
 bool EpubLoader::open(const char* path) {
     epubPath = String(path);
     if (zip->openZIP(path, myOpen, myClose, myRead, mySeek) != ZIP_SUCCESS) return false;
-    if (!parseContainer()) {
-        close();
-        return false;
-    }
-    if (!parseOpf()) {
-        close();
-        return false;
-    }
+    if (!parseContainer()) { close(); return false; }
+    if (!parseOpf()) { close(); return false; }
     return true;
 }
 
 void EpubLoader::close() {
     if (zip) zip->closeZIP();
-    if (zipFd >= 0) {
-        ::close(zipFd);
-        zipFd = -1;
-    }
-    spine.clear();
-    manifest.clear();
-    fonts.clear();
+    if (zipFd >= 0) { ::close(zipFd); zipFd = -1; }
+    spine.clear(); manifest.clear(); fonts.clear();
 }
 
-String EpubLoader::getTitle() {
-    return bookTitle;
-}
-int EpubLoader::getChapterCount() {
-    return spine.size();
-}
+String EpubLoader::getTitle() { return bookTitle; }
+int EpubLoader::getChapterCount() { return spine.size(); }
 
 bool EpubLoader::parseContainer() {
     String xml = readFileFromZip("META-INF/container.xml");
-    if (xml.length() == 0) return false;
+    if(xml.length() == 0) return false;
     opfPath = extractAttribute(xml, "rootfile", "full-path");
-    if (opfPath.length() == 0) return false;
+    if(opfPath.length() == 0) return false;
     int lastSlash = opfPath.lastIndexOf('/');
-    if (lastSlash != -1)
-        rootDir = opfPath.substring(0, lastSlash + 1);
-    else
-        rootDir = "";
+    if(lastSlash != -1) rootDir = opfPath.substring(0, lastSlash + 1);
+    else rootDir = "";
     return true;
 }
 
 bool EpubLoader::parseOpf() {
     String xml = readFileFromZip(opfPath.c_str());
-    if (xml.length() == 0) return false;
+    if(xml.length() == 0) return false;
     bookTitle = extractMetadata(xml, "dc:title");
-    if (bookTitle.length() == 0) bookTitle = extractMetadata(xml, "title");
+    if(bookTitle.length() == 0) bookTitle = extractMetadata(xml, "title");
     int manifestStart = xml.indexOf("<manifest");
     int manifestEnd = xml.indexOf("</manifest>");
-    if (manifestStart == -1 || manifestEnd == -1) return false;
+    if(manifestStart == -1 || manifestEnd == -1) return false;
 
     // Capa (recurso EPUB2): <meta name="cover" content="ID_DO_MANIFEST"/>,
     // normalmente dentro de <metadata>, antes do <manifest>. O id só se pode
@@ -140,21 +102,21 @@ bool EpubLoader::parseOpf() {
 
     String manifestBlock = xml.substring(manifestStart, manifestEnd);
     int pos = 0;
-    while (true) {
+    while(true) {
         int itemStart = manifestBlock.indexOf("<item", pos);
-        if (itemStart == -1) break;
+        if(itemStart == -1) break;
         int itemEnd = manifestBlock.indexOf(">", itemStart);
         // Um '<item' sem '>' (OPF truncado ou mal formado) devolvia -1 aqui:
         // substring(itemStart, 0) trocava os limites e, sobretudo, pos ficava
         // a -1, o que faz o indexOf seguinte ler fora do buffer e o ciclo
         // nunca terminar. O ficheiro vem de um EPUB do utilizador, por isso
         // tem de falhar em silêncio e não travar o leitor.
-        if (itemEnd == -1) break;
-        String itemTag = manifestBlock.substring(itemStart, itemEnd + 1);
+        if(itemEnd == -1) break;
+        String itemTag = manifestBlock.substring(itemStart, itemEnd+1);
         String id = extractAttribute(itemTag, "item", "id");
         String href = extractAttribute(itemTag, "item", "href");
         String mediaType = extractAttribute(itemTag, "item", "media-type");
-        if (id.length() > 0 && href.length() > 0) {
+        if(id.length() > 0 && href.length() > 0) {
             manifest[id] = href;
             // Capa (EPUB3): properties="cover-image" no próprio <item>. Tem
             // prioridade sobre o <meta name="cover"> do EPUB2 abaixo — é a
@@ -163,30 +125,19 @@ bool EpubLoader::parseOpf() {
             if (coverHref.length() == 0 && properties.indexOf("cover-image") != -1) {
                 coverHref = href;
             }
-            String hrefLower = href;
-            hrefLower.toLowerCase();
-            if (hrefLower.endsWith(".ttf") || hrefLower.endsWith(".otf") || mediaType.indexOf("font") != -1) {
-                FontInfo font;
-                font.path = rootDir + href;
-                if (hrefLower.endsWith(".ttf"))
-                    font.format = "ttf";
-                else if (hrefLower.endsWith(".otf"))
-                    font.format = "otf";
+            String hrefLower = href; hrefLower.toLowerCase();
+            if(hrefLower.endsWith(".ttf") || hrefLower.endsWith(".otf") || mediaType.indexOf("font") != -1) {
+                FontInfo font; font.path = rootDir + href;
+                if(hrefLower.endsWith(".ttf")) font.format = "ttf";
+                else if(hrefLower.endsWith(".otf")) font.format = "otf";
                 int lastSlash = href.lastIndexOf('/'), lastDot = href.lastIndexOf('.');
-                if (lastSlash != -1 && lastDot != -1)
-                    font.family = href.substring(lastSlash + 1, lastDot);
-                else if (lastDot != -1)
-                    font.family = href.substring(0, lastDot);
-                String fLower = font.family;
-                fLower.toLowerCase();
-                if (fLower.indexOf("bolditalic") != -1)
-                    font.style = "bold-italic";
-                else if (fLower.indexOf("bold") != -1)
-                    font.style = "bold";
-                else if (fLower.indexOf("italic") != -1)
-                    font.style = "italic";
-                else
-                    font.style = "normal";
+                if(lastSlash != -1 && lastDot != -1) font.family = href.substring(lastSlash + 1, lastDot);
+                else if(lastDot != -1) font.family = href.substring(0, lastDot);
+                String fLower = font.family; fLower.toLowerCase();
+                if(fLower.indexOf("bolditalic") != -1) font.style = "bold-italic";
+                else if(fLower.indexOf("bold") != -1) font.style = "bold";
+                else if(fLower.indexOf("italic") != -1) font.style = "italic";
+                else font.style = "normal";
                 fonts.push_back(font);
             }
         }
@@ -200,20 +151,18 @@ bool EpubLoader::parseOpf() {
     }
 
     int spineStart = xml.indexOf("<spine"), spineEnd = xml.indexOf("</spine>");
-    if (spineStart == -1 || spineEnd == -1) return false;
+    if(spineStart == -1 || spineEnd == -1) return false;
     String spineBlock = xml.substring(spineStart, spineEnd);
     pos = 0;
-    while (true) {
+    while(true) {
         int itemRefStart = spineBlock.indexOf("<itemref", pos);
-        if (itemRefStart == -1) break;
+        if(itemRefStart == -1) break;
         int itemRefEnd = spineBlock.indexOf(">", itemRefStart);
-        if (itemRefEnd == -1) break; // mesma razão do ciclo do manifest
-        String itemRefTag = spineBlock.substring(itemRefStart, itemRefEnd + 1);
+        if(itemRefEnd == -1) break;  // mesma razão do ciclo do manifest
+        String itemRefTag = spineBlock.substring(itemRefStart, itemRefEnd+1);
         String idref = extractAttribute(itemRefTag, "itemref", "idref");
-        if (idref.length() > 0 && manifest.count(idref)) {
-            SpineItem item;
-            item.id = idref;
-            item.href = manifest[idref];
+        if(idref.length() > 0 && manifest.count(idref)) {
+            SpineItem item; item.id = idref; item.href = manifest[idref];
             spine.push_back(item);
         }
         pos = itemRefEnd + 1;
@@ -301,7 +250,7 @@ String EpubLoader::getChapterGuideType(int index) const {
 }
 
 uint8_t* EpubLoader::getFontData(String path, size_t* outSize) {
-    if (path.length() == 0) return nullptr;
+    if(path.length() == 0) return nullptr;
     if (zip->locateFile(path.c_str()) != 0) return nullptr;
     if (zip->openCurrentFile() != 0) return nullptr;
     unz_file_info fileInfo;
@@ -309,11 +258,8 @@ uint8_t* EpubLoader::getFontData(String path, size_t* outSize) {
     zip->getFileInfo(&fileInfo, szName, sizeof(szName), NULL, 0, NULL, 0);
     size_t size = fileInfo.uncompressed_size;
     uint8_t* buffer = (uint8_t*)ps_malloc(size);
-    if (!buffer) buffer = (uint8_t*)malloc(size);
-    if (!buffer) {
-        zip->closeCurrentFile();
-        return nullptr;
-    }
+    if(!buffer) buffer = (uint8_t*)malloc(size);
+    if(!buffer) { zip->closeCurrentFile(); return nullptr; }
     // D12: a short or failed read used to fall through silently, handing
     // JPEGDEC a buffer with uninitialized bytes past whatever did get read
     // as if it were the whole cover image.
@@ -353,22 +299,22 @@ static int findAttributeStart(const String& xml, const String& needle, int fromI
 String EpubLoader::extractAttribute(const String& xml, const String& tag, const String& attr) {
     int attrStart = findAttributeStart(xml, attr + "=\"", 0);
     if (attrStart == -1) attrStart = findAttributeStart(xml, attr + "='", 0);
-    if (attrStart == -1) return "";
-    int valStart = attrStart + attr.length() + 2;
-    char quote = xml.charAt(attrStart + attr.length() + 1);
+    if(attrStart == -1) return "";
+    int valStart = attrStart + attr.length() + 2; 
+    char quote = xml.charAt(attrStart + attr.length() + 1); 
     int valEnd = xml.indexOf(quote, valStart);
-    if (valEnd == -1) return "";
+    if(valEnd == -1) return "";
     return xml.substring(valStart, valEnd);
 }
 
 String EpubLoader::extractMetadata(const String& xml, const String& tag) {
     int tagStart = xml.indexOf("<" + tag);
-    if (tagStart == -1) return "";
+    if(tagStart == -1) return "";
     int tagEnd = xml.indexOf(">", tagStart);
-    if (tagEnd == -1) return "";
+    if(tagEnd == -1) return "";
     int contentEnd = xml.indexOf("</" + tag + ">", tagEnd);
-    if (contentEnd == -1) contentEnd = xml.indexOf("</", tagEnd);
-    if (contentEnd == -1) return "";
+    if(contentEnd == -1) contentEnd = xml.indexOf("</", tagEnd);
+    if(contentEnd == -1) return "";
     String content = xml.substring(tagEnd + 1, contentEnd);
     content.trim();
     return content;
@@ -389,8 +335,8 @@ String EpubLoader::readFileFromZip(const char* path) {
     zip->getFileInfo(&fileInfo, szName, sizeof(szName), NULL, 0, NULL, 0);
     int size = fileInfo.uncompressed_size;
     if (size > BOOK32_MAX_ZIP_TEXT_BYTES) {
-        Serial.printf("EpubLoader: %s tem %d bytes; a truncar em %d\n", path, size,
-                      BOOK32_MAX_ZIP_TEXT_BYTES);
+        Serial.printf("EpubLoader: %s tem %d bytes; a truncar em %d\n",
+                      path, size, BOOK32_MAX_ZIP_TEXT_BYTES);
         size = BOOK32_MAX_ZIP_TEXT_BYTES;
     }
 
@@ -416,102 +362,79 @@ String EpubLoader::readFileFromZip(const char* path) {
     return str;
 }
 
-String EpubLoader::getAuthor() {
-    return bookAuthor;
-}
-String EpubLoader::getPublisher() {
-    return bookPublisher;
-}
-String EpubLoader::getLanguage() {
-    return bookLanguage;
-}
-String EpubLoader::getPublicationDate() {
-    return bookPubDate;
-}
-String EpubLoader::getISBN() {
-    return bookISBN;
-}
-std::vector<FontInfo> EpubLoader::getFonts() {
-    return fonts;
-}
+String EpubLoader::getAuthor() { return bookAuthor; }
+String EpubLoader::getPublisher() { return bookPublisher; }
+String EpubLoader::getLanguage() { return bookLanguage; }
+String EpubLoader::getPublicationDate() { return bookPubDate; }
+String EpubLoader::getISBN() { return bookISBN; }
+std::vector<FontInfo> EpubLoader::getFonts() { return fonts; }
 
 TextStyle EpubLoader::getStyleFromTag(String tag) {
     tag.toLowerCase();
-    if (tag == "b" || tag == "strong") return STYLE_BOLD;
-    if (tag == "i" || tag == "em") return STYLE_ITALIC;
-    if (tag == "h1") return STYLE_HEADER1;
-    if (tag == "h2") return STYLE_HEADER2;
-    if (tag == "h3") return STYLE_HEADER3;
-    if (tag == "h4") return STYLE_HEADER4;
+    if(tag == "b" || tag == "strong") return STYLE_BOLD;
+    if(tag == "i" || tag == "em") return STYLE_ITALIC;
+    if(tag == "h1") return STYLE_HEADER1;
+    if(tag == "h2") return STYLE_HEADER2;
+    if(tag == "h3") return STYLE_HEADER3;
+    if(tag == "h4") return STYLE_HEADER4;
     return STYLE_NORMAL;
 }
 
 TextAlign EpubLoader::getAlignFromStyle(String styleAttr) {
     styleAttr.toLowerCase();
-    if (styleAttr.indexOf("text-align:center") != -1 || styleAttr.indexOf("text-align: center") != -1)
-        return ALIGN_CENTER;
-    if (styleAttr.indexOf("text-align:right") != -1 || styleAttr.indexOf("text-align: right") != -1)
-        return ALIGN_RIGHT;
-    if (styleAttr.indexOf("text-align:justify") != -1 || styleAttr.indexOf("text-align: justify") != -1)
-        return ALIGN_JUSTIFY;
+    if(styleAttr.indexOf("text-align:center") != -1 || styleAttr.indexOf("text-align: center") != -1) return ALIGN_CENTER;
+    if(styleAttr.indexOf("text-align:right") != -1 || styleAttr.indexOf("text-align: right") != -1) return ALIGN_RIGHT;
+    if(styleAttr.indexOf("text-align:justify") != -1 || styleAttr.indexOf("text-align: justify") != -1) return ALIGN_JUSTIFY;
     return ALIGN_LEFT;
 }
 
 Table EpubLoader::parseTable(const String& tableHtml) {
     Table table;
     int trPos = 0;
-    while (true) {
+    while(true) {
         int trStart = tableHtml.indexOf("<tr", trPos);
-        if (trStart == -1) break;
+        if(trStart == -1) break;
         int trEnd = tableHtml.indexOf("</tr>", trStart);
-        if (trEnd == -1) break;
+        if(trEnd == -1) break;
         String rowHtml = tableHtml.substring(trStart, trEnd + 5);
         TableRow row;
         int cellPos = 0;
-        while (true) {
+        while(true) {
             int tdStart = rowHtml.indexOf("<td", cellPos);
             int thStart = rowHtml.indexOf("<th", cellPos);
             int cellStart = -1;
             bool isHeader = false;
-            if (tdStart != -1 && (thStart == -1 || tdStart < thStart)) {
-                cellStart = tdStart;
-                isHeader = false;
-            } else if (thStart != -1) {
-                cellStart = thStart;
-                isHeader = true;
-            }
-            if (cellStart == -1) break;
+            if(tdStart != -1 && (thStart == -1 || tdStart < thStart)) { cellStart = tdStart; isHeader = false; }
+            else if(thStart != -1) { cellStart = thStart; isHeader = true; }
+            if(cellStart == -1) break;
             String cellTag = isHeader ? "th" : "td";
             int cellTagEnd = rowHtml.indexOf(">", cellStart);
             int cellEnd = rowHtml.indexOf("</" + cellTag + ">", cellTagEnd);
-            if (cellTagEnd == -1 || cellEnd == -1) break;
+            if(cellTagEnd == -1 || cellEnd == -1) break;
             TableCell cell;
             cell.isHeader = isHeader;
             String cellOpenTag = rowHtml.substring(cellStart, cellTagEnd + 1);
             String colspanStr = extractAttribute(cellOpenTag, cellTag, "colspan");
             String rowspanStr = extractAttribute(cellOpenTag, cellTag, "rowspan");
-            if (colspanStr.length() > 0) cell.colspan = colspanStr.toInt();
-            if (rowspanStr.length() > 0) cell.rowspan = rowspanStr.toInt();
+            if(colspanStr.length() > 0) cell.colspan = colspanStr.toInt();
+            if(rowspanStr.length() > 0) cell.rowspan = rowspanStr.toInt();
             String cellContent = rowHtml.substring(cellTagEnd + 1, cellEnd);
             String clean;
             bool inTag = false;
-            for (int i = 0; i < (int)cellContent.length(); i++) {
+            for(int i = 0; i < (int)cellContent.length(); i++) {
                 char c = cellContent.charAt(i);
-                if (c == '<')
-                    inTag = true;
-                else if (c == '>')
-                    inTag = false;
-                else if (!inTag)
-                    clean += c;
+                if(c == '<') inTag = true;
+                else if(c == '>') inTag = false;
+                else if(!inTag) clean += c;
             }
             clean.trim();
             cell.content = clean;
             row.cells.push_back(cell);
             cellPos = cellEnd + cellTag.length() + 3;
         }
-        if (row.cells.size() > 0) {
+        if(row.cells.size() > 0) {
             table.rows.push_back(row);
-            if ((int)row.cells.size() > table.columnCount) table.columnCount = row.cells.size();
+            if((int)row.cells.size() > table.columnCount) table.columnCount = row.cells.size();
         }
         trPos = trEnd + 5;
     }
@@ -542,6 +465,7 @@ int extractIndentFromStyle(String styleAttr) {
     return 0;
 }
 
+
 // Decode the HTML character entities that matter for Portuguese EPUB text.
 // Named entities are mapped straight to Latin-1 bytes; numeric entities
 // (&#231; / &#xE7;) are emitted as UTF-8 so the subsequent utf8ToLatin1()
@@ -564,26 +488,27 @@ static void appendCodepointUtf8(String& out, uint32_t cp) {
 static void decodeHtmlEntities(String& text) {
     if (text.indexOf('&') == -1) return;
 
-    struct Entity {
-        const char* name;
-        const char* value;
-    };
+    struct Entity { const char* name; const char* value; };
     // Latin-1 values are written as escaped bytes so this file stays ASCII.
     static const Entity entities[] = {
-        {"amp", "&"},       {"lt", "<"},        {"gt", ">"},        {"quot", "\""},     {"apos", "'"},
-        {"nbsp", " "},      {"shy", ""},        {"aacute", "\xE1"}, {"agrave", "\xE0"}, {"acirc", "\xE2"},
-        {"atilde", "\xE3"}, {"auml", "\xE4"},   {"Aacute", "\xC1"}, {"Agrave", "\xC0"}, {"Acirc", "\xC2"},
-        {"Atilde", "\xC3"}, {"Auml", "\xC4"},   {"ccedil", "\xE7"}, {"Ccedil", "\xC7"}, {"eacute", "\xE9"},
-        {"egrave", "\xE8"}, {"ecirc", "\xEA"},  {"euml", "\xEB"},   {"Eacute", "\xC9"}, {"Egrave", "\xC8"},
-        {"Ecirc", "\xCA"},  {"Euml", "\xCB"},   {"iacute", "\xED"}, {"igrave", "\xEC"}, {"icirc", "\xEE"},
-        {"iuml", "\xEF"},   {"Iacute", "\xCD"}, {"Igrave", "\xCC"}, {"Icirc", "\xCE"},  {"Iuml", "\xCF"},
-        {"oacute", "\xF3"}, {"ograve", "\xF2"}, {"ocirc", "\xF4"},  {"otilde", "\xF5"}, {"ouml", "\xF6"},
-        {"Oacute", "\xD3"}, {"Ograve", "\xD2"}, {"Ocirc", "\xD4"},  {"Otilde", "\xD5"}, {"Ouml", "\xD6"},
-        {"uacute", "\xFA"}, {"ugrave", "\xF9"}, {"ucirc", "\xFB"},  {"uuml", "\xFC"},   {"Uacute", "\xDA"},
-        {"Ugrave", "\xD9"}, {"Ucirc", "\xDB"},  {"Uuml", "\xDC"},   {"ntilde", "\xF1"}, {"Ntilde", "\xD1"},
-        {"laquo", "\xAB"},  {"raquo", "\xBB"},  {"ordf", "\xAA"},   {"ordm", "\xBA"},   {"deg", "\xB0"},
-        {"ndash", "-"},     {"mdash", "-"},     {"hellip", "..."},  {"lsquo", "'"},     {"rsquo", "'"},
-        {"ldquo", "\""},    {"rdquo", "\""},
+        {"amp", "&"}, {"lt", "<"}, {"gt", ">"}, {"quot", "\""}, {"apos", "'"},
+        {"nbsp", " "}, {"shy", ""},
+        {"aacute", "\xE1"}, {"agrave", "\xE0"}, {"acirc", "\xE2"}, {"atilde", "\xE3"}, {"auml", "\xE4"},
+        {"Aacute", "\xC1"}, {"Agrave", "\xC0"}, {"Acirc", "\xC2"}, {"Atilde", "\xC3"}, {"Auml", "\xC4"},
+        {"ccedil", "\xE7"}, {"Ccedil", "\xC7"},
+        {"eacute", "\xE9"}, {"egrave", "\xE8"}, {"ecirc", "\xEA"}, {"euml", "\xEB"},
+        {"Eacute", "\xC9"}, {"Egrave", "\xC8"}, {"Ecirc", "\xCA"}, {"Euml", "\xCB"},
+        {"iacute", "\xED"}, {"igrave", "\xEC"}, {"icirc", "\xEE"}, {"iuml", "\xEF"},
+        {"Iacute", "\xCD"}, {"Igrave", "\xCC"}, {"Icirc", "\xCE"}, {"Iuml", "\xCF"},
+        {"oacute", "\xF3"}, {"ograve", "\xF2"}, {"ocirc", "\xF4"}, {"otilde", "\xF5"}, {"ouml", "\xF6"},
+        {"Oacute", "\xD3"}, {"Ograve", "\xD2"}, {"Ocirc", "\xD4"}, {"Otilde", "\xD5"}, {"Ouml", "\xD6"},
+        {"uacute", "\xFA"}, {"ugrave", "\xF9"}, {"ucirc", "\xFB"}, {"uuml", "\xFC"},
+        {"Uacute", "\xDA"}, {"Ugrave", "\xD9"}, {"Ucirc", "\xDB"}, {"Uuml", "\xDC"},
+        {"ntilde", "\xF1"}, {"Ntilde", "\xD1"},
+        {"laquo", "\xAB"}, {"raquo", "\xBB"},
+        {"ordf", "\xAA"}, {"ordm", "\xBA"}, {"deg", "\xB0"},
+        {"ndash", "-"}, {"mdash", "-"}, {"hellip", "..."},
+        {"lsquo", "'"}, {"rsquo", "'"}, {"ldquo", "\""}, {"rdquo", "\""},
     };
 
     String out;
@@ -592,18 +517,10 @@ static void decodeHtmlEntities(String& text) {
     int len = text.length();
     while (i < len) {
         char c = text.charAt(i);
-        if (c != '&') {
-            out += c;
-            i++;
-            continue;
-        }
+        if (c != '&') { out += c; i++; continue; }
         int semi = text.indexOf(';', i + 1);
         // Entities are short; an unmatched or distant ';' means a literal '&'.
-        if (semi == -1 || semi - i > 10) {
-            out += c;
-            i++;
-            continue;
-        }
+        if (semi == -1 || semi - i > 10) { out += c; i++; continue; }
         String body = text.substring(i + 1, semi);
         bool handled = false;
         if (body.length() > 1 && body.charAt(0) == '#') {
@@ -613,25 +530,14 @@ static void decodeHtmlEntities(String& text) {
             } else {
                 cp = (uint32_t)strtoul(body.c_str() + 1, nullptr, 10);
             }
-            if (cp > 0) {
-                appendCodepointUtf8(out, cp);
-                handled = true;
-            }
+            if (cp > 0) { appendCodepointUtf8(out, cp); handled = true; }
         } else {
             for (const Entity& e : entities) {
-                if (body.equals(e.name)) {
-                    out += e.value;
-                    handled = true;
-                    break;
-                }
+                if (body.equals(e.name)) { out += e.value; handled = true; break; }
             }
         }
-        if (handled) {
-            i = semi + 1;
-        } else {
-            out += c;
-            i++;
-        }
+        if (handled) { i = semi + 1; }
+        else { out += c; i++; }
     }
     text = out;
 }
@@ -899,7 +805,7 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(const String& html) 
             nextIsSoftBreak = true;
         }
     }
-    if (currentText.length() > 0) {
+    if(currentText.length() > 0) {
         ContentNode node;
         node.type = CONTENT_TEXT;
         node.textNode.text = currentText;
@@ -914,7 +820,7 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(const String& html) 
     }
     for (size_t nodeIdx = 0; nodeIdx < nodes.size(); nodeIdx++) {
         ContentNode& node = nodes[nodeIdx];
-        if (node.type == CONTENT_TEXT) {
+        if(node.type == CONTENT_TEXT) {
             decodeHtmlEntities(node.textNode.text);
             node.textNode.text.replace("¶Ç8", " -- ");
             node.textNode.text.replace("¶ÇÖ", "'");
@@ -940,8 +846,8 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(const String& html) 
             node.textNode.text = FontMgr::utf8ToLatin1(node.textNode.text);
             node.textNode.text.trim();
             // Filter out common image alt text placeholders
-            if (node.textNode.text == "Unknown" || node.textNode.text == "image" ||
-                node.textNode.text == "Image" || node.textNode.text == "[image]") {
+            if(node.textNode.text == "Unknown" || node.textNode.text == "image" || 
+               node.textNode.text == "Image" || node.textNode.text == "[image]") {
                 node.textNode.text = "";
             }
 
@@ -959,13 +865,10 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(const String& html) 
             if (nodeIdx < 3 && node.textNode.isBlockStart && node.textNode.text.length() > 0 &&
                 node.textNode.text.length() <= 3) {
                 bool isNumeric = true;
-                for (int i = 0; i < (int)node.textNode.text.length(); i++) {
-                    if (!isdigit(node.textNode.text.charAt(i))) {
-                        isNumeric = false;
-                        break;
-                    }
+                for(int i = 0; i < (int)node.textNode.text.length(); i++) {
+                    if(!isdigit(node.textNode.text.charAt(i))) { isNumeric = false; break; }
                 }
-                if (isNumeric) {
+                if(isNumeric) {
                     node.textNode.style = STYLE_HEADER1; // Chapter number - use big centered style
                     node.textNode.align = ALIGN_CENTER;
                 }
@@ -973,19 +876,17 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(const String& html) 
         }
     }
     // Remove empty text nodes
-    nodes.erase(std::remove_if(nodes.begin(), nodes.end(),
-                               [](const ContentNode& n) {
-                                   return n.type == CONTENT_TEXT && n.textNode.text.length() == 0;
-                               }),
-                nodes.end());
+    nodes.erase(std::remove_if(nodes.begin(), nodes.end(), [](const ContentNode& n) {
+        return n.type == CONTENT_TEXT && n.textNode.text.length() == 0;
+    }), nodes.end());
     return nodes;
 }
 
 std::vector<ContentNode> EpubLoader::getChapterContentRich(int index) {
-    if (index < 0 || index >= (int)spine.size()) return std::vector<ContentNode>();
+    if(index < 0 || index >= (int)spine.size()) return std::vector<ContentNode>();
     String href = spine[index].href;
     String fullPath = rootDir + href;
-    if (fullPath.startsWith("./")) fullPath = fullPath.substring(2);
+    if(fullPath.startsWith("./")) fullPath = fullPath.substring(2);
     String content = readFileFromZip(fullPath.c_str());
     return parseHtmlToRichContent(content);
 }
