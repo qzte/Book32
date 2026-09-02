@@ -1,7 +1,7 @@
 # Enviar Livros Diretamente Para o Book32 — Design
 
 Data: 2026-07-24
-Estado: aprovado, por implementar
+Estado: implementado
 
 ## Problema
 
