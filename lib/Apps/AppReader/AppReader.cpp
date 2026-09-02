@@ -1,4 +1,5 @@
 #include "AppReader.h"
+#include "ReaderStrings.h"
 #include "DisplayMgr.h"
 #include "InputMgr.h"
 #include "FontMgr.h"
@@ -1168,9 +1169,9 @@ void AppReader::drawLibrary() {
     do {
         display.fillScreen(GxEPD_WHITE);
 
-        drawTextWithFont(display, "Library", 20, 40, &FreeSansBold12pt8b, GxEPD_BLACK);
+        drawTextWithFont(display, ReaderStrings::LIBRARY_TITLE, 20, 40, &FreeSansBold12pt8b, GxEPD_BLACK);
         char countText[24];
-        snprintf(countText, sizeof(countText), "%d books", (int)_books.size());
+        snprintf(countText, sizeof(countText), ReaderStrings::BOOKS_COUNT_FMT, (int)_books.size());
         fontMgr.drawTextRight(display, countText, display.width() - 20, 38, FONT_SIZE_SMALL, GxEPD_BLACK);
         display.drawFastHLine(20, 56, display.width() - 40, GxEPD_BLACK);
         display.drawFastHLine(20, 58, 72, GxEPD_BLACK);
@@ -1183,15 +1184,15 @@ void AppReader::drawLibrary() {
             display.fillRect(20, y + 6, 5, BACK_ITEM_HEIGHT - 12, GxEPD_BLACK);
             display.drawRoundRect(16, y + 2, display.width() - 32, BACK_ITEM_HEIGHT - 4, 6, GxEPD_BLACK);
         }
-        drawTextWithFont(display, "<  Back to Menu", ITEM_PADDING + 14, y + 32,
+        drawTextWithFont(display, ReaderStrings::BACK_TO_MENU, ITEM_PADDING + 14, y + 32,
                          backSelected ? &FreeSansBold12pt8b : &FreeSans12pt8b, GxEPD_BLACK);
         display.drawFastHLine(ITEM_PADDING, y + BACK_ITEM_HEIGHT - 1, display.width() - (ITEM_PADDING * 2), GxEPD_BLACK);
         y += BACK_ITEM_HEIGHT;
 
         // === Book list ===
         if (_books.empty()) {
-            drawTextWithFont(display, "No books found.", 28, y + 54, &FreeSansBold12pt8b, GxEPD_BLACK);
-            fontMgr.drawText(display, "Upload EPUBs via web.", 28, y + 88, FONT_SIZE_BODY, GxEPD_BLACK);
+            drawTextWithFont(display, ReaderStrings::NO_BOOKS_FOUND, 28, y + 54, &FreeSansBold12pt8b, GxEPD_BLACK);
+            fontMgr.drawText(display, ReaderStrings::UPLOAD_HINT, 28, y + 88, FONT_SIZE_BODY, GxEPD_BLACK);
         } else {
             for (size_t idx = (size_t)_libraryScrollOffset; idx < _books.size(); idx++) {
                 if (y > display.height() - 70) break;
@@ -1269,12 +1270,12 @@ void AppReader::drawLibrary() {
         // Page indicator (14px) - show current selection
         char pageStr[24];
         if (_selectedBookIndex == -1) {
-            snprintf(pageStr, sizeof(pageStr), "Menu");
+            snprintf(pageStr, sizeof(pageStr), "%s", ReaderStrings::MENU_LABEL);
         } else {
             snprintf(pageStr, sizeof(pageStr), "%d/%d", _selectedBookIndex + 1, (int)_books.size());
         }
         display.drawFastHLine(20, display.height() - 42, display.width() - 40, GxEPD_BLACK);
-        fontMgr.drawText(display, "Next: Move  |  Hold: Open", 22, display.height() - 18, FONT_SIZE_SMALL, GxEPD_BLACK);
+        fontMgr.drawText(display, ReaderStrings::FOOTER_HINT, 22, display.height() - 18, FONT_SIZE_SMALL, GxEPD_BLACK);
         fontMgr.drawTextRight(display, pageStr, display.width() - 20, display.height() - 18, FONT_SIZE_SMALL, GxEPD_BLACK);
 
     } while (display.nextPage());
@@ -1324,9 +1325,9 @@ void AppReader::drawReading() {
         char footerText[40];
         int totalPages = _indexer.totalPages();
         if (totalPages > 0) {
-            snprintf(footerText, sizeof(footerText), "Page %d of %d", _globalPageNumber, totalPages);
+            snprintf(footerText, sizeof(footerText), ReaderStrings::PAGE_OF_FMT, _globalPageNumber, totalPages);
         } else {
-            snprintf(footerText, sizeof(footerText), "Page %d", _globalPageNumber);
+            snprintf(footerText, sizeof(footerText), ReaderStrings::PAGE_FMT, _globalPageNumber);
         }
         int16_t fx1, fy1; uint16_t fw, fh;
         display.getTextBounds(footerText, 0, 0, &fx1, &fy1, &fw, &fh);

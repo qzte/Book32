@@ -142,7 +142,7 @@ String AppMainMenu::getWifiFooterText() const {
         return String("Wi-Fi: ") + AP_SSID + " / " + WebMgr::devicePassword() +
                "  ->  192.168.4.1";
     }
-    return _wifiStarting ? "WiFi starting" : "WiFi offline";
+    return _wifiStarting ? "Wi-Fi a ligar" : "Wi-Fi desligado";
 }
 
 void AppMainMenu::startHotspot() {
@@ -448,14 +448,14 @@ void AppMainMenu::draw() {
             
             display.drawBitmap(x, y, icon_update_160x160, ICON_SIZE, ICON_SIZE, GxEPD_BLACK);
             
-            String updateText = "Update " + updateVersion;
+            String updateText = "Actualizar " + updateVersion;
             int nameWidth = fontMgr.getTextWidth(updateText.c_str(), FONT_SIZE_MENU);
             int nameX = x + (ICON_SIZE - nameWidth) / 2;
             fontMgr.drawText(display, updateText.c_str(), nameX, y + ICON_SIZE + 25, FONT_SIZE_MENU, GxEPD_BLACK);
         }
 
         // === Footer ===
-        fontMgr.drawTextCentered(display, "Press: Next  |  Hold: Select", screenH - 45, FONT_SIZE_SMALL, GxEPD_BLACK);
+        fontMgr.drawTextCentered(display, "Premir: Seguinte  |  Manter: Seleccionar", screenH - 45, FONT_SIZE_SMALL, GxEPD_BLACK);
         String ipStr = getWifiFooterText();
         fontMgr.drawTextCentered(display, ipStr.c_str(), screenH - 20, FONT_SIZE_SMALL, GxEPD_BLACK);
         _lastWifiFooterText = ipStr;
