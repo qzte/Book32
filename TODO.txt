@@ -103,3 +103,35 @@ mostrar dados errados.
 Apagar um livro pela web UI: confirmar que /chapter_narrative.json perde a
 entrada correspondente no scan seguinte, no mesmo ponto onde titulos e
 posicoes ja sao podados.
+
+=== Correcoes D1/D2/D3/D4/D7/D10 da avaliacao de codigo do eReader — a verificar no dispositivo (nao coberto pelos testes de host) ===
+(ver docs/plans/2026-09-02-avaliacao-codigo-ereader.md; pio run nao correu
+neste ambiente, so revisao manual do diff — muda o parser de HTML e o
+renderizador, nenhum dos dois com stub de host, ver seccao "Testabilidade"
+do proprio documento)
+Hifenizacao no fim de linha (D4): abrir um livro em portugues com paragrafos
+longos e confirmar visualmente que a margem direita fica menos denteada, com
+hifens a aparecerem no meio de palavras compridas perto do fim da linha (nao
+so em palavras maiores do que a coluna inteira, como antes); confirmar que
+NUNCA aparecem duas linhas seguidas terminadas em hifen.
+Alinhamento de paragrafo (D2): um EPUB com <p style="text-align:center"> ou
+"text-align:right" (epigrafes, assinaturas de carta) tem de sair alinhado
+como pedido, e o paragrafo seguinte SEM estilo proprio tem de voltar a ficar
+alinhado a esquerda (nao "contaminado" pelo anterior).
+Negrito/italico sem fecho (D10): um EPUB com <b> sem </b> a fechar antes do
+fim do paragrafo (HTML tolerante, mas existe em ficheiros reais) nao pode
+deixar o resto do capitulo a negrito.
+<br> como quebra de linha (D3): poesia, versos de cancao ou uma morada com
+<br/> tem de aparecer em linhas separadas (nao tudo corrido numa linha so),
+sem o espacamento extra de paragrafo nem o recuo da primeira linha entre as
+linhas de um mesmo <br/>.
+Tabelas (D1): um EPUB com <table> (comum em apendices/cronologias) tem de
+mostrar o conteudo das celulas como texto (uma linha "celula | celula" para
+tabelas ate 2 colunas, uma linha por celula, indentada, para mais colunas)
+em vez de desaparecer por completo; confirmar tambem que o "ir para %" nao
+fica desalinhado por causa do texto da tabela (chapterTextLength conta-o
+pela mesma via que o resto do texto agora).
+Fim de livro sem paginas em branco (D7): um EPUB cujos ultimos capitulos da
+spine sejam paginas de navegacao/creditos sem texto (comum em EPUB
+comercial) tem de parar na ultima pagina com conteudo a carregar em "Next"
+repetido, sem avancar o contador do rodape nem mostrar ecras em branco.
