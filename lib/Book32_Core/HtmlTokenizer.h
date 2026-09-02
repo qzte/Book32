@@ -69,15 +69,18 @@ struct HtmlToken {
 // parser special-cased "img"/"image" together.
 inline bool htmlIsVoidElement(const char* name, size_t len) {
     static const char* const kVoid[] = {
-        "area", "base",  "br",    "col",   "embed",  "hr",    "img",
-        "image", "input", "link",  "meta",  "param",  "source", "track", "wbr",
+        "area",  "base", "br",   "col",   "embed",  "hr",    "img", "image",
+        "input", "link", "meta", "param", "source", "track", "wbr",
     };
     for (const char* v : kVoid) {
         size_t vlen = strlen(v);
         if (vlen != len) continue;
         bool match = true;
         for (size_t i = 0; i < len; i++) {
-            if (tolower((unsigned char)name[i]) != v[i]) { match = false; break; }
+            if (tolower((unsigned char)name[i]) != v[i]) {
+                match = false;
+                break;
+            }
         }
         if (match) return true;
     }
@@ -108,7 +111,7 @@ inline bool htmlTagFirstCharIs(const HtmlToken& t, char c) {
 // start the span) — same fix as findAttributeStart() in EpubLoader.cpp: a
 // search for "type" must not match inside "media-type".
 inline const char* htmlFindAttribute(const char* attrs, size_t attrsLen, const char* attrName,
-                                      size_t* outLen) {
+                                     size_t* outLen) {
     if (outLen) *outLen = 0;
     if (!attrs || !attrName) return nullptr;
     size_t nameLen = strlen(attrName);
@@ -121,7 +124,8 @@ inline const char* htmlFindAttribute(const char* attrs, size_t attrsLen, const c
         if (nameMatches && afterName == '=' && (quote == '"' || quote == '\'') && precededOk) {
             size_t valStart = i + nameLen + 2;
             size_t valEnd = valStart;
-            while (valEnd < attrsLen && attrs[valEnd] != quote) valEnd++;
+            while (valEnd < attrsLen && attrs[valEnd] != quote)
+                valEnd++;
             if (valEnd >= attrsLen) return nullptr; // unterminated value
             if (outLen) *outLen = valEnd - valStart;
             return attrs + valStart;
@@ -146,8 +150,12 @@ class HtmlTokenizer {
     // (e.g. <table>, whose whole subtree the caller wants to re-scan and
     // skip as one block) read this right after receiving that tag's
     // StartTag token and pass it to seekTo() once they're done.
-    size_t position() const { return pos_; }
-    void seekTo(size_t pos) { pos_ = (pos <= len_) ? pos : len_; }
+    size_t position() const {
+        return pos_;
+    }
+    void seekTo(size_t pos) {
+        pos_ = (pos <= len_) ? pos : len_;
+    }
 
     HtmlToken next() {
         for (;;) {
@@ -171,7 +179,9 @@ class HtmlTokenizer {
     }
 
   private:
-    static size_t npos() { return (size_t)-1; }
+    static size_t npos() {
+        return (size_t)-1;
+    }
 
     bool matchesAt(const char* needle) const {
         size_t n = strlen(needle);
@@ -194,7 +204,8 @@ class HtmlTokenizer {
 
     HtmlToken readText() {
         size_t start = pos_;
-        while (pos_ < len_ && html_[pos_] != '<') pos_++;
+        while (pos_ < len_ && html_[pos_] != '<')
+            pos_++;
         HtmlToken t;
         t.type = HtmlTokenType::Text;
         t.text = html_ + start;
@@ -204,10 +215,14 @@ class HtmlTokenizer {
 
     HtmlToken readEndTag() {
         size_t gt = findFrom(">", pos_);
-        if (gt == npos()) { pos_ = len_; return HtmlToken{}; }
+        if (gt == npos()) {
+            pos_ = len_;
+            return HtmlToken{};
+        }
         size_t nameStart = pos_ + 2; // skip "</"
         size_t nameEnd = nameStart;
-        while (nameEnd < gt && !isNameEnd(html_[nameEnd])) nameEnd++;
+        while (nameEnd < gt && !isNameEnd(html_[nameEnd]))
+            nameEnd++;
         HtmlToken t;
         t.type = HtmlTokenType::EndTag;
         t.name = html_ + nameStart;
@@ -218,10 +233,14 @@ class HtmlTokenizer {
 
     HtmlToken readStartTag() {
         size_t gt = findFrom(">", pos_);
-        if (gt == npos()) { pos_ = len_; return HtmlToken{}; }
+        if (gt == npos()) {
+            pos_ = len_;
+            return HtmlToken{};
+        }
         size_t nameStart = pos_ + 1; // skip "<"
         size_t nameEnd = nameStart;
-        while (nameEnd < gt && !isNameEnd(html_[nameEnd])) nameEnd++;
+        while (nameEnd < gt && !isNameEnd(html_[nameEnd]))
+            nameEnd++;
 
         size_t attrsEnd = gt;
         bool slashClosed = gt > nameEnd && html_[gt - 1] == '/';
@@ -247,7 +266,9 @@ class HtmlTokenizer {
 // what parseHtmlToRichContent used to fake with styleStack.size() snapshots.
 class HtmlElementStack {
   public:
-    void push(const char* name, size_t len) { names_.push_back(lower(name, len)); }
+    void push(const char* name, size_t len) {
+        names_.push_back(lower(name, len));
+    }
 
     // Pops down to and including the innermost element named `name`
     // (auto-closing anything left open above it, same tolerant behaviour
@@ -266,13 +287,18 @@ class HtmlElementStack {
         return false;
     }
 
-    size_t size() const { return names_.size(); }
-    bool empty() const { return names_.empty(); }
+    size_t size() const {
+        return names_.size();
+    }
+    bool empty() const {
+        return names_.empty();
+    }
 
   private:
     static std::string lower(const char* s, size_t len) {
         std::string r(s, len);
-        for (char& c : r) c = (char)tolower((unsigned char)c);
+        for (char& c : r)
+            c = (char)tolower((unsigned char)c);
         return r;
     }
 

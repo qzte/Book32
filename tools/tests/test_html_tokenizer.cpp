@@ -1,6 +1,7 @@
 // Host test for the SAX-like HTML tokenizer (M3) that replaced the
 // indexOf-based state machine in EpubLoader::parseHtmlToRichContent.
-// Build: g++ -std=c++17 -I ../../lib/Book32_Core -o test_html_tokenizer test_html_tokenizer.cpp && ./test_html_tokenizer
+// Build: g++ -std=c++17 -I ../../lib/Book32_Core -o test_html_tokenizer test_html_tokenizer.cpp &&
+// ./test_html_tokenizer
 #include "HtmlTokenizer.h"
 #include <cassert>
 #include <cstdio>
@@ -8,9 +9,15 @@
 
 using std::string;
 
-static string nameOf(const HtmlToken& t) { return string(t.name, t.nameLen); }
-static string textOf(const HtmlToken& t) { return string(t.text, t.textLen); }
-static string attrsOf(const HtmlToken& t) { return string(t.attrs, t.attrsLen); }
+static string nameOf(const HtmlToken& t) {
+    return string(t.name, t.nameLen);
+}
+static string textOf(const HtmlToken& t) {
+    return string(t.text, t.textLen);
+}
+static string attrsOf(const HtmlToken& t) {
+    return string(t.attrs, t.attrsLen);
+}
 
 int main() {
     // 1. Basic start/text/end sequence, including nested inline styling.
