@@ -891,13 +891,15 @@ void AppReader::startIndexing() {
 // (_indexRenderer, its own instance so it never disturbs the page actually
 // on screen — same reasoning as the old _countRenderer).
 //
-// Standby (long-press KEY2) and the idle-sleep timeout both go straight to
-// esp_deep_sleep_start() (see BatteryMgr::enterIdleSleep) without running
-// closeBook() first, so a scan in progress can be cut off at any moment
-// with no chance to save. Only the page-count sub-task checkpoints (see
-// advanceIndexChapter): it is the one that actually benefits from resuming
-// mid-book instead of restarting, being the only one with a TextRenderer
-// pass per chapter instead of just a parse.
+// D12: only the idle-sleep timeout (BatteryMgr::enterIdleSleep("idle_timeout"))
+// goes straight to esp_deep_sleep_start() with no chance to save — KEY2
+// long-press standby calls the current app's stop() (closeBook() here)
+// first (see InputMgr::enterStandby()). Either way, this scan can still be
+// interrupted with nothing beyond the last fully-completed chapter's
+// checkpoint saved (see advanceIndexChapter): only the page-count sub-task
+// checkpoints, being the one that actually benefits from resuming mid-book
+// instead of restarting, with a TextRenderer pass per chapter instead of
+// just a parse.
 void AppReader::updateIndexing() {
     if (!_epubLoader) {
         _indexingActive = false;

@@ -198,3 +198,24 @@ Sem regressao no resto do capitulo: um capitulo com um comentario ou CDATA
 a meio continua com o texto antes e depois desse bloco a aparecer
 normalmente (estilo, alinhamento e paragrafos intactos), so o proprio
 comentario/CDATA e que desaparece.
+
+=== Correcoes D12 (menores) da avaliacao de codigo do eReader — a verificar no dispositivo (nao coberto pelos testes de host) ===
+(ver docs/plans/2026-09-02-avaliacao-codigo-ereader.md; pio run nao correu
+neste ambiente, so revisao manual do diff — muda EpubLoader.cpp, sem stub
+de host, ver seccao "Testabilidade" do documento)
+Capitulo com bytes nulos no meio (raro, EPUB UTF-16 mal convertido): o
+capitulo tem de continuar completo ate ao fim, nao truncado no primeiro
+byte nulo.
+Capa com leitura curta do ZIP (dificil de reproduzir de propósito, mas
+confirmar que uma capa normal continua a aparecer): a capa continua a
+descodificar normalmente para livros com capa valida; nao deve haver
+nenhuma capa com "lixo" visual onde antes normalmente mostrava algo.
+text-indent fraccionario ("1.5em" no CSS de um paragrafo): o recuo da
+primeira linha tem de reflectir o valor fraccionario (mais recuo do que
+"1em"), nao ficar preso ao mesmo valor de "1em".
+Sem regressao nos atributos existentes: capa, fontes incorporadas, spine e
+manifest continuam a ler-se normalmente de um EPUB real (extractAttribute
+continua a encontrar id/href/media-type/properties/content sem falhar).
+Capitulo longo (100+ KB): abrir um livro com um capitulo grande e confirmar
+que abre num tempo semelhante (ou melhor) do que antes desta alteracao, sem
+regressao de resposta aos botoes.

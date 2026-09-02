@@ -201,6 +201,12 @@ private:
     std::vector<ContentNode> _currentRichContent;
     PagePointer _currentPagePointer;
     std::vector<PagePointer> _pageHistory; // Stores start of each page for current chapter
+    // D12: drawReading() is the only writer (its draw=true render already
+    // measures where this page ends as a side effect) and nextPage() is the
+    // only reader — it reuses that measurement to decide whether to advance
+    // instead of re-measuring the same page with a second draw=false pass,
+    // and only does that pass itself when _currentPageRenderValid is false
+    // (e.g. right after a jump, resize, or page turn invalidated it).
     RenderResult _currentPageRender;
     bool _currentPageRenderValid;
 
