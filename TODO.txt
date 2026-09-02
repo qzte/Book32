@@ -219,3 +219,31 @@ continua a encontrar id/href/media-type/properties/content sem falhar).
 Capitulo longo (100+ KB): abrir um livro com um capitulo grande e confirmar
 que abre num tempo semelhante (ou melhor) do que antes desta alteracao, sem
 regressao de resposta aos botoes.
+
+=== Refactor M1 (parcial: LibraryLayout + BookIndexer) — a verificar no dispositivo (nao coberto pelos testes de host) ===
+(ver docs/plans/2026-09-02-avaliacao-codigo-ereader.md, seccao M1; pio run
+nao correu neste ambiente, so revisao manual do diff — extrai os tres
+scanners de fundo do AppReader para uma classe BookIndexer e consolida as
+constantes de layout da biblioteca num struct LibraryLayout, sem mudanca de
+comportamento pretendida; a divisao LibraryView/ReadingView fica para outra
+sessao, ver corpo do PR)
+Biblioteca com o mesmo aspecto de sempre: HEADER_H/BACK_ITEM_HEIGHT/ITEM_HEIGHT
+vieram de LibraryLayout em vez de constantes locais repetidas — confirmar que
+a lista de livros, o item "Voltar" e a paginacao da biblioteca ocupam
+exactamente o mesmo espaco e desenham identico a antes desta alteracao.
+Abrir um livro novo (sem nenhuma cache ainda) continua a contar paginas,
+construir o indice de capitulos e medir o comprimento de cada capitulo em
+segundo plano, sem travar os botoes — e os tres resultados ficam
+persistidos (PageCountStore/ChapterTocStore/ChapterNarrativeStore/
+ChapterGuideTypeStore/ChapterLengthStore) exactamente como antes.
+Mudar tamanho ou familia de letra com o livro aberto continua a relancar
+so a contagem de paginas (via BookIndexer::start), sem repetir a
+construcao do indice nem dos comprimentos se essas caches ja estiverem
+completas.
+Standby (KEY2 longo) ou fechar o livro a meio do varrimento de um livro
+novo: reabrir o mesmo livro depois continua a retomar a contagem de
+paginas a partir do ultimo checkpoint gravado (capitulo/paginas ate ai),
+nao do zero — mesma garantia de sempre, agora dentro de
+BookIndexer::start/advanceChapter.
+"Ir para %" com ChapterLengthStore ja em cache continua instantaneo (sem
+varrimento proprio) para um livro ja aberto antes desta alteracao.

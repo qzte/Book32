@@ -11,7 +11,7 @@
 //
 // Serve só para rotular no índice web (GET /api/toc) entradas não-narrativas
 // sem título detectado (ex.: "Capa" em vez de "Capítulo N" genérico) — ver
-// AppReader::updateIndexing e data/script.js. Chaveado pelo nome original,
+// BookIndexer e data/script.js. Chaveado pelo nome original,
 // cache local (não entra no export/import de estado entre dispositivos),
 // mesmas convenções do ChapterNarrativeStore.
 
@@ -31,7 +31,7 @@ class ChapterGuideTypeStore {
     bool get(const String& originalName, std::vector<String>& out);
 
     // Grava a lista completa de uma só vez, construída a partir de
-    // EpubLoader::getChapterGuideType() (ver AppReader::updateIndexing) — o
+    // EpubLoader::getChapterGuideType() (ver BookIndexer) — o
     // <guide> já foi lido quando o EPUB abriu, sem custo de parsing extra.
     // Um vector vazio é ignorado.
     void set(const String& originalName, const std::vector<String>& guideTypes);

@@ -4,7 +4,7 @@
 // Porquê: construir o índice implica ler e analisar o HTML de todos os
 // capítulos do EPUB (ver EpubLoader::getChapterTitle), o mesmo tipo de
 // trabalho que a contagem total de páginas evita fazer a cada abertura do
-// livro (ver AppReader::startIndexing). Uma vez construído, o
+// livro (ver BookIndexer). Uma vez construído, o
 // índice não depende de tamanho de letra nem de família — ao contrário da
 // contagem de páginas — por isso só precisa de ser calculado uma vez por
 // livro, nunca mais enquanto o EPUB não mudar.
@@ -36,7 +36,7 @@ class ChapterTocStore {
 
     // Grava o índice completo do livro de uma só vez — é sempre construído
     // inteiro em segundo plano antes de se gravar (ver
-    // AppReader::updateIndexing), por isso não há aqui uma versão parcial a
+    // BookIndexer), por isso não há aqui uma versão parcial a
     // fundir. Um vector vazio é ignorado.
     void set(const String& originalName, const std::vector<String>& titles);
 

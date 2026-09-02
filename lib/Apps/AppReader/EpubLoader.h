@@ -112,7 +112,7 @@ public:
     // que a heurística de parseHtmlToRichContent já promove a cabeçalho)
     // devolvido por getChapterContentRich(). "" quando o capítulo não tem
     // nenhum cabeçalho detectável — o chamador decide o texto de recurso
-    // (ver ChapterTocStore / AppReader::updateIndexing). Reabre e reanalisa
+    // (ver ChapterTocStore / BookIndexer). Reabre e reanalisa
     // o capítulo a cada chamada — usar chapterTitleFromContent() em vez
     // disto quando o conteúdo já tiver sido lido por outra razão (ver D6 da
     // avaliação de código do eReader).
@@ -142,7 +142,7 @@ public:
     // capítulo `index` — "cover", "title-page", "copyright-page", etc., ver
     // isNarrativeGuideType em EpubLoader.cpp. "" quando o capítulo é
     // narrativo ou o índice está fora do intervalo. O chamador decide o
-    // rótulo em português (ver AppReader::updateIndexing / data/script.js) —
+    // rótulo em português (ver BookIndexer / data/script.js) —
     // este método só expõe o valor cru do OPF.
     String getChapterGuideType(int index) const;
 

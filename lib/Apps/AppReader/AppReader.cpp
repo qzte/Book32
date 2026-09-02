@@ -115,28 +115,25 @@ struct LibraryDirtyRect {
 };
 
 static LibraryDirtyRect libraryItemRect(int index, int scrollOffset, int screenW) {
-    const int HEADER_H = 76;
-    const int BACK_ITEM_HEIGHT = 48;
-    const int ITEM_HEIGHT = 110;
     if (index < 0) {
-        return {14, HEADER_H, screenW - 28, BACK_ITEM_HEIGHT + 4};
+        return {14, LibraryLayout::HEADER_H, screenW - 28, LibraryLayout::BACK_ITEM_HEIGHT + 4};
     }
     int visibleRow = index - scrollOffset;
-    return {14, HEADER_H + BACK_ITEM_HEIGHT + (visibleRow * ITEM_HEIGHT), screenW - 28, ITEM_HEIGHT + 4};
+    return {14,
+            LibraryLayout::HEADER_H + LibraryLayout::BACK_ITEM_HEIGHT +
+                (visibleRow * LibraryLayout::ITEM_HEIGHT),
+            screenW - 28, LibraryLayout::ITEM_HEIGHT + 4};
 }
 
 // How many book rows fit below the header/back item, given the same vertical
 // budget the draw loop in drawLibrary() uses. Kept in sync with that loop's
 // "if (y > display.height() - 70) break;" condition.
 static int libraryItemsPerPage(int screenHeight) {
-    const int HEADER_H = 76;
-    const int BACK_ITEM_HEIGHT = 48;
-    const int ITEM_HEIGHT = 110;
-    int y = HEADER_H + BACK_ITEM_HEIGHT;
+    int y = LibraryLayout::HEADER_H + LibraryLayout::BACK_ITEM_HEIGHT;
     int count = 0;
     while (y <= screenHeight - 70) {
         count++;
-        y += ITEM_HEIGHT;
+        y += LibraryLayout::ITEM_HEIGHT;
     }
     return count;
 }
@@ -161,15 +158,6 @@ AppReader::AppReader() {
     _textRenderer = nullptr;
     _currentChapter = 0;
     _needsRedraw = true;
-    _totalPages = 0;
-    _indexingActive = false;
-    _indexNeedPageCount = false;
-    _indexNeedToc = false;
-    _indexNeedLengths = false;
-    _indexRenderer = nullptr;
-    _indexChapter = 0;
-    _indexPointer = {0, 0};
-    _indexPagesSoFar = 0;
     _percentSeekActive = false;
     _percentSeekTargetPercent = 0;
     _currentPageRender = {0, 0, false, 0, 0};
@@ -349,7 +337,7 @@ void AppReader::scanBooks() {
                 b.globalPage = p.globalPage;
             }
             // Only known once a book has been read all the way through at the
-            // current font settings (see startIndexing) — scanning every
+            // current font settings (see BookIndexer) — scanning every
             // unread book here would be exactly the slow-open problem this
             // feature is careful to avoid.
             b.totalPages = PageCountStore::getInstance().get(b.originalName, _fontSizePt, _fontFamily);
@@ -662,7 +650,7 @@ bool AppReader::openBook(const String& path, bool restoreProgress) {
     _textRenderer->calculateDimensions();
 
     // Paginating the whole book here would stall opening a large one, so only
-    // the running position is known immediately; startIndexing() below fills
+    // the running position is known immediately; _indexer.start() below fills
     // in the total a little at a time instead.
     _globalPageNumber = 1; // Start at page 1
     _currentPageRenderValid = false;
@@ -707,7 +695,7 @@ bool AppReader::openBook(const String& path, bool restoreProgress) {
     }
 
     _state = VIEW_READING;
-    startIndexing();
+    _indexer.start(_epubLoader, progressKey, _fontSizePt, _fontFamily);
 
     // v1.14.0: a "go to %" requested from the web UI while this book wasn't
     // open (see GoToPercentStore) applies now, overriding the position just
@@ -794,10 +782,10 @@ void AppReader::flushProgress() {
     p.globalPage = _globalPageNumber;
 
     ProgressStore& store = ProgressStore::getInstance();
-    // _totalPages is 0 until the background count reaches the end of the book;
-    // ProgressStore treats that as "cannot tell yet" and leaves the finish date
-    // unset rather than guessing. See ProgressStore::set.
-    store.set(key, p, _totalPages);
+    // _indexer.totalPages() is 0 until the background count reaches the end
+    // of the book; ProgressStore treats that as "cannot tell yet" and leaves
+    // the finish date unset rather than guessing. See ProgressStore::set.
+    store.set(key, p, _indexer.totalPages());
     store.setLast(key, _progressResumeOnBoot);
 }
 
@@ -818,196 +806,7 @@ void AppReader::closeBook(bool markInactive) {
     _pageHistory.clear();
     _currentPageRenderValid = false;
 
-    _indexingActive = false;
-    _indexChapterContent.clear();
-    _indexTitles.clear();
-    _indexLengths.clear();
-    if (_indexRenderer) {
-        delete _indexRenderer;
-        _indexRenderer = nullptr;
-    }
-}
-
-// Kicks off (or skips, if every cache already has what it needs) the
-// unified chapter scan for the book that just opened in
-// _epubLoader/_currentBookPath — see the AppReader.h comment above
-// _indexingActive for what it merges and why (D6). Each of the three needs
-// is checked against its own cache independently: a page-count cache hit
-// (font-scoped) doesn't imply a TOC or length cache hit (book-scoped, no
-// font), and vice versa.
-void AppReader::startIndexing() {
-    _totalPages = 0;
-    _indexingActive = false;
-    _indexChapter = 0;
-    _indexPagesSoFar = 0;
-    _indexPointer = {0, 0};
-    _indexChapterContent.clear();
-    _indexTitles.clear();
-    _indexLengths.clear();
-    if (_indexRenderer) {
-        delete _indexRenderer;
-        _indexRenderer = nullptr;
-    }
-
-    if (!_epubLoader || _currentBookPath.length() == 0) return;
-    String key = getOriginalFilename(normalizedBookName(_currentBookPath));
-    int totalChapters = _epubLoader->getChapterCount();
-
-    int cachedPages = PageCountStore::getInstance().get(key, _fontSizePt, _fontFamily);
-    _indexNeedPageCount = (cachedPages <= 0);
-    if (!_indexNeedPageCount) _totalPages = cachedPages;
-
-    std::vector<String> cachedTitles;
-    _indexNeedToc =
-        !(ChapterTocStore::getInstance().get(key, cachedTitles) && (int)cachedTitles.size() == totalChapters);
-
-    std::vector<long> cachedLengths;
-    _indexNeedLengths = !(ChapterLengthStore::getInstance().get(key, cachedLengths) &&
-                          (int)cachedLengths.size() == totalChapters);
-
-    if (!_indexNeedPageCount && !_indexNeedToc && !_indexNeedLengths) return; // nada por fazer
-
-    // Um checkpoint de PageCountStore só deixa saltar capítulos quando a
-    // contagem de páginas é a ÚNICA coisa por fazer: o índice e os
-    // comprimentos não têm checkpoint próprio (sempre recomeçam do capítulo
-    // 0 — ver o resto deste ficheiro), por isso, se qualquer um dos dois
-    // ainda precisar dos capítulos iniciais, o cursor partilhado tem de
-    // começar em 0 mesmo que a contagem já tivesse ido mais longe numa
-    // sessão anterior.
-    if (_indexNeedPageCount && !_indexNeedToc && !_indexNeedLengths) {
-        PageCountCheckpoint checkpoint;
-        if (PageCountStore::getInstance().getCheckpoint(key, _fontSizePt, _fontFamily, checkpoint)) {
-            _indexChapter = checkpoint.chapter;
-            _indexPagesSoFar = checkpoint.pagesSoFar;
-        }
-    }
-
-    _indexingActive = true;
-}
-
-// Advances the unified scan by a time-boxed slice. Each chapter is read
-// once with getChapterContentRich() and fed to whichever of the three tasks
-// still needs it; only the page-count task touches a TextRenderer
-// (_indexRenderer, its own instance so it never disturbs the page actually
-// on screen — same reasoning as the old _countRenderer).
-//
-// D12: only the idle-sleep timeout (BatteryMgr::enterIdleSleep("idle_timeout"))
-// goes straight to esp_deep_sleep_start() with no chance to save — KEY2
-// long-press standby calls the current app's stop() (closeBook() here)
-// first (see InputMgr::enterStandby()). Either way, this scan can still be
-// interrupted with nothing beyond the last fully-completed chapter's
-// checkpoint saved (see advanceIndexChapter): only the page-count sub-task
-// checkpoints, being the one that actually benefits from resuming mid-book
-// instead of restarting, with a TextRenderer pass per chapter instead of
-// just a parse.
-void AppReader::updateIndexing() {
-    if (!_epubLoader) {
-        _indexingActive = false;
-        return;
-    }
-
-    DisplayMgr& dispMgr = DisplayMgr::getInstance();
-    Book32Display& display = dispMgr.getDisplay();
-
-    if (_indexNeedPageCount && !_indexRenderer) {
-        _indexRenderer = new TextRenderer(display.width(), display.height(), _fontSizePt);
-        _indexRenderer->setFontFamily(_fontFamily);
-    }
-
-    String key = getOriginalFilename(normalizedBookName(_currentBookPath));
-    int totalChapters = _epubLoader->getChapterCount();
-
-    unsigned long budgetEnd = millis() + INDEX_BUDGET_MS;
-    while (_indexingActive && millis() < budgetEnd) {
-        if (_indexChapterContent.empty()) {
-            if (_indexChapter >= totalChapters) {
-                finishIndexing(key);
-                return;
-            }
-
-            _indexChapterContent = _epubLoader->getChapterContentRich(_indexChapter);
-            _indexPointer = {0, 0};
-
-            if (_indexNeedToc)
-                _indexTitles.push_back(EpubLoader::chapterTitleFromContent(_indexChapterContent));
-            if (_indexNeedLengths) _indexLengths.push_back(chapterTextLength(_indexChapterContent));
-
-            if (_indexChapterContent.empty()) {
-                advanceIndexChapter(key); // nada para paginar neste capítulo
-                continue;
-            }
-            if (_indexNeedPageCount) _indexPagesSoFar++; // First page of this chapter begins
-        }
-
-        if (!_indexNeedPageCount) {
-            // Nada mais precisa deste conteúdo — título/comprimento (se
-            // pedidos) já foram capturados acima na mesma leitura.
-            _indexChapterContent.clear();
-            advanceIndexChapter(key);
-            continue;
-        }
-
-        RenderResult r = _indexRenderer->renderRichPageDynamic(
-            display, _indexChapterContent, _indexPointer.nodeIndex, _indexPointer.charOffset, 0, 0, false);
-        if (r.pageFull) {
-            _indexPagesSoFar++;
-            _indexPointer.nodeIndex = r.nextNodeIndex;
-            _indexPointer.charOffset = r.nextCharOffset;
-        } else {
-            _indexChapterContent.clear();
-            advanceIndexChapter(key);
-        }
-    }
-}
-
-void AppReader::advanceIndexChapter(const String& key) {
-    _indexChapter++;
-    if (_indexNeedPageCount) {
-        PageCountCheckpoint checkpoint;
-        checkpoint.chapter = _indexChapter;
-        checkpoint.pagesSoFar = _indexPagesSoFar;
-        PageCountStore::getInstance().setCheckpoint(key, _fontSizePt, _fontFamily, checkpoint);
-    }
-}
-
-void AppReader::finishIndexing(const String& key) {
-    _indexingActive = false;
-
-    if (_indexNeedPageCount) {
-        int total = max(1, _indexPagesSoFar);
-        _totalPages = total;
-        PageCountStore::getInstance().set(key, _fontSizePt, _fontFamily, total);
-    }
-
-    if (_indexNeedToc && !_indexTitles.empty()) {
-        ChapterTocStore::getInstance().set(key, _indexTitles);
-
-        // O <guide> do OPF já foi lido inteiro quando o EPUB abriu
-        // (EpubLoader::open -> parseOpf -> parseGuide): isto não reabre o
-        // ZIP nem repete trabalho por capítulo, ao contrário do varrimento
-        // acima — por isso persiste-se de uma vez, sem precisar de
-        // orçamento por passagem.
-        int totalChapters = (int)_indexTitles.size();
-        std::vector<bool> narrative;
-        narrative.reserve(totalChapters);
-        std::vector<String> guideTypes;
-        guideTypes.reserve(totalChapters);
-        for (int i = 0; i < totalChapters; i++) {
-            narrative.push_back(_epubLoader->isChapterNarrative(i));
-            guideTypes.push_back(_epubLoader->getChapterGuideType(i));
-        }
-        ChapterNarrativeStore::getInstance().set(key, narrative);
-        ChapterGuideTypeStore::getInstance().set(key, guideTypes);
-    }
-
-    if (_indexNeedLengths && !_indexLengths.empty()) {
-        ChapterLengthStore::getInstance().set(key, _indexLengths);
-    }
-
-    if (_indexRenderer) {
-        delete _indexRenderer;
-        _indexRenderer = nullptr;
-    }
+    _indexer.reset();
 }
 
 // Applies a "go to chapter" request already resolved to an exact index (see
@@ -1029,31 +828,13 @@ void AppReader::applyChapterJump(int targetChapter) {
     _currentPageRenderValid = false;
 
     int totalChapters = _epubLoader ? _epubLoader->getChapterCount() : 0;
-    _globalPageNumber = (_totalPages > 0 && totalChapters > 0)
-                            ? max(1, (int)(((long)_totalPages * (long)targetChapter) / totalChapters))
+    int totalPages = _indexer.totalPages();
+    _globalPageNumber = (totalPages > 0 && totalChapters > 0)
+                            ? max(1, (int)(((long)totalPages * (long)targetChapter) / totalChapters))
                             : 1;
 
     _readingFirstDraw = true; // full refresh: clears whatever was last on screen
     saveReadingProgress(true);
-}
-
-// Sums the character length of a chapter's already-parsed rich content —
-// text nodes directly, table cells cell by cell. No font measurement: this
-// is only ever used to compare chapters against each other for "go to %", so
-// it only needs to be proportionally right, not pixel-accurate.
-long AppReader::chapterTextLength(const std::vector<ContentNode>& content) {
-    long total = 0;
-    for (const ContentNode& node : content) {
-        if (node.type == CONTENT_TEXT) {
-            total += node.textNode.text.length();
-        } else if (node.type == CONTENT_TABLE) {
-            for (const TableRow& row : node.table.rows) {
-                for (const TableCell& cell : row.cells)
-                    total += cell.content.length();
-            }
-        }
-    }
-    return total;
 }
 
 // Kicks off a "go to %" resolution for the book currently open in
@@ -1068,7 +849,7 @@ void AppReader::startPercentSeek(int percent) {
 
     _percentSeekTargetPercent = percent;
 
-    // D6: a previous unified chapter scan (see startIndexing/updateIndexing)
+    // D6: a previous unified chapter scan (see BookIndexer, _indexer above)
     // may already have every chapter's length cached — resolve the jump
     // right now instead of re-parsing the whole book just to measure it
     // again. Falls back to the scan below when it doesn't (this book was
@@ -1110,7 +891,7 @@ void AppReader::updatePercentSeek() {
 
         int chapterIndex = (int)_percentSeekChapterLengths.size();
         std::vector<ContentNode> content = _epubLoader->getChapterContentRich(chapterIndex);
-        _percentSeekChapterLengths.push_back(chapterTextLength(content));
+        _percentSeekChapterLengths.push_back(BookIndexer::chapterTextLength(content));
     }
 }
 
@@ -1154,9 +935,9 @@ void AppReader::resolvePercentSeekTarget(const std::vector<long>& chapterLengths
         // the one number on screen that stays approximate otherwise, same
         // spirit as the "no made-up percentage" rule the library list
         // follows.
-        _globalPageNumber = (_totalPages > 0)
-                                ? max(1, (int)(((long)_totalPages * (long)_percentSeekTargetPercent) / 100))
-                                : 1;
+        int totalPages = _indexer.totalPages();
+        _globalPageNumber =
+            (totalPages > 0) ? max(1, (int)(((long)totalPages * (long)_percentSeekTargetPercent) / 100)) : 1;
     }
     _readingFirstDraw = true; // full refresh: clears whatever was last on screen
     _needsRedraw = true;
@@ -1204,7 +985,7 @@ void AppReader::paginateAll(const std::vector<ContentNode>& content, std::vector
         // guard) — this is a foreground, synchronous measurement in
         // response to a single button press, not a budgeted background
         // scan, so reusing the reader's own renderer instead of a separate
-        // one (like the unified indexer's _indexRenderer) is fine: whatever
+        // one (like BookIndexer's own _renderer) is fine: whatever
         // page we land on afterward gets a fresh draw=true render anyway.
         RenderResult r = _textRenderer->renderRichPageDynamic(display, content, pointer.nodeIndex,
                                                               pointer.charOffset, 0, 0, false);
@@ -1360,11 +1141,11 @@ void AppReader::drawLibrary() {
     Book32Display& display = dispMgr.getDisplay();
     FontMgr& fontMgr = FontMgr::getInstance();
 
-    const int HEADER_H = 76;
-    const int BACK_ITEM_HEIGHT = 48;
+    const int HEADER_H = LibraryLayout::HEADER_H;
+    const int BACK_ITEM_HEIGHT = LibraryLayout::BACK_ITEM_HEIGHT;
     const int COVER_WIDTH = BOOK32_COVER_WIDTH;
     const int COVER_HEIGHT = BOOK32_COVER_HEIGHT;
-    const int ITEM_HEIGHT = 110;
+    const int ITEM_HEIGHT = LibraryLayout::ITEM_HEIGHT;
     const int ITEM_PADDING = 24;
 
     // Use Partial Refresh for Library interactions
@@ -1541,8 +1322,9 @@ void AppReader::drawReading() {
         display.setFont(NULL);
         display.setTextColor(GxEPD_BLACK);
         char footerText[40];
-        if (_totalPages > 0) {
-            snprintf(footerText, sizeof(footerText), "Page %d of %d", _globalPageNumber, _totalPages);
+        int totalPages = _indexer.totalPages();
+        if (totalPages > 0) {
+            snprintf(footerText, sizeof(footerText), "Page %d of %d", _globalPageNumber, totalPages);
         } else {
             snprintf(footerText, sizeof(footerText), "Page %d", _globalPageNumber);
         }
@@ -1557,10 +1339,10 @@ void AppReader::update() {
     // Library rendering is static unless input changes selection.
 
     // Spend a small time-boxed slice on the unified chapter scan (page
-    // count + chapter-title index + chapter lengths, see D6), if any of the
-    // three still needs it. Runs between draw() calls only (see
-    // updateIndexing), so it never overlaps an actual page render.
-    if (_indexingActive) updateIndexing();
+    // count + chapter-title index + chapter lengths, see D6/BookIndexer.h),
+    // if any of the three still needs it. Runs between draw() calls only, so
+    // it never overlaps an actual page render.
+    if (_indexer.isActive()) _indexer.step(INDEX_BUDGET_MS);
 
     // v1.14.0: same budgeted-slice treatment for a pending "go to %" jump.
     // Independent of the scan above — different state, no shared renderer —
@@ -1603,9 +1385,10 @@ void AppReader::applyFontSize(int pt) {
 
     // The total page count is font-size dependent; re-derive it for the new
     // size (a no-op if a cached total already exists at this size). The
-    // chapter-title index and lengths startIndexing() also checks are
+    // chapter-title index and lengths _indexer.start() also checks are
     // font-independent, so this just confirms their cache hits again.
-    startIndexing();
+    _indexer.start(_epubLoader, getOriginalFilename(normalizedBookName(_currentBookPath)), _fontSizePt,
+                   _fontFamily);
 }
 
 void AppReader::applyFontFamily(int family) {
@@ -1623,7 +1406,8 @@ void AppReader::applyFontFamily(int family) {
     _needsRedraw = true;
 
     // Same reasoning as applyFontSize: the total is specific to this family.
-    startIndexing();
+    _indexer.start(_epubLoader, getOriginalFilename(normalizedBookName(_currentBookPath)), _fontSizePt,
+                   _fontFamily);
 }
 
 void AppReader::forceRedraw() {

@@ -203,7 +203,7 @@ void EpubLoader::parseGuide(const String& xml) {
     // guideTypeForHref guarda o tipo cru (ex.: "cover") para o mesmo href, só
     // para os não-narrativos — é a informação que nonNarrativeHref já não
     // carrega, usada para rotular a entrada quando não há título detectável
-    // (ver EpubLoader::getChapterGuideType / AppReader::updateIndexing).
+    // (ver EpubLoader::getChapterGuideType / BookIndexer).
     std::map<String, bool> nonNarrativeHref;
     std::map<String, String> guideTypeForHref;
 
