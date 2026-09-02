@@ -13,7 +13,7 @@
 // assinatura global), não do PageCountStore.
 //
 // Preenchido pelo mesmo varrimento único de capítulos que conta páginas e
-// constrói o índice de títulos (ver AppReader::updateIndexing, D6 da
+// constrói o índice de títulos (ver BookIndexer, D6 da
 // avaliação de código do eReader): cada capítulo já é lido e analisado uma
 // vez para essas duas coisas, por isso medir o comprimento aqui não custa
 // outra passagem pelo ZIP. Um "ir para %" pedido depois de esse varrimento

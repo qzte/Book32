@@ -4,6 +4,7 @@
 #include "BaseApp.h"
 #include "EpubLoader.h"
 #include "TextRenderer.h"
+#include "BookIndexer.h"
 #include "../../Book32_Core/InputMgr.h"
 #include "../../Book32_Core/GoToPercentLogic.h"
 #include <vector>
@@ -37,6 +38,16 @@ struct BookEntry {
     BookEntry()
         : hasProgress(false), globalPage(1), totalPages(0), titleResolved(false), coverAttempted(false),
           hasCoverThumb(false) {}
+};
+
+// M1: HEADER_H/BACK_ITEM_HEIGHT/ITEM_HEIGHT used to be repeated as local
+// consts in libraryItemRect(), libraryItemsPerPage() and drawLibrary()
+// (AppReader.cpp) — the three had to be kept in sync by hand, and nothing
+// enforced it. One definition here instead.
+struct LibraryLayout {
+    static const int HEADER_H = 76;
+    static const int BACK_ITEM_HEIGHT = 48;
+    static const int ITEM_HEIGHT = 110;
 };
 
 class AppReader : public App {
@@ -127,50 +138,14 @@ private:
     int _globalPageNumber; // Runtime tracking of global page (1-indexed)
     bool _needsRedraw;
 
-    // D6: um só varrimento de capítulos por livro em vez de dois
-    // scanners independentes (contagem de páginas + índice de títulos), que
-    // liam e analisavam o mesmo capítulo duas vezes por abertura sem cache
-    // (ver D6 da avaliação de código do eReader,
-    // docs/plans/2026-09-02-avaliacao-codigo-ereader.md). Cada capítulo é
-    // lido uma só vez com EpubLoader::getChapterContentRich(); o resultado
-    // alimenta o que ainda estiver por fazer das três coisas:
-    //   - contar páginas (_indexNeedPageCount), com um TextRenderer próprio
-    //     (_indexRenderer, draw=false) para nunca perturbar a página que está
-    //     no ecrã — cacheada por (livro, tamanho, família) em PageCountStore;
-    //   - construir o índice de títulos (_indexNeedToc), usando
-    //     EpubLoader::chapterTitleFromContent() sobre o mesmo conteúdo em vez
-    //     de reabrir o capítulo — cacheado em ChapterTocStore;
-    //   - medir o comprimento de texto de cada capítulo (_indexNeedLengths),
-    //     para um "ir para %" pendente reaproveitar sem precisar de
-    //     varrimento próprio — cacheado em ChapterLengthStore.
-    // Uma tarefa já resolvida por cache (ex.: reabrir o mesmo livro com o
-    // índice já construído mas a contagem de páginas invalidada por um novo
-    // tamanho de letra) não repete o trabalho que já tinha: só um capítulo
-    // continua a ser lido, para o que ainda falta.
-    int _totalPages; // 0 until known for the currently open book
-    bool _indexingActive;
-    bool _indexNeedPageCount;
-    bool _indexNeedToc;
-    bool _indexNeedLengths;
-    int _indexChapter; // próximo capítulo a ler, partilhado pelas três tarefas
-    int _indexPagesSoFar;
-    TextRenderer* _indexRenderer;                  // só existe enquanto _indexNeedPageCount
-    PagePointer _indexPointer;                     // posição de paginação dentro do capítulo actual
-    std::vector<ContentNode> _indexChapterContent; // conteúdo do capítulo actual
-    std::vector<String> _indexTitles;              // só acumulado se _indexNeedToc
-    std::vector<long> _indexLengths;               // só acumulado se _indexNeedLengths
+    // M1/D6: as três tarefas de fundo (contagem de páginas, índice de
+    // títulos, comprimento de texto por capítulo) fundidas numa única
+    // passagem por capítulo — ver BookIndexer.h para o porquê. AppReader só
+    // chama start() (ao abrir o livro, ou quando o tamanho/família de letra
+    // muda) e step(budgetMs) a partir de update(); todo o estado do
+    // varrimento vive na própria classe.
+    BookIndexer _indexer;
     static const unsigned long INDEX_BUDGET_MS = 15;
-    void startIndexing();
-    void updateIndexing();
-    // Avança _indexChapter e, se a contagem de páginas ainda estiver activa,
-    // grava um checkpoint em PageCountStore — só é lido de volta quando o
-    // índice e os comprimentos já estiverem ambos resolvidos (ver
-    // startIndexing()), por isso é seguro escrevê-lo sempre que a contagem
-    // avança, mesmo que este varrimento também esteja a construir o índice.
-    void advanceIndexChapter(const String& key);
-    // Fecha o varrimento: persiste cada uma das três caches que ainda
-    // estivesse por fazer e liberta o _indexRenderer.
-    void finishIndexing(const String& key);
     // Aplica um pedido de "ir para capítulo" vindo da web (GoToChapterStore).
     // Ao contrário do "ir para %", o capítulo já é exacto — não há nada para
     // resolver em segundo plano, salta-se logo que o livro abre.
@@ -180,8 +155,8 @@ private:
     // applied the next time this specific book is opened. Content-length
     // proportional (see GoToPercentLogic.h for why), not exact-page.
     // D6: resolves instantly when ChapterLengthStore already has every
-    // chapter's length cached from a previous updateIndexing() pass (see
-    // above) — no scan needed at all. Otherwise falls back to the original
+    // chapter's length cached from a previous BookIndexer pass (see
+    // _indexer above) — no scan needed at all. Otherwise falls back to the original
     // per-chapter scan, budgeted across update() calls the same way so a big
     // book doesn't stall the book-open path. While active, input is ignored
     // (see handleInput) so a button press during the scan can't act on the
@@ -195,7 +170,6 @@ private:
     // (comprimentos já em cache vs. acabados de varrer): resolve o alvo e
     // aplica-o à posição de leitura.
     void resolvePercentSeekTarget(const std::vector<long>& chapterLengths);
-    static long chapterTextLength(const std::vector<ContentNode>& content);
 
     // Dynamic Pagination
     std::vector<ContentNode> _currentRichContent;

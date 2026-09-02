@@ -10,7 +10,7 @@
 // current chapter only, cleared on every chapter change), so an exact "page N
 // of totalPages" jump would mean re-paginating the whole book, which is the
 // same cost the total-page counter already avoids doing synchronously (see
-// AppReader::startIndexing). Content-length proportion is the
+// BookIndexer). Content-length proportion is the
 // cheap alternative: walk each chapter's text length once (no font
 // measurement, no rendering), then place the target percent inside whichever
 // chapter holds that fraction of the book's total characters. It lands
