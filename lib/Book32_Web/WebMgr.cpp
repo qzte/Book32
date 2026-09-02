@@ -1301,7 +1301,7 @@ void WebMgr::setupEndpoints() {
     // headings already detected while parsing each chapter (see
     // EpubLoader::getChapterTitle), cached in ChapterTocStore once a book has
     // been opened on the device and the background scan has finished (see
-    // AppReader::startTocBuild/updateTocBuild). "ready":false with an empty
+    // AppReader::startIndexing/updateIndexing). "ready":false with an empty
     // "chapters" array means that hasn't happened yet — same "not known yet"
     // shape as the page-count fields elsewhere in this API.
     //

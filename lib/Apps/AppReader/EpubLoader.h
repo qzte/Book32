@@ -112,8 +112,20 @@ public:
     // que a heurística de parseHtmlToRichContent já promove a cabeçalho)
     // devolvido por getChapterContentRich(). "" quando o capítulo não tem
     // nenhum cabeçalho detectável — o chamador decide o texto de recurso
-    // (ver ChapterTocStore / AppReader::updateTocBuild).
+    // (ver ChapterTocStore / AppReader::updateIndexing). Reabre e reanalisa
+    // o capítulo a cada chamada — usar chapterTitleFromContent() em vez
+    // disto quando o conteúdo já tiver sido lido por outra razão (ver D6 da
+    // avaliação de código do eReader).
     String getChapterTitle(int index);
+
+    // Mesma heurística de getChapterTitle(), mas sem custo de I/O: opera
+    // sobre um vector<ContentNode> já analisado em vez de reabrir o ZIP.
+    // Estática, sem estado de instância nenhum — mas ainda depende de String
+    // e FontMgr::latin1ToUtf8(), por isso não é host-testável sem o stub de
+    // Arduino.h que falta ao parser (ver secção "Testabilidade" da
+    // avaliação). getChapterTitle(index) é só getChapterContentRich(index)
+    // seguido desta chamada.
+    static String chapterTitleFromContent(const std::vector<ContentNode>& content);
 
     // false quando o capítulo `index` está referenciado no <guide> do OPF
     // (EPUB2) com um tipo não-narrativo (capa, índice, página de rosto,
@@ -130,7 +142,7 @@ public:
     // capítulo `index` — "cover", "title-page", "copyright-page", etc., ver
     // isNarrativeGuideType em EpubLoader.cpp. "" quando o capítulo é
     // narrativo ou o índice está fora do intervalo. O chamador decide o
-    // rótulo em português (ver AppReader::updateTocBuild / data/script.js) —
+    // rótulo em português (ver AppReader::updateIndexing / data/script.js) —
     // este método só expõe o valor cru do OPF.
     String getChapterGuideType(int index) const;
 
