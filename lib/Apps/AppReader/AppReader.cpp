@@ -1191,7 +1191,8 @@ void AppReader::drawLibrary() {
 
         // === Book list ===
         if (_books.empty()) {
-            drawTextWithFont(display, ReaderStrings::NO_BOOKS_FOUND, 28, y + 54, &FreeSansBold12pt8b, GxEPD_BLACK);
+            drawTextWithFont(display, ReaderStrings::NO_BOOKS_FOUND, 28, y + 54, &FreeSansBold12pt8b,
+                             GxEPD_BLACK);
             fontMgr.drawText(display, ReaderStrings::UPLOAD_HINT, 28, y + 88, FONT_SIZE_BODY, GxEPD_BLACK);
         } else {
             for (size_t idx = (size_t)_libraryScrollOffset; idx < _books.size(); idx++) {
@@ -1275,7 +1276,8 @@ void AppReader::drawLibrary() {
             snprintf(pageStr, sizeof(pageStr), "%d/%d", _selectedBookIndex + 1, (int)_books.size());
         }
         display.drawFastHLine(20, display.height() - 42, display.width() - 40, GxEPD_BLACK);
-        fontMgr.drawText(display, ReaderStrings::FOOTER_HINT, 22, display.height() - 18, FONT_SIZE_SMALL, GxEPD_BLACK);
+        fontMgr.drawText(display, ReaderStrings::FOOTER_HINT, 22, display.height() - 18, FONT_SIZE_SMALL,
+                         GxEPD_BLACK);
         fontMgr.drawTextRight(display, pageStr, display.width() - 20, display.height() - 18, FONT_SIZE_SMALL, GxEPD_BLACK);
 
     } while (display.nextPage());
@@ -1325,7 +1327,8 @@ void AppReader::drawReading() {
         char footerText[40];
         int totalPages = _indexer.totalPages();
         if (totalPages > 0) {
-            snprintf(footerText, sizeof(footerText), ReaderStrings::PAGE_OF_FMT, _globalPageNumber, totalPages);
+            snprintf(footerText, sizeof(footerText), ReaderStrings::PAGE_OF_FMT, _globalPageNumber,
+                     totalPages);
         } else {
             snprintf(footerText, sizeof(footerText), ReaderStrings::PAGE_FMT, _globalPageNumber);
         }

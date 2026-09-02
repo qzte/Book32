@@ -447,7 +447,7 @@ void AppMainMenu::draw() {
             }
             
             display.drawBitmap(x, y, icon_update_160x160, ICON_SIZE, ICON_SIZE, GxEPD_BLACK);
-            
+
             String updateText = "Actualizar " + updateVersion;
             int nameWidth = fontMgr.getTextWidth(updateText.c_str(), FONT_SIZE_MENU);
             int nameX = x + (ICON_SIZE - nameWidth) / 2;
@@ -455,7 +455,8 @@ void AppMainMenu::draw() {
         }
 
         // === Footer ===
-        fontMgr.drawTextCentered(display, "Premir: Seguinte  |  Manter: Seleccionar", screenH - 45, FONT_SIZE_SMALL, GxEPD_BLACK);
+        fontMgr.drawTextCentered(display, "Premir: Seguinte  |  Manter: Seleccionar", screenH - 45,
+                                 FONT_SIZE_SMALL, GxEPD_BLACK);
         String ipStr = getWifiFooterText();
         fontMgr.drawTextCentered(display, ipStr.c_str(), screenH - 20, FONT_SIZE_SMALL, GxEPD_BLACK);
         _lastWifiFooterText = ipStr;
