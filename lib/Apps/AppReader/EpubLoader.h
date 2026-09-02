@@ -32,12 +32,17 @@ struct RichTextNode {
     TextAlign align;
     bool isListItem;
     bool isBlockStart; // Starts a new paragraph/block
+    // true when isBlockStart is true because of a <br> rather than a real
+    // block element (<p>/<div>/<hN>/<li>): the renderer still starts a new
+    // line for it, but skips the paragraph gap and first-line indent a real
+    // block gets (see D3).
+    bool softBreak;
     int indent;
     int listNumber; // <ol> item ordinal (1-based); 0 for <ul>/no list
 
     RichTextNode()
-        : style(STYLE_NORMAL), align(ALIGN_LEFT), isListItem(false), isBlockStart(true), indent(0),
-          listNumber(0) {}
+        : style(STYLE_NORMAL), align(ALIGN_LEFT), isListItem(false), isBlockStart(true), softBreak(false),
+          indent(0), listNumber(0) {}
 };
 
 // Table structures

@@ -1079,29 +1079,30 @@ void AppReader::updatePercentSeek() {
     }
 }
 
-void AppReader::loadChapter(int chapterIndex) {
-    if (!_epubLoader) return;
-    if (chapterIndex < 0 || chapterIndex >= _epubLoader->getChapterCount()) return;
-    
-    int originalIndex = chapterIndex;
-    while (chapterIndex < _epubLoader->getChapterCount()) {
-        _currentChapter = chapterIndex;
-        _pageHistory.clear();
-        _currentPagePointer = {0, 0};
-        _currentPageRenderValid = false;
-        
-        _currentRichContent = _epubLoader->getChapterContentRich(chapterIndex);
-        if (_currentRichContent.size() > 0) {
+bool AppReader::loadChapter(int chapterIndex) {
+    if (!_epubLoader) return false;
+    if (chapterIndex < 0 || chapterIndex >= _epubLoader->getChapterCount()) return false;
+
+    int totalChapters = _epubLoader->getChapterCount();
+    for (int idx = chapterIndex; idx < totalChapters; idx++) {
+        std::vector<ContentNode> content = _epubLoader->getChapterContentRich(idx);
+        if (content.size() > 0) {
+            _currentChapter = idx;
+            _pageHistory.clear();
+            _currentPagePointer = {0, 0};
+            _currentPageRenderValid = false;
+            _currentRichContent = content;
             if (_textRenderer) _textRenderer->clearCache();
             _needsRedraw = true;
-            return;
+            return true;
         }
-        chapterIndex++;
     }
-    _currentChapter = originalIndex;
-    _currentPageRenderValid = false;
-    if (_textRenderer) _textRenderer->clearCache();
-    _needsRedraw = true;
+    // Every chapter from chapterIndex to the end of the book is empty
+    // (trailing nav/credits/blank pages, common in commercial EPUB) — leave
+    // the caller's previous chapter/page state exactly as it was instead of
+    // clobbering it with an empty one; the caller decides what "no more
+    // content" means for it (see nextPage(), D7).
+    return false;
 }
 
 void AppReader::nextPage() {
@@ -1137,11 +1138,17 @@ void AppReader::nextPage() {
     } else {
         // End of chapter - advance to next
         if (_currentChapter < _epubLoader->getChapterCount() - 1) {
-            // Save current chapter state to history
-            _pageHistory.push_back(_currentPagePointer);
-            _globalPageNumber++; // Next page in next chapter
-            loadChapter(_currentChapter + 1);
-            saveReadingProgress(true);
+            // loadChapter() clears _pageHistory itself once it lands on a
+            // chapter with content (a fresh chapter starts with no saved
+            // page positions) — nothing from the chapter we're leaving
+            // belongs in it, so there's nothing to push here.
+            if (loadChapter(_currentChapter + 1)) {
+                _globalPageNumber++; // Next page in next chapter
+                saveReadingProgress(true);
+            }
+            // Every remaining chapter is empty (trailing nav/credits pages):
+            // loadChapter() left our state untouched, so just stay on this
+            // last real page instead of looping through blank ones (D7).
         }
         // If at end of book, do nothing
     }

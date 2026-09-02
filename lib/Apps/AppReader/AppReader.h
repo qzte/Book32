@@ -205,7 +205,13 @@ private:
 
     void markProgressInactive();
     void closeBook(bool markInactive = true);
-    void loadChapter(int chapterIndex);
+    // Tenta carregar chapterIndex, avançando por capítulos seguintes vazios
+    // (páginas de navegação/créditos sem texto) até encontrar um com
+    // conteúdo. Devolve false sem tocar em nenhum estado (capítulo, posição,
+    // _currentRichContent, _pageHistory) quando NENHUM capítulo a partir daí
+    // até ao fim do livro tem conteúdo — deixa a chamada decidir o que fazer
+    // em vez de aterrar numa página em branco (ver nextPage(), D7).
+    bool loadChapter(int chapterIndex);
     void nextPage();
     void prevPage();
     void nextChapter();
