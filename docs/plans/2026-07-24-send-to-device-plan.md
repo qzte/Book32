@@ -1,5 +1,10 @@
 # Enviar Livros Diretamente Para o Book32 — Implementation Plan
 
+Estado: implementado — `UploadGuard.h`, `data/send.html`, mDNS (`book32.local`)
+e a escrita para `.part` com rename atómico estão todos em `main`. Os
+checkboxes abaixo ficam por marcar porque documentam os passos originais, não
+o estado actual; mantido como referência de arquitectura.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Adicionar uma página de envio dedicada (`GET /send`) servida pelo device, com mDNS (`book32.local`), e endurecer o endpoint de upload para reportar erros reais.
