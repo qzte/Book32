@@ -1,6 +1,7 @@
 #include "EpubLoader.h"
 #include "Book32FS.h"
 #include "FontMgr.h"
+#include "HtmlTokenizer.h"
 #include <LittleFS.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -541,6 +542,16 @@ static void decodeHtmlEntities(String& text) {
     text = out;
 }
 
+// Copies a tokenizer span into a String — the only bridge between
+// HtmlTokenizer's const char*/size_t world and the String-based helpers
+// (extractAttribute-style lookups aside; those go through
+// htmlFindAttribute() instead) that the rest of this parser still uses.
+static String spanToString(const char* s, size_t len) {
+    String r;
+    r.concat(s, (unsigned int)len);
+    return r;
+}
+
 std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(const String& html) {
     std::vector<ContentNode> nodes;
     std::vector<TextStyle> styleStack;
@@ -553,14 +564,6 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(const String& html) 
     // true when the NEXT flushed node's isBlockStart is due to a <br> rather
     // than a real block element (see D3); consumed by the flush below.
     bool nextIsSoftBreak = false;
-    // styleStack.size() saved at each block open (p/div/hN/li), so the
-    // matching close can restore the stack to exactly that size regardless
-    // of which inline b/i/em/strong tags were left unclosed inside it, and
-    // reset currentAlign/currentIndent instead of leaking them into whatever
-    // follows (D2, D10). Not a true tag-name-matched stack — a stray close
-    // just pops the innermost marker — but sufficient for the indexOf-based
-    // parser this is (see M3 for the real fix).
-    std::vector<size_t> blockStack;
     String currentText;
     // D12: currentText grows one character at a time below (`currentText +=
     // c`), and String::concat() only ever grows the buffer to exactly what
@@ -572,7 +575,6 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(const String& html) 
     // only reallocates a handful of times for a long one.
     static const size_t TEXT_RUN_RESERVE = 256;
     currentText.reserve(TEXT_RUN_RESERVE);
-    int i = 0;
     // One entry per open <ol>/<ul>, innermost last.
     struct OpenList {
         bool ordered;
@@ -581,231 +583,226 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(const String& html) 
     std::vector<OpenList> listStack;
     static const int LIST_INDENT_STEP =
         20; // px per nesting level, matches the renderer's flat left-margin model
-    while(i < (int)html.length()) {
-        char c = html.charAt(i);
-        if(c == '<') {
-            if(currentText.length() > 0) {
-                ContentNode node;
-                node.type = CONTENT_TEXT;
-                node.textNode.text = currentText;
-                node.textNode.style = styleStack.back();
-                node.textNode.align = currentAlign;
-                node.textNode.isListItem = isListItem;
-                node.textNode.indent = currentIndent;
-                node.textNode.listNumber = currentListNumber;
-                node.textNode.isBlockStart = nextIsBlockStart;
-                node.textNode.softBreak = nextIsSoftBreak;
-                nodes.push_back(node);
-                currentText = "";
-                currentText.reserve(TEXT_RUN_RESERVE);
-                isListItem = false;
-                currentIndent = 0;
+
+    // M3: a real stack of open element names (HtmlElementStack), instead of
+    // the old styleStack.size() snapshots that a stray or mismatched close
+    // tag could pop regardless of which tag actually opened them (D2, D9,
+    // D10 were all symptoms of that). `frames` mirrors elementStack 1:1 —
+    // one entry per element pushed onto it below — capturing exactly the
+    // state to restore when that specific element's matching close is found.
+    // A close tag that doesn't match anything currently open (elementStack
+    // .pop() returns false) is ignored outright instead of corrupting
+    // whichever frame happened to be on top.
+    struct ElementFrame {
+        size_t styleStackSize; // styleStack.size() right before this element pushed onto it
+        size_t listStackSize;  // listStack.size() right before this element (only ol/ul change it)
+        bool hardResetOnClose; // true for p/div/hN/li: reset align/indent/blockStart on close
+    };
+    HtmlElementStack elementStack;
+    std::vector<ElementFrame> frames;
+    auto pushTracked = [&](const HtmlToken& t, bool hardResetOnClose) {
+        elementStack.push(t.name, t.nameLen);
+        frames.push_back({styleStack.size(), listStack.size(), hardResetOnClose});
+    };
+    // Shared close handling for every tracked tag kind below: only acts when
+    // `name` actually matches something currently open, then restores the
+    // exact state captured when that element opened, regardless of what
+    // else opened and never closed inside it in the meantime.
+    auto closeTracked = [&](const char* name, size_t len) {
+        if (!elementStack.pop(name, len)) return; // stray close, nothing open by that name
+        size_t newSize = elementStack.size();
+        ElementFrame f = frames[newSize];
+        frames.resize(newSize);
+        size_t sz = f.styleStackSize < 1 ? 1 : f.styleStackSize;
+        if (sz < styleStack.size()) styleStack.resize(sz);
+        if (f.listStackSize < listStack.size()) listStack.resize(f.listStackSize);
+        if (f.hardResetOnClose) {
+            currentAlign = ALIGN_LEFT;
+            currentIndent = 0;
+            nextIsBlockStart = true;
+        }
+    };
+
+    HtmlTokenizer tok(html.c_str(), html.length());
+    for (;;) {
+        HtmlToken t = tok.next();
+        if (t.type == HtmlTokenType::EndOfInput) break;
+
+        if (t.type == HtmlTokenType::Text) {
+            for (size_t k = 0; k < t.textLen; k++) {
+                char c = t.text[k];
+                if (c == '\n' || c == '\r' || c == '\t' || c == ' ') {
+                    if (currentText.length() > 0 && currentText.charAt(currentText.length() - 1) != ' ' &&
+                        currentText.charAt(currentText.length() - 1) != '\n') {
+                        currentText += ' ';
+                    }
+                } else {
+                    currentText += c;
+                }
+            }
+            continue;
+        }
+
+        // A start or end tag: flush whatever text ran up to it into its own
+        // node first, exactly like the old parser did on every '<'.
+        if (currentText.length() > 0) {
+            ContentNode node;
+            node.type = CONTENT_TEXT;
+            node.textNode.text = currentText;
+            node.textNode.style = styleStack.back();
+            node.textNode.align = currentAlign;
+            node.textNode.isListItem = isListItem;
+            node.textNode.indent = currentIndent;
+            node.textNode.listNumber = currentListNumber;
+            node.textNode.isBlockStart = nextIsBlockStart;
+            node.textNode.softBreak = nextIsSoftBreak;
+            nodes.push_back(node);
+            currentText = "";
+            currentText.reserve(TEXT_RUN_RESERVE);
+            isListItem = false;
+            currentIndent = 0;
+            currentListNumber = 0;
+            nextIsBlockStart = false; // Next node in same block is not a start
+            nextIsSoftBreak = false;
+        }
+
+        if (t.type == HtmlTokenType::EndTag) {
+            // Every tracked tag (b/strong/i/em/hN/p/div/li/ol/ul) is pushed
+            // through pushTracked() below; everything else (span, a, ...)
+            // was never pushed, so closeTracked() harmlessly no-ops for it.
+            closeTracked(t.name, t.nameLen);
+            continue;
+        }
+
+        // StartTag from here on.
+        if (htmlTagEquals(t, "b") || htmlTagEquals(t, "strong") || htmlTagEquals(t, "i") ||
+            htmlTagEquals(t, "em")) {
+            pushTracked(t, /*hardResetOnClose=*/false);
+            styleStack.push_back(getStyleFromTag(spanToString(t.name, t.nameLen)));
+        } else if (htmlTagEquals(t, "h1") || htmlTagEquals(t, "h2") || htmlTagEquals(t, "h3") ||
+                   htmlTagEquals(t, "h4") || htmlTagEquals(t, "h5") || htmlTagEquals(t, "h6")) {
+            pushTracked(t, /*hardResetOnClose=*/true);
+            styleStack.push_back(getStyleFromTag(spanToString(t.name, t.nameLen)));
+            // Headers centre by default (H1/H2 only, matching the renderer's
+            // long-standing look); an explicit style="" on the tag itself
+            // isn't read here, same as before.
+            currentAlign = (htmlTagEquals(t, "h1") || htmlTagEquals(t, "h2")) ? ALIGN_CENTER : ALIGN_LEFT;
+            nextIsBlockStart = true;
+        } else if (htmlTagEquals(t, "p") || htmlTagEquals(t, "div") ||
+                   (htmlTagFirstCharIs(t, 'h') && !t.selfClosing)) {
+            // The `!t.selfClosing` guard keeps a void element like <hr/> (a
+            // thematic break, common in EPUB body text) out of this branch:
+            // it starts with 'h' just like <header>, but being void it would
+            // never get a matching close tag, leaking an open block onto the
+            // element stack for the rest of the chapter. <header> and other
+            // non-void h-tags are unaffected — selfClosing is only true for
+            // them on an explicit "<header/>", itself vanishingly rare.
+            pushTracked(t, /*hardResetOnClose=*/true);
+            nextIsBlockStart = true;
+            size_t styleLen = 0, classLen = 0;
+            const char* styleVal = htmlFindAttribute(t.attrs, t.attrsLen, "style", &styleLen);
+            const char* classVal = htmlFindAttribute(t.attrs, t.attrsLen, "class", &classLen);
+            String styleAttr = styleVal ? spanToString(styleVal, styleLen) : String();
+            String classAttr = classVal ? spanToString(classVal, classLen) : String();
+            classAttr.toLowerCase();
+
+            // Detect chapter numbers/titles by CSS class
+            // Be very conservative - actual headers use <h1>-<h6> tags which are handled separately
+            // Only match very specific chapter/title class patterns to avoid false positives
+            if (classAttr.indexOf("chapter-title") != -1 || classAttr.indexOf("chap-title") != -1 ||
+                classAttr.indexOf("section-title") != -1 || classAttr.indexOf("part-title") != -1) {
+                // This is likely a chapter/section title - use header style
+                styleStack.push_back(STYLE_HEADER1);
+                currentAlign = ALIGN_CENTER;
+            }
+
+            if (styleAttr.length() > 0) {
+                currentAlign = getAlignFromStyle(styleAttr);
+                currentIndent = extractIndentFromStyle(styleAttr);
+            }
+            if (htmlTagEquals(t, "p") && currentIndent == 0 && styleStack.back() == STYLE_NORMAL) {
+                currentIndent = 30;
+            }
+        } else if (htmlTagEquals(t, "ol") || htmlTagEquals(t, "ul")) {
+            pushTracked(t, /*hardResetOnClose=*/false);
+            listStack.push_back({htmlTagEquals(t, "ol"), 1});
+        } else if (htmlTagEquals(t, "li")) {
+            pushTracked(t, /*hardResetOnClose=*/true);
+            isListItem = true;
+            nextIsBlockStart = true;
+            currentIndent = LIST_INDENT_STEP * (int)listStack.size();
+            if (!listStack.empty() && listStack.back().ordered) {
+                currentListNumber = listStack.back().nextNumber++;
+            } else {
                 currentListNumber = 0;
-                nextIsBlockStart = false; // Next node in same block is not a start
-                nextIsSoftBreak = false;
             }
-
-            // D9: the tag boundary below is found with indexOf('>', i), which
-            // a comment or CDATA section defeats the moment it contains a
-            // '>' of its own — a commented-out tag (<!-- <p>rascunho</p> -->,
-            // common in EPUB produced by hand or by Sigil) or any markup-
-            // looking draft text dumped everything after that first '>' as
-            // visible text instead of being skipped. Handle both wholesale,
-            // before the general tag parsing below ever sees them.
-            if (html.indexOf("<!--", i) == i) {
-                int commentEnd = html.indexOf("-->", i + 4);
-                i = (commentEnd == -1) ? (int)html.length() : commentEnd + 3;
-                continue;
-            }
-            if (html.indexOf("<![CDATA[", i) == i) {
-                int cdataEnd = html.indexOf("]]>", i + 9);
-                i = (cdataEnd == -1) ? (int)html.length() : cdataEnd + 3;
-                continue;
-            }
-
-            int tagEnd = html.indexOf('>', i);
-            if(tagEnd == -1) break;
-            String fullTag = html.substring(i, tagEnd + 1);
-            String tag;
-            int spacePos = fullTag.indexOf(' ');
-            int closePos = fullTag.indexOf('>');
-            if(spacePos != -1 && spacePos < closePos) tag = fullTag.substring(1, spacePos);
-            else tag = fullTag.substring(1, closePos);
-            tag.toLowerCase();
-            bool isClosing = tag.startsWith("/");
-            if(isClosing) tag = tag.substring(1);
-            
-            // Handle inline styling elements
-            if(tag == "b" || tag == "strong" || tag == "i" || tag == "em") {
-                if(!isClosing) styleStack.push_back(getStyleFromTag(tag));
-                else if(styleStack.size() > 1) styleStack.pop_back();
-            }
-            // Handle header elements - they are BOTH styled AND block elements
-            else if(tag == "h1" || tag == "h2" || tag == "h3" || tag == "h4" || tag == "h5" || tag == "h6") {
-                if(!isClosing) {
-                    blockStack.push_back(styleStack.size());
-                    styleStack.push_back(getStyleFromTag(tag));
-                    // Headers centre by default (H1/H2 only, matching the
-                    // renderer's long-standing look); an explicit style="" on
-                    // the tag itself isn't read here, same as before.
-                    currentAlign = (tag == "h1" || tag == "h2") ? ALIGN_CENTER : ALIGN_LEFT;
-                    nextIsBlockStart = true;
-                } else {
-                    if (!blockStack.empty()) {
-                        size_t sz = blockStack.back();
-                        blockStack.pop_back();
-                        if (sz < 1) sz = 1;
-                        if (sz < styleStack.size()) styleStack.resize(sz);
-                    } else if (styleStack.size() > 1)
-                        styleStack.pop_back();
-                    currentAlign = ALIGN_LEFT;
-                    currentIndent = 0;
-                    nextIsBlockStart = true;
-                }
-            }
-            else if((tag == "p" || tag == "div" || tag.startsWith("h")) && !isClosing) {
-                blockStack.push_back(styleStack.size());
-                nextIsBlockStart = true;
-                String styleAttr = extractAttribute(fullTag, tag, "style");
-                String classAttr = extractAttribute(fullTag, tag, "class");
-                classAttr.toLowerCase();
-
-                // Detect chapter numbers/titles by CSS class
-                // Be very conservative - actual headers use <h1>-<h6> tags which are handled separately
-                // Only match very specific chapter/title class patterns to avoid false positives
-                if(classAttr.indexOf("chapter-title") != -1 || classAttr.indexOf("chap-title") != -1 ||
-                   classAttr.indexOf("section-title") != -1 || classAttr.indexOf("part-title") != -1) {
-                    // This is likely a chapter/section title - use header style
-                    styleStack.push_back(STYLE_HEADER1);
-                    currentAlign = ALIGN_CENTER;
-                }
-
-                if(styleAttr.length() > 0) {
-                    currentAlign = getAlignFromStyle(styleAttr);
-                    currentIndent = extractIndentFromStyle(styleAttr);
-                }
-                if (tag == "p" && currentIndent == 0 && styleStack.back() == STYLE_NORMAL) {
-                    currentIndent = 30;
-                }
-            } else if (isClosing && (tag == "p" || tag == "div" || tag.startsWith("h"))) {
-                // `tag` never actually starts with "/" here — the leading
-                // slash is stripped above before any of these comparisons —
-                // so this used to never match "/p"/"/div"/"/h..." and never
-                // ran (D10): a </p>/</div> popped nothing off styleStack and
-                // never reset currentAlign/currentIndent, so an unclosed
-                // <b>/<i> or an explicit text-align leaked into everything
-                // that followed. Restore the block-open marker instead of
-                // guessing which header level to pop.
-                if (!blockStack.empty()) {
-                    size_t sz = blockStack.back();
-                    blockStack.pop_back();
-                    if (sz < 1) sz = 1;
-                    if (sz < styleStack.size()) styleStack.resize(sz);
-                }
-                currentAlign = ALIGN_LEFT;
-                currentIndent = 0;
-                nextIsBlockStart = true;
-            } else if ((tag == "ol" || tag == "ul") && !isClosing) {
-                listStack.push_back({tag == "ol", 1});
-            } else if (tag == "ol" || tag == "ul") { // closing
-                if (!listStack.empty()) listStack.pop_back();
-            } else if (tag == "li" && !isClosing) {
-                blockStack.push_back(styleStack.size());
-                isListItem = true;
-                nextIsBlockStart = true;
-                currentIndent = LIST_INDENT_STEP * (int)listStack.size();
-                if (!listStack.empty() && listStack.back().ordered) {
-                    currentListNumber = listStack.back().nextNumber++;
-                } else {
-                    currentListNumber = 0;
-                }
-            } else if (tag == "li" && isClosing) {
-                if (!blockStack.empty()) {
-                    size_t sz = blockStack.back();
-                    blockStack.pop_back();
-                    if (sz < 1) sz = 1;
-                    if (sz < styleStack.size()) styleStack.resize(sz);
-                }
-                currentAlign = ALIGN_LEFT;
-                currentIndent = 0;
-                nextIsBlockStart = true;
-            } else if (tag == "table" && !isClosing) {
-                int tableEnd = html.indexOf("</table>", i);
-                if(tableEnd != -1) {
-                    String tableHtml = html.substring(i, tableEnd + 8);
-                    Table table = parseTable(tableHtml);
-                    // D1: parseTable() still does the structural work (colspan/
-                    // rowspan/th aside, only the cell text matters here), but the
-                    // renderer only ever draws CONTENT_TEXT — a CONTENT_TABLE node
-                    // used to reach the screen as nothing at all. Turn each row
-                    // into a plain paragraph instead: cells joined by " | " for a
-                    // narrow table, one indented line per cell when there are more
-                    // than two columns (a wide table wrapped to " | " would run off
-                    // the 480px column anyway).
-                    bool oneCellPerLine = table.columnCount > 2;
-                    for (const TableRow& row : table.rows) {
-                        if (row.cells.empty()) continue;
-                        if (oneCellPerLine) {
-                            for (const TableCell& cell : row.cells) {
-                                if (cell.content.length() == 0) continue;
-                                ContentNode node;
-                                node.type = CONTENT_TEXT;
-                                node.textNode.text = cell.content;
-                                node.textNode.style = cell.isHeader ? STYLE_BOLD : STYLE_NORMAL;
-                                node.textNode.isBlockStart = true;
-                                node.textNode.indent = 20;
-                                nodes.push_back(node);
-                            }
-                        } else {
-                            String rowText;
-                            for (size_t c = 0; c < row.cells.size(); c++) {
-                                if (c > 0) rowText += " | ";
-                                rowText += row.cells[c].content;
-                            }
-                            if (rowText.length() == 0) continue;
+        } else if (htmlTagEquals(t, "table")) {
+            size_t start = tok.position(); // right after the opening "<table ...>"
+            int tableEnd = html.indexOf("</table>", (int)start);
+            if (tableEnd != -1) {
+                String tableHtml = html.substring((int)start, tableEnd + 8);
+                Table table = parseTable(tableHtml);
+                // D1: parseTable() still does the structural work (colspan/
+                // rowspan/th aside, only the cell text matters here), but the
+                // renderer only ever draws CONTENT_TEXT — a CONTENT_TABLE node
+                // used to reach the screen as nothing at all. Turn each row
+                // into a plain paragraph instead: cells joined by " | " for a
+                // narrow table, one indented line per cell when there are more
+                // than two columns (a wide table wrapped to " | " would run off
+                // the 480px column anyway).
+                bool oneCellPerLine = table.columnCount > 2;
+                for (const TableRow& row : table.rows) {
+                    if (row.cells.empty()) continue;
+                    if (oneCellPerLine) {
+                        for (const TableCell& cell : row.cells) {
+                            if (cell.content.length() == 0) continue;
                             ContentNode node;
                             node.type = CONTENT_TEXT;
-                            node.textNode.text = rowText;
-                            node.textNode.style = row.cells[0].isHeader ? STYLE_BOLD : STYLE_NORMAL;
+                            node.textNode.text = cell.content;
+                            node.textNode.style = cell.isHeader ? STYLE_BOLD : STYLE_NORMAL;
                             node.textNode.isBlockStart = true;
+                            node.textNode.indent = 20;
                             nodes.push_back(node);
                         }
+                    } else {
+                        String rowText;
+                        for (size_t c = 0; c < row.cells.size(); c++) {
+                            if (c > 0) rowText += " | ";
+                            rowText += row.cells[c].content;
+                        }
+                        if (rowText.length() == 0) continue;
+                        ContentNode node;
+                        node.type = CONTENT_TEXT;
+                        node.textNode.text = rowText;
+                        node.textNode.style = row.cells[0].isHeader ? STYLE_BOLD : STYLE_NORMAL;
+                        node.textNode.isBlockStart = true;
+                        nodes.push_back(node);
                     }
-                    i = tableEnd + 8;
-                    nextIsBlockStart = true;
-                    continue;
                 }
-            } else if (tag == "script" || tag == "style" || tag == "head" || tag == "figure" ||
-                       tag == "svg" || tag == "figcaption") {
-                int skipEnd = html.indexOf("</" + tag + ">", i);
-                if(skipEnd != -1) { i = skipEnd + tag.length() + 3; continue; }
-            }
-            // Skip self-closing image tags
-            else if (tag == "img" || tag == "image") {
-                // Just skip - nothing to do for self-closing tags
-            } else if (tag == "br") {
-                // D3: appending "\n" here did nothing useful — the renderer's
-                // word-wrap treats '\n' as plain whitespace (isspace()), so a
-                // <br> never actually broke a line; poetry, addresses and
-                // dialogue with <br/> ran together. The text before the <br>
-                // was already flushed into its own node above (start of this
-                // tag-handling block); mark the NEXT node as a new line
-                // (isBlockStart) but a *soft* one so the renderer doesn't also
-                // add the paragraph gap or first-line indent a real block
-                // gets (see TextRenderer.cpp).
+                tok.seekTo((size_t)tableEnd + 8);
                 nextIsBlockStart = true;
-                nextIsSoftBreak = true;
             }
-            i = tagEnd + 1;
-        } else {
-            if(c == '\n' || c == '\r' || c == '\t' || c == ' ') {
-                if(currentText.length() > 0 && currentText.charAt(currentText.length()-1) != ' ' && currentText.charAt(currentText.length()-1) != '\n') {
-                    currentText += ' ';
-                }
-            } else {
-                currentText += c;
-            }
-            i++;
+        } else if (htmlTagEquals(t, "script") || htmlTagEquals(t, "style") || htmlTagEquals(t, "head") ||
+                   htmlTagEquals(t, "figure") || htmlTagEquals(t, "svg") || htmlTagEquals(t, "figcaption")) {
+            String tagName = spanToString(t.name, t.nameLen);
+            tagName.toLowerCase();
+            size_t start = tok.position();
+            int skipEnd = html.indexOf("</" + tagName + ">", (int)start);
+            if (skipEnd != -1) tok.seekTo((size_t)skipEnd + tagName.length() + 3);
+        } else if (htmlTagEquals(t, "img") || htmlTagEquals(t, "image")) {
+            // Skip self-closing image tags - nothing to do for them.
+        } else if (htmlTagEquals(t, "br")) {
+            // D3: appending "\n" here did nothing useful — the renderer's
+            // word-wrap treats '\n' as plain whitespace (isspace()), so a
+            // <br> never actually broke a line; poetry, addresses and
+            // dialogue with <br/> ran together. The text before the <br>
+            // was already flushed into its own node above (start of this
+            // tag-handling block); mark the NEXT node as a new line
+            // (isBlockStart) but a *soft* one so the renderer doesn't also
+            // add the paragraph gap or first-line indent a real block
+            // gets (see TextRenderer.cpp).
+            nextIsBlockStart = true;
+            nextIsSoftBreak = true;
         }
     }
     if(currentText.length() > 0) {
