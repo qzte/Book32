@@ -560,6 +560,25 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(const String& html) 
                 nextIsBlockStart = false; // Next node in same block is not a start
                 nextIsSoftBreak = false;
             }
+
+            // D9: the tag boundary below is found with indexOf('>', i), which
+            // a comment or CDATA section defeats the moment it contains a
+            // '>' of its own — a commented-out tag (<!-- <p>rascunho</p> -->,
+            // common in EPUB produced by hand or by Sigil) or any markup-
+            // looking draft text dumped everything after that first '>' as
+            // visible text instead of being skipped. Handle both wholesale,
+            // before the general tag parsing below ever sees them.
+            if (html.indexOf("<!--", i) == i) {
+                int commentEnd = html.indexOf("-->", i + 4);
+                i = (commentEnd == -1) ? (int)html.length() : commentEnd + 3;
+                continue;
+            }
+            if (html.indexOf("<![CDATA[", i) == i) {
+                int cdataEnd = html.indexOf("]]>", i + 9);
+                i = (cdataEnd == -1) ? (int)html.length() : cdataEnd + 3;
+                continue;
+            }
+
             int tagEnd = html.indexOf('>', i);
             if(tagEnd == -1) break;
             String fullTag = html.substring(i, tagEnd + 1);
@@ -758,7 +777,8 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(const String& html) 
         node.textNode.softBreak = nextIsSoftBreak;
         nodes.push_back(node);
     }
-    for(auto& node : nodes) {
+    for (size_t nodeIdx = 0; nodeIdx < nodes.size(); nodeIdx++) {
+        ContentNode& node = nodes[nodeIdx];
         if(node.type == CONTENT_TEXT) {
             decodeHtmlEntities(node.textNode.text);
             node.textNode.text.replace("¶Ç8", " -- ");
@@ -789,9 +809,20 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(const String& html) 
                node.textNode.text == "Image" || node.textNode.text == "[image]") {
                 node.textNode.text = "";
             }
-            
-            // Heuristic: Short numeric content (1-3 digits) that starts a block is likely a chapter number
-            if(node.textNode.isBlockStart && node.textNode.text.length() > 0 && node.textNode.text.length() <= 3) {
+
+            // Heuristic: short numeric content (1-3 digits) that starts a
+            // block is likely a chapter number — but only near the START of
+            // the chapter (D8): the same shape (isBlockStart, 1-3 digits)
+            // also matches a footnote marker, an index page number, a year
+            // in a chronology, or verse numbering anywhere else in the
+            // chapter, and those aren't chapter titles — promoting them to
+            // a 24pt centered header was the actual bug users would see.
+            // Chapter numbers live in the first node or two, so restricting
+            // this to the first 3 nodes of the chapter keeps the intended
+            // case (a lone "12" opening the chapter) without the false
+            // positives further in.
+            if (nodeIdx < 3 && node.textNode.isBlockStart && node.textNode.text.length() > 0 &&
+                node.textNode.text.length() <= 3) {
                 bool isNumeric = true;
                 for(int i = 0; i < (int)node.textNode.text.length(); i++) {
                     if(!isdigit(node.textNode.text.charAt(i))) { isNumeric = false; break; }
