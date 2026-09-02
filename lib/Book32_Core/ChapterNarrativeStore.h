@@ -32,7 +32,7 @@ class ChapterNarrativeStore {
 
     // Grava a classificação completa do livro de uma só vez, construída a
     // partir de EpubLoader::isChapterNarrative() (ver
-    // AppReader::updateTocBuild) — sem custo de parsing adicional, o <guide>
+    // AppReader::updateIndexing) — sem custo de parsing adicional, o <guide>
     // já foi lido quando o EPUB abriu. Um vector vazio é ignorado.
     void set(const String& originalName, const std::vector<bool>& narrative);
 

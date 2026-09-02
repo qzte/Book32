@@ -135,3 +135,43 @@ Fim de livro sem paginas em branco (D7): um EPUB cujos ultimos capitulos da
 spine sejam paginas de navegacao/creditos sem texto (comum em EPUB
 comercial) tem de parar na ultima pagina com conteudo a carregar em "Next"
 repetido, sem avancar o contador do rodape nem mostrar ecras em branco.
+
+=== Correcoes D5/D6 da avaliacao de codigo do eReader — a verificar no dispositivo (nao coberto pelos testes de host) ===
+(ver docs/plans/2026-09-02-avaliacao-codigo-ereader.md; pio run nao correu
+neste ambiente, so revisao manual do diff — muda AppReader/EpubLoader, sem
+stub de host para nenhum dos dois, ver seccao "Testabilidade" do documento)
+"Atras" reconstroi o historico ao retomar um livro (D5): fechar o leitor a
+meio de um capitulo (nao na primeira pagina), reabrir o livro (ou reiniciar
+o dispositivo) e confirmar que o primeiro "Prev" volta uma pagina dentro do
+MESMO capitulo, em vez de saltar para o capitulo anterior.
+"Atras" aterra na ultima pagina do capitulo anterior (D5): a partir da
+primeira pagina de um capitulo (que nao o primeiro do livro), carregar em
+"Prev" e confirmar que aterra na ULTIMA pagina do capitulo anterior (nao na
+primeira) e que outro "Prev" a seguir continua a andar para tras dentro
+desse capitulo anterior sem repetir nenhuma pagina nem saltar nenhuma.
+"Ir para %" tambem reconstroi o historico (D5): pedir um "ir para %" pela
+web UI para um livro ja aberto, confirmar que aterra na pagina certa e que
+"Prev" logo a seguir anda para tras dentro do MESMO capitulo em vez de
+saltar para o anterior.
+Um so varrimento por capitulo (D6): abrir um livro novo (sem cache nenhuma)
+e confirmar, pelo monitor serie, que cada capitulo so aparece lido/analisado
+UMA vez ao contar paginas + construir indice (nao duas), e que o livro abre
+tao depressa como antes (ou mais) — sem regressao nos botoes durante a
+contagem.
+Cada tarefa so refaz o que lhe falta (D6): com um livro cujo indice de
+titulos (ChapterTocStore) e comprimentos (ChapterLengthStore) ja estejam
+construidos, mudar o tamanho/familia de letra e confirmar que so a contagem
+de paginas volta a correr (indice e comprimentos nao mudam, sem reabrir o
+ZIP so por causa deles).
+"Ir para %" sem varrimento proprio (D6): abrir um livro ate ao fim (para
+ChapterLengthStore ficar completo), fechar, reabrir e pedir um "ir para %"
+pela web UI — confirmar que o salto acontece de imediato (sem o atraso do
+varrimento a decorrer) e aterra no mesmo sitio que aterraria antes desta
+alteracao.
+GoToChapterStore continua a saltar de imediato (nao regrediu): "ir para
+capitulo" pela web UI continua a nao depender de nenhum varrimento.
+Standby a meio da contagem de paginas ainda resume do checkpoint (nao
+regrediu): interromper a contagem de paginas de um livro grande a meio
+(standby/idle sleep), reabrir e confirmar que continua a partir do capitulo
+onde ficou (PageCountStore/checkpoint), nao do capitulo 0 — mesmo com o
+indice/comprimentos ja construidos de outra sessao.

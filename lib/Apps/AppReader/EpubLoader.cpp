@@ -203,7 +203,7 @@ void EpubLoader::parseGuide(const String& xml) {
     // guideTypeForHref guarda o tipo cru (ex.: "cover") para o mesmo href, só
     // para os não-narrativos — é a informação que nonNarrativeHref já não
     // carrega, usada para rotular a entrada quando não há título detectável
-    // (ver EpubLoader::getChapterGuideType / AppReader::updateTocBuild).
+    // (ver EpubLoader::getChapterGuideType / AppReader::updateIndexing).
     std::map<String, bool> nonNarrativeHref;
     std::map<String, String> guideTypeForHref;
 
@@ -825,7 +825,10 @@ std::vector<ContentNode> EpubLoader::getChapterContentRich(int index) {
 static const int BOOK32_MAX_CHAPTER_TITLE_LEN = 60;
 
 String EpubLoader::getChapterTitle(int index) {
-    std::vector<ContentNode> content = getChapterContentRich(index);
+    return chapterTitleFromContent(getChapterContentRich(index));
+}
+
+String EpubLoader::chapterTitleFromContent(const std::vector<ContentNode>& content) {
     for (const ContentNode& node : content) {
         if (node.type != CONTENT_TEXT) continue;
         TextStyle style = node.textNode.style;

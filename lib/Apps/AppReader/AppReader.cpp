@@ -16,6 +16,7 @@
 #include "ChapterTocStore.h"
 #include "ChapterNarrativeStore.h"
 #include "ChapterGuideTypeStore.h"
+#include "ChapterLengthStore.h"
 #include "GoToChapterStore.h"
 #include "CoverImage.h"
 #include "WebMgr.h"
@@ -34,6 +35,31 @@ static String normalizedBookName(const String& path) {
     slash = name.lastIndexOf('\\');
     if (slash >= 0) name = name.substring(slash + 1);
     return name;
+}
+
+// D5: allPages comes from AppReader::paginateAll() over the same content
+// `target` is a position in. Fills outHistory with every page start
+// strictly before target and returns true when target itself matches a
+// real page boundary in that pagination; false (outHistory left empty)
+// when it doesn't — e.g. a saved position from a different font/size that
+// hasn't been re-paginated at this size yet, or a "go to %" node target
+// that landed mid-page rather than exactly on one. Shared by openBook()'s
+// resume path and AppReader::resolvePercentSeekTarget(), which both need
+// "prev" right after landing to walk backward within the chapter instead of
+// jumping straight to the previous one (see D5 in
+// docs/plans/2026-09-02-avaliacao-codigo-ereader.md).
+static bool splitPagesBefore(const std::vector<PagePointer>& allPages, const PagePointer& target,
+                             std::vector<PagePointer>& outHistory) {
+    outHistory.clear();
+    for (const PagePointer& p : allPages) {
+        if (p.nodeIndex > target.nodeIndex ||
+            (p.nodeIndex == target.nodeIndex && p.charOffset >= target.charOffset)) {
+            return true;
+        }
+        outHistory.push_back(p);
+    }
+    outHistory.clear();
+    return false;
 }
 
 static int textWidthForFont(Book32Display& display, const char* text, const GFXfont* font) {
@@ -136,15 +162,16 @@ AppReader::AppReader() {
     _currentChapter = 0;
     _needsRedraw = true;
     _totalPages = 0;
-    _countingActive = false;
-    _countRenderer = nullptr;
-    _countChapter = 0;
-    _countPointer = {0, 0};
-    _countPagesSoFar = 0;
+    _indexingActive = false;
+    _indexNeedPageCount = false;
+    _indexNeedToc = false;
+    _indexNeedLengths = false;
+    _indexRenderer = nullptr;
+    _indexChapter = 0;
+    _indexPointer = {0, 0};
+    _indexPagesSoFar = 0;
     _percentSeekActive = false;
     _percentSeekTargetPercent = 0;
-    _tocBuildActive = false;
-    _tocBuildChapter = 0;
     _currentPageRender = {0, 0, false, 0, 0};
     _currentPageRenderValid = false;
     _pageTurnsSinceRefresh = 0;
@@ -312,6 +339,8 @@ void AppReader::scanBooks() {
         ChapterNarrativeStore::getInstance().reconcile(present);
         // e para o tipo de <guide> associado a cada capítulo não-narrativo.
         ChapterGuideTypeStore::getInstance().reconcile(present);
+        // e para o comprimento de texto por capítulo (ver ChapterLengthStore).
+        ChapterLengthStore::getInstance().reconcile(present);
 
         for (auto& b : _books) {
             BookProgress p;
@@ -320,9 +349,9 @@ void AppReader::scanBooks() {
                 b.globalPage = p.globalPage;
             }
             // Only known once a book has been read all the way through at the
-            // current font settings (see startTotalPagesCounting) — scanning
-            // every unread book here would be exactly the slow-open problem
-            // this feature is careful to avoid.
+            // current font settings (see startIndexing) — scanning every
+            // unread book here would be exactly the slow-open problem this
+            // feature is careful to avoid.
             b.totalPages = PageCountStore::getInstance().get(b.originalName, _fontSizePt, _fontFamily);
         }
     }
@@ -633,8 +662,8 @@ bool AppReader::openBook(const String& path, bool restoreProgress) {
     _textRenderer->calculateDimensions();
 
     // Paginating the whole book here would stall opening a large one, so only
-    // the running position is known immediately; startTotalPagesCounting()
-    // below fills in the total a little at a time instead.
+    // the running position is known immediately; startIndexing() below fills
+    // in the total a little at a time instead.
     _globalPageNumber = 1; // Start at page 1
     _currentPageRenderValid = false;
     
@@ -658,12 +687,27 @@ bool AppReader::openBook(const String& path, bool restoreProgress) {
             _currentPagePointer = restorePointer;
             _globalPageNumber = max(1, restorePage);
             _currentPageRenderValid = false;
+
+            // D5: loadChapter() above left _pageHistory empty (a fresh
+            // chapter load always does), so without this the first "prev"
+            // after resuming a book would think we're at the very first
+            // page of the chapter and jump to the previous chapter's first
+            // page instead of going back one page within this one — the
+            // single most frustrating "prev" behaviour for someone resuming
+            // mid-chapter. Reconstructs the pages that come before the
+            // restored position by actually paginating the chapter;
+            // splitPagesBefore() leaves _pageHistory untouched (empty, same
+            // as before this fix) if the position doesn't land on an exact
+            // page boundary — e.g. a saved position from a font/size that
+            // hasn't been re-paginated at this size yet.
+            std::vector<PagePointer> allPages, history;
+            paginateAll(_currentRichContent, allPages);
+            if (splitPagesBefore(allPages, _currentPagePointer, history)) _pageHistory = history;
         }
     }
 
     _state = VIEW_READING;
-    startTotalPagesCounting();
-    startTocBuild();
+    startIndexing();
 
     // v1.14.0: a "go to %" requested from the web UI while this book wasn't
     // open (see GoToPercentStore) applies now, overriding the position just
@@ -774,185 +818,193 @@ void AppReader::closeBook(bool markInactive) {
     _pageHistory.clear();
     _currentPageRenderValid = false;
 
-    _countingActive = false;
-    _countChapterContent.clear();
-    if (_countRenderer) { delete _countRenderer; _countRenderer = nullptr; }
-
-    _tocBuildActive = false;
-    _tocBuildTitles.clear();
+    _indexingActive = false;
+    _indexChapterContent.clear();
+    _indexTitles.clear();
+    _indexLengths.clear();
+    if (_indexRenderer) {
+        delete _indexRenderer;
+        _indexRenderer = nullptr;
+    }
 }
 
-// Kicks off (or resumes from cache) the total page count for the book that
-// just opened in _epubLoader/_currentBookPath. A cached total from a previous
-// full count at the same font settings resolves this instantly; otherwise
-// updateTotalPagesCount() walks the book from update(), a bounded slice at a
-// time, until it reaches the end — resuming from the last completed chapter
-// if an earlier session left a checkpoint (see updateTotalPagesCount).
-void AppReader::startTotalPagesCounting() {
+// Kicks off (or skips, if every cache already has what it needs) the
+// unified chapter scan for the book that just opened in
+// _epubLoader/_currentBookPath — see the AppReader.h comment above
+// _indexingActive for what it merges and why (D6). Each of the three needs
+// is checked against its own cache independently: a page-count cache hit
+// (font-scoped) doesn't imply a TOC or length cache hit (book-scoped, no
+// font), and vice versa.
+void AppReader::startIndexing() {
     _totalPages = 0;
-    _countingActive = false;
-    _countChapterContent.clear();
-    _countChapter = 0;
-    _countPointer = {0, 0};
-    _countPagesSoFar = 0;
-    if (_countRenderer) { delete _countRenderer; _countRenderer = nullptr; }
+    _indexingActive = false;
+    _indexChapter = 0;
+    _indexPagesSoFar = 0;
+    _indexPointer = {0, 0};
+    _indexChapterContent.clear();
+    _indexTitles.clear();
+    _indexLengths.clear();
+    if (_indexRenderer) {
+        delete _indexRenderer;
+        _indexRenderer = nullptr;
+    }
 
     if (!_epubLoader || _currentBookPath.length() == 0) return;
-
     String key = getOriginalFilename(normalizedBookName(_currentBookPath));
-    int cached = PageCountStore::getInstance().get(key, _fontSizePt, _fontFamily);
-    if (cached > 0) {
-        _totalPages = cached;
-        return;
+    int totalChapters = _epubLoader->getChapterCount();
+
+    int cachedPages = PageCountStore::getInstance().get(key, _fontSizePt, _fontFamily);
+    _indexNeedPageCount = (cachedPages <= 0);
+    if (!_indexNeedPageCount) _totalPages = cachedPages;
+
+    std::vector<String> cachedTitles;
+    _indexNeedToc =
+        !(ChapterTocStore::getInstance().get(key, cachedTitles) && (int)cachedTitles.size() == totalChapters);
+
+    std::vector<long> cachedLengths;
+    _indexNeedLengths = !(ChapterLengthStore::getInstance().get(key, cachedLengths) &&
+                          (int)cachedLengths.size() == totalChapters);
+
+    if (!_indexNeedPageCount && !_indexNeedToc && !_indexNeedLengths) return; // nada por fazer
+
+    // Um checkpoint de PageCountStore só deixa saltar capítulos quando a
+    // contagem de páginas é a ÚNICA coisa por fazer: o índice e os
+    // comprimentos não têm checkpoint próprio (sempre recomeçam do capítulo
+    // 0 — ver o resto deste ficheiro), por isso, se qualquer um dos dois
+    // ainda precisar dos capítulos iniciais, o cursor partilhado tem de
+    // começar em 0 mesmo que a contagem já tivesse ido mais longe numa
+    // sessão anterior.
+    if (_indexNeedPageCount && !_indexNeedToc && !_indexNeedLengths) {
+        PageCountCheckpoint checkpoint;
+        if (PageCountStore::getInstance().getCheckpoint(key, _fontSizePt, _fontFamily, checkpoint)) {
+            _indexChapter = checkpoint.chapter;
+            _indexPagesSoFar = checkpoint.pagesSoFar;
+        }
     }
 
-    PageCountCheckpoint checkpoint;
-    if (PageCountStore::getInstance().getCheckpoint(key, _fontSizePt, _fontFamily, checkpoint)) {
-        _countChapter = checkpoint.chapter;
-        _countPagesSoFar = checkpoint.pagesSoFar;
-    }
-    _countingActive = true;
+    _indexingActive = true;
 }
 
-// Advances the total-page count by a time-boxed slice. Uses its own
-// EpubLoader chapter reads and its own TextRenderer (_countRenderer) so it
-// never touches the line cache or content the reading view is showing —
-// paginating a chapter for counting is otherwise the exact same measurement
-// nextPage() already does with draw=false.
+// Advances the unified scan by a time-boxed slice. Each chapter is read
+// once with getChapterContentRich() and fed to whichever of the three tasks
+// still needs it; only the page-count task touches a TextRenderer
+// (_indexRenderer, its own instance so it never disturbs the page actually
+// on screen — same reasoning as the old _countRenderer).
 //
 // Standby (long-press KEY2) and the idle-sleep timeout both go straight to
 // esp_deep_sleep_start() (see BatteryMgr::enterIdleSleep) without running
-// closeBook() first, so a count in progress can be cut off at any moment with
-// no chance to save. A checkpoint is written after every completed chapter
-// instead, so the next session resumes close to where this one left off
-// rather than recounting the whole book from chapter 0 again.
-void AppReader::updateTotalPagesCount() {
-    if (!_epubLoader) { _countingActive = false; return; }
+// closeBook() first, so a scan in progress can be cut off at any moment
+// with no chance to save. Only the page-count sub-task checkpoints (see
+// advanceIndexChapter): it is the one that actually benefits from resuming
+// mid-book instead of restarting, being the only one with a TextRenderer
+// pass per chapter instead of just a parse.
+void AppReader::updateIndexing() {
+    if (!_epubLoader) {
+        _indexingActive = false;
+        return;
+    }
 
     DisplayMgr& dispMgr = DisplayMgr::getInstance();
     Book32Display& display = dispMgr.getDisplay();
 
-    if (!_countRenderer) {
-        _countRenderer = new TextRenderer(display.width(), display.height(), _fontSizePt);
-        _countRenderer->setFontFamily(_fontFamily);
+    if (_indexNeedPageCount && !_indexRenderer) {
+        _indexRenderer = new TextRenderer(display.width(), display.height(), _fontSizePt);
+        _indexRenderer->setFontFamily(_fontFamily);
     }
 
     String key = getOriginalFilename(normalizedBookName(_currentBookPath));
-
-    unsigned long budgetEnd = millis() + TOTAL_PAGES_BUDGET_MS;
-    while (millis() < budgetEnd) {
-        if (_countChapterContent.empty()) {
-            if (_countChapter >= _epubLoader->getChapterCount()) {
-                int total = max(1, _countPagesSoFar);
-                _totalPages = total;
-                PageCountStore::getInstance().set(key, _fontSizePt, _fontFamily, total);
-                _countingActive = false;
-                delete _countRenderer;
-                _countRenderer = nullptr;
-                return;
-            }
-            _countChapterContent = _epubLoader->getChapterContentRich(_countChapter);
-            _countPointer = {0, 0};
-            if (_countChapterContent.empty()) {
-                _countChapter++;
-                PageCountCheckpoint checkpoint;
-                checkpoint.chapter = _countChapter;
-                checkpoint.pagesSoFar = _countPagesSoFar;
-                PageCountStore::getInstance().setCheckpoint(key, _fontSizePt, _fontFamily, checkpoint);
-                continue;
-            }
-            _countPagesSoFar++; // First page of this chapter begins
-        }
-
-        RenderResult r = _countRenderer->renderRichPageDynamic(display, _countChapterContent,
-                                                                _countPointer.nodeIndex, _countPointer.charOffset,
-                                                                0, 0, false);
-        if (r.pageFull) {
-            _countPagesSoFar++;
-            _countPointer.nodeIndex = r.nextNodeIndex;
-            _countPointer.charOffset = r.nextCharOffset;
-        } else {
-            _countChapterContent.clear();
-            _countChapter++;
-            PageCountCheckpoint checkpoint;
-            checkpoint.chapter = _countChapter;
-            checkpoint.pagesSoFar = _countPagesSoFar;
-            PageCountStore::getInstance().setCheckpoint(key, _fontSizePt, _fontFamily, checkpoint);
-        }
-    }
-}
-
-// Kicks off (or skips, if already cached) the chapter-title index for the
-// book that just opened in _epubLoader/_currentBookPath. A cached index from
-// a previous build (validated against the current chapter count, in case the
-// .epub was replaced by a different edition) means there's nothing to do —
-// ChapterTocStore is the only reader of this data (see WebMgr's /api/toc),
-// so a valid cache already satisfies it. Otherwise updateTocBuild() walks
-// the book from update(), a bounded slice at a time, same shape as
-// startTotalPagesCounting/updateTotalPagesCount but without a checkpoint —
-// the scan itself is much cheaper (no TextRenderer, no font measurement,
-// just the parsing getChapterContentRich() already does), so restarting it
-// from chapter 0 after a standby mid-scan is cheap enough not to need one.
-void AppReader::startTocBuild() {
-    _tocBuildActive = false;
-    _tocBuildChapter = 0;
-    _tocBuildTitles.clear();
-
-    if (!_epubLoader || _currentBookPath.length() == 0) return;
-
-    String key = getOriginalFilename(normalizedBookName(_currentBookPath));
-    std::vector<String> cached;
-    if (ChapterTocStore::getInstance().get(key, cached) &&
-        (int)cached.size() == _epubLoader->getChapterCount()) {
-        return;
-    }
-    _tocBuildActive = true;
-}
-
-// Advances the chapter-title index by a time-boxed slice (same budget as
-// updateTotalPagesCount/updatePercentSeek: don't stall the main loop
-// measuring a big book in one shot). Each tick resolves one more chapter's
-// title with EpubLoader::getChapterTitle() — the same parse
-// updateTotalPagesCount() and updatePercentSeek() already do per chapter,
-// just reading the heading it finds instead of a length or a full
-// pagination. Once every chapter is resolved, the whole list is persisted to
-// ChapterTocStore in one write (see that store's header for why a single
-// write, not one per chapter) — that store is the only reader of this data.
-void AppReader::updateTocBuild() {
-    if (!_epubLoader) {
-        _tocBuildActive = false;
-        return;
-    }
     int totalChapters = _epubLoader->getChapterCount();
 
-    unsigned long budgetEnd = millis() + TOTAL_PAGES_BUDGET_MS;
-    while (_tocBuildActive && millis() < budgetEnd) {
-        if (_tocBuildChapter >= totalChapters) {
-            _tocBuildActive = false;
-            if (!_tocBuildTitles.empty()) {
-                String key = getOriginalFilename(normalizedBookName(_currentBookPath));
-                ChapterTocStore::getInstance().set(key, _tocBuildTitles);
-
-                // O <guide> do OPF já foi lido inteiro quando o EPUB abriu
-                // (EpubLoader::open -> parseOpf -> parseGuide): isto não
-                // reabre o ZIP nem repete trabalho por capítulo, ao contrário
-                // do loop de títulos acima — por isso persiste-se de uma vez,
-                // sem precisar de orçamento por passagem.
-                std::vector<bool> narrative;
-                narrative.reserve(totalChapters);
-                std::vector<String> guideTypes;
-                guideTypes.reserve(totalChapters);
-                for (int i = 0; i < totalChapters; i++) {
-                    narrative.push_back(_epubLoader->isChapterNarrative(i));
-                    guideTypes.push_back(_epubLoader->getChapterGuideType(i));
-                }
-                ChapterNarrativeStore::getInstance().set(key, narrative);
-                ChapterGuideTypeStore::getInstance().set(key, guideTypes);
+    unsigned long budgetEnd = millis() + INDEX_BUDGET_MS;
+    while (_indexingActive && millis() < budgetEnd) {
+        if (_indexChapterContent.empty()) {
+            if (_indexChapter >= totalChapters) {
+                finishIndexing(key);
+                return;
             }
-            return;
+
+            _indexChapterContent = _epubLoader->getChapterContentRich(_indexChapter);
+            _indexPointer = {0, 0};
+
+            if (_indexNeedToc)
+                _indexTitles.push_back(EpubLoader::chapterTitleFromContent(_indexChapterContent));
+            if (_indexNeedLengths) _indexLengths.push_back(chapterTextLength(_indexChapterContent));
+
+            if (_indexChapterContent.empty()) {
+                advanceIndexChapter(key); // nada para paginar neste capítulo
+                continue;
+            }
+            if (_indexNeedPageCount) _indexPagesSoFar++; // First page of this chapter begins
         }
-        _tocBuildTitles.push_back(_epubLoader->getChapterTitle(_tocBuildChapter));
-        _tocBuildChapter++;
+
+        if (!_indexNeedPageCount) {
+            // Nada mais precisa deste conteúdo — título/comprimento (se
+            // pedidos) já foram capturados acima na mesma leitura.
+            _indexChapterContent.clear();
+            advanceIndexChapter(key);
+            continue;
+        }
+
+        RenderResult r = _indexRenderer->renderRichPageDynamic(
+            display, _indexChapterContent, _indexPointer.nodeIndex, _indexPointer.charOffset, 0, 0, false);
+        if (r.pageFull) {
+            _indexPagesSoFar++;
+            _indexPointer.nodeIndex = r.nextNodeIndex;
+            _indexPointer.charOffset = r.nextCharOffset;
+        } else {
+            _indexChapterContent.clear();
+            advanceIndexChapter(key);
+        }
+    }
+}
+
+void AppReader::advanceIndexChapter(const String& key) {
+    _indexChapter++;
+    if (_indexNeedPageCount) {
+        PageCountCheckpoint checkpoint;
+        checkpoint.chapter = _indexChapter;
+        checkpoint.pagesSoFar = _indexPagesSoFar;
+        PageCountStore::getInstance().setCheckpoint(key, _fontSizePt, _fontFamily, checkpoint);
+    }
+}
+
+void AppReader::finishIndexing(const String& key) {
+    _indexingActive = false;
+
+    if (_indexNeedPageCount) {
+        int total = max(1, _indexPagesSoFar);
+        _totalPages = total;
+        PageCountStore::getInstance().set(key, _fontSizePt, _fontFamily, total);
+    }
+
+    if (_indexNeedToc && !_indexTitles.empty()) {
+        ChapterTocStore::getInstance().set(key, _indexTitles);
+
+        // O <guide> do OPF já foi lido inteiro quando o EPUB abriu
+        // (EpubLoader::open -> parseOpf -> parseGuide): isto não reabre o
+        // ZIP nem repete trabalho por capítulo, ao contrário do varrimento
+        // acima — por isso persiste-se de uma vez, sem precisar de
+        // orçamento por passagem.
+        int totalChapters = (int)_indexTitles.size();
+        std::vector<bool> narrative;
+        narrative.reserve(totalChapters);
+        std::vector<String> guideTypes;
+        guideTypes.reserve(totalChapters);
+        for (int i = 0; i < totalChapters; i++) {
+            narrative.push_back(_epubLoader->isChapterNarrative(i));
+            guideTypes.push_back(_epubLoader->getChapterGuideType(i));
+        }
+        ChapterNarrativeStore::getInstance().set(key, narrative);
+        ChapterGuideTypeStore::getInstance().set(key, guideTypes);
+    }
+
+    if (_indexNeedLengths && !_indexLengths.empty()) {
+        ChapterLengthStore::getInstance().set(key, _indexLengths);
+    }
+
+    if (_indexRenderer) {
+        delete _indexRenderer;
+        _indexRenderer = nullptr;
     }
 }
 
@@ -1002,31 +1054,43 @@ long AppReader::chapterTextLength(const std::vector<ContentNode>& content) {
     return total;
 }
 
-// Kicks off a background "go to %" resolution for the book currently open in
-// _epubLoader. See updatePercentSeek() for how it's carried out and applied.
+// Kicks off a "go to %" resolution for the book currently open in
+// _epubLoader. See updatePercentSeek() for the scanning path and
+// resolvePercentSeekTarget() for how the result is carried out and applied.
 void AppReader::startPercentSeek(int percent) {
     _percentSeekActive = false;
     _percentSeekChapterLengths.clear();
     if (!_epubLoader) return;
-    if (_epubLoader->getChapterCount() <= 0) return; // nothing to seek into
+    int totalChapters = _epubLoader->getChapterCount();
+    if (totalChapters <= 0) return; // nothing to seek into
 
     _percentSeekTargetPercent = percent;
-    _percentSeekChapterLengths.reserve(_epubLoader->getChapterCount());
+
+    // D6: a previous unified chapter scan (see startIndexing/updateIndexing)
+    // may already have every chapter's length cached — resolve the jump
+    // right now instead of re-parsing the whole book just to measure it
+    // again. Falls back to the scan below when it doesn't (this book was
+    // never fully indexed, or the .epub changed and the cache no longer
+    // matches its chapter count).
+    String key = getOriginalFilename(normalizedBookName(_currentBookPath));
+    std::vector<long> cachedLengths;
+    if (ChapterLengthStore::getInstance().get(key, cachedLengths) &&
+        (int)cachedLengths.size() == totalChapters) {
+        resolvePercentSeekTarget(cachedLengths);
+        return;
+    }
+
+    _percentSeekChapterLengths.reserve(totalChapters);
     _percentSeekActive = true;
 }
 
-// Advances the "go to %" scan by a time-boxed slice (same budget and
-// rationale as updateTotalPagesCount: don't stall the main loop measuring a
-// big book in one shot). Each tick measures one more chapter's text length
-// with EpubLoader::getChapterContentRich() — parsing only, no TextRenderer,
-// no pagination, so this is lighter than the total-page count above and
-// needs no renderer of its own.
-//
-// Once every chapter is measured, resolvePercentTarget() (pure logic, see
-// GoToPercentLogic.h) picks the chapter and in-chapter offset for the
-// requested percent, resolveNodeTarget() narrows that down to a content
-// node, and the result replaces the live reading position — this is the one
-// point where a "go to %" jump actually lands on screen.
+// Advances the "go to %" scan by a time-boxed slice (same budget as the
+// unified chapter scan: don't stall the main loop measuring a big book in
+// one shot). Each tick measures one more chapter's text length with
+// EpubLoader::getChapterContentRich() — parsing only, no TextRenderer, no
+// pagination, so this is lighter than page counting and needs no renderer
+// of its own. Only reached when startPercentSeek() couldn't resolve
+// instantly from ChapterLengthStore.
 void AppReader::updatePercentSeek() {
     if (!_epubLoader) {
         _percentSeekActive = false;
@@ -1034,42 +1098,11 @@ void AppReader::updatePercentSeek() {
     }
     int totalChapters = _epubLoader->getChapterCount();
 
-    unsigned long budgetEnd = millis() + TOTAL_PAGES_BUDGET_MS;
+    unsigned long budgetEnd = millis() + INDEX_BUDGET_MS;
     while (_percentSeekActive && millis() < budgetEnd) {
         if ((int)_percentSeekChapterLengths.size() >= totalChapters) {
-            ChapterPercentTarget target =
-                resolvePercentTarget(_percentSeekChapterLengths, _percentSeekTargetPercent);
             _percentSeekActive = false;
-            if (target.chapterIndex < 0) return; // no chapters — nothing to land on
-
-            loadChapter(target.chapterIndex);
-            // loadChapter() can fall through to a later chapter if the target
-            // one turned out empty (see its own fallback loop) — only place
-            // the pointer inside it if we actually landed where asked.
-            if (_currentChapter == target.chapterIndex) {
-                std::vector<int> nodeLengths;
-                nodeLengths.reserve(_currentRichContent.size());
-                for (const ContentNode& node : _currentRichContent) {
-                    nodeLengths.push_back(node.type == CONTENT_TEXT ? (int)node.textNode.text.length() : 0);
-                }
-                NodePositionTarget nodeTarget = resolveNodeTarget(nodeLengths, target.charOffsetInChapter);
-                _currentPagePointer.nodeIndex = nodeTarget.nodeIndex;
-                _currentPagePointer.charOffset = nodeTarget.charOffsetInNode;
-                _currentPageRenderValid = false;
-
-                // Best-effort page number: exact only when the total is
-                // already cached at the current font settings (see
-                // PageCountStore); this is the one number on screen that
-                // stays approximate otherwise, same spirit as the "no
-                // made-up percentage" rule the library list follows.
-                _globalPageNumber =
-                    (_totalPages > 0)
-                        ? max(1, (int)(((long)_totalPages * (long)_percentSeekTargetPercent) / 100))
-                        : 1;
-            }
-            _readingFirstDraw = true; // full refresh: clears whatever was last on screen
-            _needsRedraw = true;
-            saveReadingProgress(true);
+            resolvePercentSeekTarget(_percentSeekChapterLengths);
             return;
         }
 
@@ -1077,6 +1110,55 @@ void AppReader::updatePercentSeek() {
         std::vector<ContentNode> content = _epubLoader->getChapterContentRich(chapterIndex);
         _percentSeekChapterLengths.push_back(chapterTextLength(content));
     }
+}
+
+// resolvePercentTarget() (pure logic, see GoToPercentLogic.h) picks the
+// chapter and in-chapter offset for the requested percent from
+// chapterLengths, resolveNodeTarget() narrows that down to a content node,
+// and the result replaces the live reading position — this is the one point
+// where a "go to %" jump actually lands on screen, reached either straight
+// from startPercentSeek() (cache hit) or once updatePercentSeek()'s scan
+// finishes.
+void AppReader::resolvePercentSeekTarget(const std::vector<long>& chapterLengths) {
+    ChapterPercentTarget target = resolvePercentTarget(chapterLengths, _percentSeekTargetPercent);
+    if (target.chapterIndex < 0) return; // no chapters — nothing to land on
+
+    loadChapter(target.chapterIndex);
+    // loadChapter() can fall through to a later chapter if the target one
+    // turned out empty (see its own fallback loop) — only place the pointer
+    // inside it if we actually landed where asked.
+    if (_currentChapter == target.chapterIndex) {
+        std::vector<int> nodeLengths;
+        nodeLengths.reserve(_currentRichContent.size());
+        for (const ContentNode& node : _currentRichContent) {
+            nodeLengths.push_back(node.type == CONTENT_TEXT ? (int)node.textNode.text.length() : 0);
+        }
+        NodePositionTarget nodeTarget = resolveNodeTarget(nodeLengths, target.charOffsetInChapter);
+        _currentPagePointer.nodeIndex = nodeTarget.nodeIndex;
+        _currentPagePointer.charOffset = nodeTarget.charOffsetInNode;
+        _currentPageRenderValid = false;
+
+        // D5: same reconstruction as openBook()'s resume path — without it,
+        // loadChapter() above left _pageHistory empty, so the first "prev"
+        // after a "go to %" jump would think we're at the chapter's first
+        // page and jump straight to the previous chapter instead of walking
+        // back within this one.
+        std::vector<PagePointer> allPages, history;
+        paginateAll(_currentRichContent, allPages);
+        if (splitPagesBefore(allPages, _currentPagePointer, history)) _pageHistory = history;
+
+        // Best-effort page number: exact only when the total is already
+        // cached at the current font settings (see PageCountStore); this is
+        // the one number on screen that stays approximate otherwise, same
+        // spirit as the "no made-up percentage" rule the library list
+        // follows.
+        _globalPageNumber = (_totalPages > 0)
+                                ? max(1, (int)(((long)_totalPages * (long)_percentSeekTargetPercent) / 100))
+                                : 1;
+    }
+    _readingFirstDraw = true; // full refresh: clears whatever was last on screen
+    _needsRedraw = true;
+    saveReadingProgress(true);
 }
 
 bool AppReader::loadChapter(int chapterIndex) {
@@ -1103,6 +1185,31 @@ bool AppReader::loadChapter(int chapterIndex) {
     // clobbering it with an empty one; the caller decides what "no more
     // content" means for it (see nextPage(), D7).
     return false;
+}
+
+void AppReader::paginateAll(const std::vector<ContentNode>& content, std::vector<PagePointer>& outPages) {
+    outPages.clear();
+    if (!_textRenderer || content.empty()) return;
+
+    DisplayMgr& dispMgr = DisplayMgr::getInstance();
+    Book32Display& display = dispMgr.getDisplay();
+
+    PagePointer pointer = {0, 0};
+    while (true) {
+        outPages.push_back(pointer);
+        // pageNum=0 with draw=false never touches _textRenderer's line
+        // cache (see renderRichPageDynamic's `if (draw && ...)` cache-hit
+        // guard) — this is a foreground, synchronous measurement in
+        // response to a single button press, not a budgeted background
+        // scan, so reusing the reader's own renderer instead of a separate
+        // one (like the unified indexer's _indexRenderer) is fine: whatever
+        // page we land on afterward gets a fresh draw=true render anyway.
+        RenderResult r = _textRenderer->renderRichPageDynamic(display, content, pointer.nodeIndex,
+                                                              pointer.charOffset, 0, 0, false);
+        if (!r.pageFull) break; // reached the true end of this content
+        pointer.nodeIndex = r.nextNodeIndex;
+        pointer.charOffset = r.nextCharOffset;
+    }
 }
 
 void AppReader::nextPage() {
@@ -1164,11 +1271,9 @@ void AppReader::prevPage() {
         saveReadingProgress(true);
         _needsRedraw = true;
     } else {
-        // Go to previous chapter
+        // Go to previous chapter — prevChapter() lands on its LAST page
+        // (see D5), not its first.
         if (_currentChapter > 0) {
-            // NOTE: Going to the "last page" of the previous chapter is tricky
-            // because we don't know where it starts without rendering it.
-            // For now, we go to the start of the previous chapter.
             if (_globalPageNumber > 1) _globalPageNumber--; // Decrement for prev chapter
             _currentPageRenderValid = false;
             prevChapter();
@@ -1195,6 +1300,19 @@ void AppReader::prevChapter() {
             std::vector<ContentNode> chapterContent = _epubLoader->getChapterContentRich(tryChapter);
             if (chapterContent.size() > 0) {
                 loadChapter(tryChapter);
+                // D5: land on this chapter's LAST page instead of its
+                // first ("For now, we go to the start of the previous
+                // chapter" — the single most frustrating "prev" behaviour
+                // for someone rereading a paragraph). loadChapter() already
+                // parsed this chapter into _currentRichContent, so reuse it
+                // instead of a third parse.
+                std::vector<PagePointer> allPages;
+                paginateAll(_currentRichContent, allPages);
+                if (!allPages.empty()) {
+                    _currentPagePointer = allPages.back();
+                    _pageHistory.assign(allPages.begin(), allPages.end() - 1);
+                    _currentPageRenderValid = false;
+                }
                 return;
             }
             tryChapter--;
@@ -1436,20 +1554,15 @@ void AppReader::drawReading() {
 void AppReader::update() {
     // Library rendering is static unless input changes selection.
 
-    // Spend a small time-boxed slice counting more of the open book's total
-    // pages, if it isn't already known. Runs between draw() calls only (see
-    // updateTotalPagesCount), so it never overlaps an actual page render.
-    if (_countingActive) updateTotalPagesCount();
-
-    // v1.18.0: same budgeted-slice treatment for the chapter-title index.
-    // Independent of the counting above — different state, no shared
-    // renderer (this one needs none) — so both run in the same session
-    // without conflict.
-    if (_tocBuildActive) updateTocBuild();
+    // Spend a small time-boxed slice on the unified chapter scan (page
+    // count + chapter-title index + chapter lengths, see D6), if any of the
+    // three still needs it. Runs between draw() calls only (see
+    // updateIndexing), so it never overlaps an actual page render.
+    if (_indexingActive) updateIndexing();
 
     // v1.14.0: same budgeted-slice treatment for a pending "go to %" jump.
-    // Independent of the counting above — different state, no shared
-    // renderer — so both can run in the same session without conflict.
+    // Independent of the scan above — different state, no shared renderer —
+    // so both can run in the same session without conflict.
     if (_percentSeekActive) updatePercentSeek();
 
     // Fora da leitura, aproveitar uma passagem para ler o título de dentro de
@@ -1487,8 +1600,10 @@ void AppReader::applyFontSize(int pt) {
     _needsRedraw = true;
 
     // The total page count is font-size dependent; re-derive it for the new
-    // size (a no-op if a cached total already exists at this size).
-    startTotalPagesCounting();
+    // size (a no-op if a cached total already exists at this size). The
+    // chapter-title index and lengths startIndexing() also checks are
+    // font-independent, so this just confirms their cache hits again.
+    startIndexing();
 }
 
 void AppReader::applyFontFamily(int family) {
@@ -1506,7 +1621,7 @@ void AppReader::applyFontFamily(int family) {
     _needsRedraw = true;
 
     // Same reasoning as applyFontSize: the total is specific to this family.
-    startTotalPagesCounting();
+    startIndexing();
 }
 
 void AppReader::forceRedraw() {
