@@ -1,6 +1,7 @@
 #include "TextRenderer.h"
 #include "WordFitLogic.h"
 #include "HyphenationLogic.h"
+#include "LineBreaker.h"
 
 TextRenderer::TextRenderer(int width, int height, int fontSize) {
     _width = width;
@@ -124,8 +125,10 @@ const GFXfont* TextRenderer::getGFXFont(TextStyle style, int& lineHeight) {
     return font;
 }
 
-RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const std::vector<ContentNode>& content, 
-                                                 int startNode, int startOffset, int pageNum, int pageNumForDisplay, bool draw) {
+RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display,
+                                                 const std::vector<ContentNode>& content, int startNode,
+                                                 int startOffset, int pageNum, int pageNumForDisplay,
+                                                 bool draw) {
     if (draw) {
         display.setTextColor(GxEPD_BLACK);
     }
@@ -133,7 +136,7 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
     if (draw && _cachedPage == pageNum && !_lineCache.empty() && _hasCachedResult) {
         for (const auto& line : _lineCache) {
             int unused;
-            display.setFont(getGFXFont((TextStyle)line.fontSize, unused)); 
+            display.setFont(getGFXFont((TextStyle)line.fontSize, unused));
             display.setCursor(line.x, line.y);
             display.print(line.text);
         }
@@ -144,16 +147,19 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
     _lineCache.clear();
     _cachedPage = pageNum;
 
-    int y = 40; 
+    int y = 40;
     int maxY = _height - 40;
     RenderResult result = {0, 0, false, startNode, startOffset};
     int currentNode = startNode;
     int currentOffset = startOffset;
-    
-    char lineBuf[256];
-    int line_width = 0;
-    int x_margin = 35;
+
+    // line_width and currentX carry across node boundaries on purpose: an
+    // inline run split across ContentNodes (e.g. plain text followed by a
+    // bold span) keeps flowing on the same visual line instead of starting
+    // a fresh one at each node.
+    const int x_margin = 35;
     int currentX = x_margin;
+    int line_width = 0;
     // D4: true right after a line ends with a syllable-hyphenated break, so
     // the very next line-wrap decision is forced to a plain wrap instead of
     // hyphenating again — two hyphenated line ends in a row reads worse than
@@ -161,284 +167,17 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
     bool justHyphenated = false;
 
     while (currentNode < (int)content.size() && y < maxY) {
-        auto& node = content[currentNode];
-        if (node.type == CONTENT_TEXT) {
-            int nodeLineHeight = 0;
-            const GFXfont* font = getGFXFont(node.textNode.style, nodeLineHeight);
-            display.setFont(font);
-            
-            if (font != _lastGFXFont) {
-                // int (not uint8_t) loop variable: an upper bound of 256
-                // would make a uint8_t wrap at 255 and never terminate.
-                for (int c = 32; c < 256; c++) {
-                    if (c >= font->first && c <= font->last) {
-                        _gfxCharWidths[c] = font->glyph[c - font->first].xAdvance;
-                    } else {
-                        _gfxCharWidths[c] = 0;
-                    }
-                }
-                _lastGFXFont = font;
-            }
-
-            // D2: drawX used to be currentX+line_width with a hardcoded
-            // override for STYLE_HEADER1/2 at each of the three commit sites
-            // below (and the middle one didn't even have that override,
-            // so a header line that got wrapped mid-content drew its first
-            // line unaligned). Centering/right-alignment now follow the
-            // node's own .align — set from CSS text-align on <p>/<div> as
-            // well as headers (EpubLoader.cpp) — instead of only ever
-            // reacting to the header style.
-            auto computeDrawX = [&](int segWidth) -> int {
-                if (node.textNode.align == ALIGN_CENTER) return (_width - segWidth) / 2;
-                if (node.textNode.align == ALIGN_RIGHT) return (_width - x_margin) - segWidth;
-                return currentX + line_width;
-            };
-
-            if (node.textNode.isBlockStart && currentOffset == 0) {
-                if (line_width > 0) { y += nodeLineHeight; line_width = 0; }
-                // A <br> soft break never gets the first-line indent a real
-                // block does (D3).
-                currentX = node.textNode.softBreak ? x_margin : x_margin + node.textNode.indent;
-
-                // Add extra spacing before headers
-                if (node.textNode.style == STYLE_HEADER1) {
-                    y += 30; // Big gap before chapter title
-                    currentX = 0; // Will be centered below
-                } else if (node.textNode.style == STYLE_HEADER2) {
-                    y += 20;
-                    currentX = 0; // Centered
-                } else if (node.textNode.style == STYLE_HEADER3) {
-                    y += 12;
-                }
-            }
-
-            const char* text = node.textNode.text.c_str();
-            int textLen = node.textNode.text.length();
-            int pos = currentOffset;
-
-            while (pos < textLen && y < maxY) {
-                int line_chars = 0;
-                lineBuf[0] = '\0';
-                int segment_width = 0;
-                
-                if (node.textNode.isListItem && pos == currentOffset) {
-                    // Ordered (<ol>) items carry their 1-based ordinal in
-                    // listNumber; unordered (<ul>) items and lists that
-                    // never resolved to a stack depth (listNumber == 0)
-                    // keep the plain dash marker.
-                    if (node.textNode.listNumber > 0) {
-                        snprintf(lineBuf, sizeof(lineBuf), "%d. ", node.textNode.listNumber);
-                    } else {
-                        strcpy(lineBuf, "- ");
-                    }
-                    segment_width = 0;
-                    for (const char* m = lineBuf; *m; m++) {
-                        segment_width += _gfxCharWidths[(unsigned char)*m];
-                    }
-                }
-
-                while (pos + line_chars < textLen) {
-                    int wordStart = pos + line_chars;
-                    while (wordStart < textLen && isspace((unsigned char)text[wordStart])) wordStart++;
-                    if (wordStart >= textLen) { line_chars = textLen - pos; break; }
-
-                    int wordEnd = wordStart;
-                    while (wordEnd < textLen && !isspace((unsigned char)text[wordEnd])) wordEnd++;
-                    
-                    int wordWidth = 0;
-                    for (int k = wordStart; k < wordEnd; k++) {
-                        unsigned char c = (unsigned char)text[k];
-                        wordWidth += _gfxCharWidths[c];
-                    }
-
-                    int spaceWidth = (line_width + segment_width > 0) ? _gfxCharWidths[' '] : 0;
-                    int usableWidth = _width - x_margin;
-
-                    if (currentX + line_width + segment_width + spaceWidth + wordWidth > usableWidth && (line_width + segment_width) > 0) {
-                        // Word doesn't fit on this line
-                        if (y + nodeLineHeight > maxY) {
-                            if (strlen(lineBuf) > 0) {
-                                int drawX = computeDrawX(segment_width);
-                                _lineCache.push_back({drawX, y, (int)node.textNode.style, false, String(lineBuf)});
-                                if (draw) { display.setCursor(drawX, y); display.print(lineBuf); }
-                            }
-
-                            int nextOffset = pos + line_chars;
-                            result.pageFull = true;
-                            result.charsConsumedInLastNode = nextOffset;
-                            result.nextNodeIndex = currentNode;
-                            result.nextCharOffset = nextOffset;
-                            _cachedResult = result;
-                            _hasCachedResult = true;
-                            return result;
-                        }
-
-                        // D4: before giving up on this line, try a syllable
-                        // break that fits what's still left on it — this is
-                        // the common case in running Portuguese prose, unlike
-                        // the desperate whole-word split below (fitWordInto-
-                        // LineHyphenated, reached only once the word is wider
-                        // than an entire fresh line). Require >=3 letters on
-                        // each side of the break (tighter than the >=2 that
-                        // hyphenationPoints() itself guarantees) so a break
-                        // here is never worse-looking than a plain wrap, and
-                        // skip it entirely right after a line that already
-                        // ended in a hyphen.
-                        bool hyphenatedHere = false;
-                        if (!justHyphenated) {
-                            int hyphBudget =
-                                usableWidth - (currentX + line_width + segment_width + spaceWidth);
-                            int hyphBufLeft =
-                                (int)sizeof(lineBuf) - 1 - (int)strlen(lineBuf) - (spaceWidth > 0 ? 1 : 0);
-                            if (hyphBudget > 0 && hyphBufLeft > 0) {
-                                int wLen = wordEnd - wordStart;
-                                std::vector<int> hpoints = hyphenationPoints(text + wordStart, wLen);
-                                std::vector<int> hpoints3;
-                                for (int p : hpoints) {
-                                    if (p >= 3 && (wLen - p) >= 3) hpoints3.push_back(p);
-                                }
-                                if (!hpoints3.empty()) {
-                                    WordFit hfit = fitWordIntoLineHyphenated(
-                                        text + wordStart, wLen, wordWidth, hyphBufLeft, hyphBudget,
-                                        _gfxCharWidths, hpoints3);
-                                    if (hfit.hyphen && hfit.take > 0) {
-                                        if (spaceWidth > 0) {
-                                            strcat(lineBuf, " ");
-                                            segment_width += spaceWidth;
-                                        }
-                                        strncat(lineBuf, text + wordStart, hfit.take);
-                                        strcat(lineBuf, "-");
-                                        segment_width += hfit.width;
-
-                                        int drawX = computeDrawX(segment_width);
-                                        _lineCache.push_back(
-                                            {drawX, y, (int)node.textNode.style, false, String(lineBuf)});
-                                        if (draw) {
-                                            display.setCursor(drawX, y);
-                                            display.print(lineBuf);
-                                        }
-
-                                        line_chars = wordStart + hfit.take - pos;
-                                        y += nodeLineHeight;
-                                        line_width = 0;
-                                        currentX = x_margin;
-                                        segment_width = 0;
-                                        lineBuf[0] = '\0';
-                                        justHyphenated = true;
-                                        hyphenatedHere = true;
-                                    }
-                                }
-                            }
-                        }
-                        if (hyphenatedHere) continue;
-                        justHyphenated = false;
-
-                        // Commit current segment before starting new line
-                        if (segment_width > 0) {
-                            int drawX = computeDrawX(segment_width);
-                            _lineCache.push_back(
-                                {drawX, y, (int)node.textNode.style, false, String(lineBuf)});
-                            if (draw) {
-                                display.setCursor(drawX, y);
-                                display.print(lineBuf);
-                            }
-                        }
-
-                        y += nodeLineHeight;
-                        line_width = 0;
-                        currentX = x_margin;
-                        segment_width = 0;
-                        lineBuf[0] = '\0';
-
-                        // Retest the word on the new line
-                        spaceWidth = 0;
-                    }
-
-                    // Space left in lineBuf, recomputed before every write: the
-                    // appends below are clamped to it. Without the clamp a
-                    // single token longer than the buffer (a URL, or text the
-                    // HTML parser failed to split) ran past the end of this
-                    // stack buffer — the wrap branch above only fires once the
-                    // line already holds something, so the first word of a
-                    // line was always copied whole.
-                    int bufLeft = (int)sizeof(lineBuf) - 1 - (int)strlen(lineBuf);
-
-                    if (segment_width > 0 || line_width > 0) {
-                        if (bufLeft <= 0) break;  // no room even for a separator
-                        strcat(lineBuf, " ");
-                        segment_width += spaceWidth;
-                        bufLeft--;
-                    }
-
-                    // A word still too wide here cannot fit a line of its own
-                    // either. Prefer breaking at a Portuguese syllable
-                    // boundary with a visible hyphen (see HyphenationLogic.h)
-                    // over the plain by-character split (WordFitLogic.h, host
-                    // test tools/tests/test_word_fit.cpp). hyphenationPoints()
-                    // allocates, so it's only computed for the word-doesn't-
-                    // fit case handled here — the common whole-word-fits case
-                    // below never reaches it.
-                    int wordLen = wordEnd - wordStart;
-                    int pixelBudget = usableWidth - (currentX + line_width + segment_width);
-                    WordFit fit;
-                    if (wordLen <= bufLeft && wordWidth <= pixelBudget) {
-                        fit = {wordLen, wordWidth, false};
-                    } else {
-                        std::vector<int> hpoints = hyphenationPoints(text + wordStart, wordLen);
-                        fit = fitWordIntoLineHyphenated(text + wordStart, wordLen, wordWidth, bufLeft,
-                                                        pixelBudget, _gfxCharWidths, hpoints);
-                    }
-                    if (fit.take <= 0) break;  // buffer full: commit this line
-
-                    strncat(lineBuf, text + wordStart, fit.take);
-                    if (fit.hyphen) strcat(lineBuf, "-");
-                    segment_width += fit.width;
-                    line_chars = wordStart + fit.take - pos;
-                    if (fit.take < wordLen) break;  // remainder goes on the next line
-                }
-
-                if (strlen(lineBuf) > 0) {
-                    int drawX = computeDrawX(segment_width);
-                    _lineCache.push_back({drawX, y, (int)node.textNode.style, false, String(lineBuf)});
-                    if (draw) { display.setCursor(drawX, y); display.print(lineBuf); }
-                    line_width += segment_width;
-                }
-                
-                pos += line_chars;
-                if (pos < textLen) {
-                    // We filled the line but the node has more text
-                    y += nodeLineHeight;
-                    line_width = 0;
-                    currentX = x_margin;
-                }
-                yield();
-            }
-            
-            // CRITICAL: Check if we exited the text loop because page is full but text remains
-            if (pos < textLen && y >= maxY) {
-                // Page full but this node has more text - return position in this node
+        if (content[currentNode].type == CONTENT_TEXT) {
+            RenderResult nodeFull = {0, 0, false, 0, 0};
+            if (renderTextNode(display, content, currentNode, currentOffset, y, maxY, currentX, line_width,
+                               justHyphenated, draw, nodeFull)) {
                 result.pageFull = true;
-                result.charsConsumedInLastNode = pos;
-                result.nextNodeIndex = currentNode;
-                result.nextCharOffset = pos;
-                // nodesConsumed is the count of COMPLETED nodes before this one
+                result.charsConsumedInLastNode = nodeFull.charsConsumedInLastNode;
+                result.nextNodeIndex = nodeFull.nextNodeIndex;
+                result.nextCharOffset = nodeFull.nextCharOffset;
                 _cachedResult = result;
                 _hasCachedResult = true;
                 return result;
-            }
-
-            if (node.textNode.isBlockStart && currentNode < (int)content.size() - 1 &&
-                content[currentNode + 1].textNode.isBlockStart &&
-                !content[currentNode + 1].textNode.softBreak) {
-                y += 8; // Paragraph gap (not for a <br> soft break, see D3)
-            }
-            // Add extra spacing after headers
-            if (node.textNode.style == STYLE_HEADER1) {
-                y += 25; // Extra gap after chapter title
-            } else if (node.textNode.style == STYLE_HEADER2) {
-                y += 15;
-            } else if (node.textNode.style == STYLE_HEADER3) {
-                y += 10;
             }
         }
         currentNode++;
@@ -458,7 +197,8 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
         result.nextCharOffset = currentOffset;
         // nodesConsumed already reflects completed nodes
     }
-    // If currentNode >= content.size(), all content was displayed -> pageFull stays false (true end of chapter)
+    // If currentNode >= content.size(), all content was displayed -> pageFull stays false (true end of
+    // chapter)
 
     // Page number drawing moved to AppReader for consistency
     _cachedResult = result;
@@ -466,3 +206,282 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display, const s
     return result;
 }
 
+// Word-wraps (and, when draw, draws) a single CONTENT_TEXT node starting at
+// currentOffset. y/currentX/line_width/justHyphenated are the running
+// layout state shared across nodes on the page (see the comment on
+// line_width/currentX in renderRichPageDynamic) and are updated in place.
+//
+// Returns true if the page filled up partway through this node — `full` is
+// then populated with the fields the caller should return immediately with
+// (pageFull/charsConsumedInLastNode/nextNodeIndex/nextCharOffset). Returns
+// false once the whole node has been consumed normally.
+bool TextRenderer::renderTextNode(Book32Display& display, const std::vector<ContentNode>& content,
+                                  int currentNode, int currentOffset, int& y, int maxY, int& currentX,
+                                  int& line_width, bool& justHyphenated, bool draw, RenderResult& full) {
+    const ContentNode& node = content[currentNode];
+    const int x_margin = 35;
+
+    int nodeLineHeight = 0;
+    const GFXfont* font = getGFXFont(node.textNode.style, nodeLineHeight);
+    display.setFont(font);
+
+    if (font != _lastGFXFont) {
+        // int (not uint8_t) loop variable: an upper bound of 256
+        // would make a uint8_t wrap at 255 and never terminate.
+        for (int c = 32; c < 256; c++) {
+            if (c >= font->first && c <= font->last) {
+                _gfxCharWidths[c] = font->glyph[c - font->first].xAdvance;
+            } else {
+                _gfxCharWidths[c] = 0;
+            }
+        }
+        _lastGFXFont = font;
+    }
+
+    // D2: drawX used to be currentX+line_width with a hardcoded
+    // override for STYLE_HEADER1/2 at each of the three commit sites
+    // below (and the middle one didn't even have that override,
+    // so a header line that got wrapped mid-content drew its first
+    // line unaligned). Centering/right-alignment now follow the
+    // node's own .align — set from CSS text-align on <p>/<div> as
+    // well as headers (EpubLoader.cpp) — instead of only ever
+    // reacting to the header style.
+    auto computeDrawX = [&](int segWidth) -> int {
+        if (node.textNode.align == ALIGN_CENTER) return (_width - segWidth) / 2;
+        if (node.textNode.align == ALIGN_RIGHT) return (_width - x_margin) - segWidth;
+        return currentX + line_width;
+    };
+
+    if (node.textNode.isBlockStart && currentOffset == 0) {
+        if (line_width > 0) {
+            y += nodeLineHeight;
+            line_width = 0;
+        }
+        // A <br> soft break never gets the first-line indent a real
+        // block does (D3).
+        currentX = node.textNode.softBreak ? x_margin : x_margin + node.textNode.indent;
+
+        // Add extra spacing before headers
+        if (node.textNode.style == STYLE_HEADER1) {
+            y += 30;      // Big gap before chapter title
+            currentX = 0; // Will be centered below
+        } else if (node.textNode.style == STYLE_HEADER2) {
+            y += 20;
+            currentX = 0; // Centered
+        } else if (node.textNode.style == STYLE_HEADER3) {
+            y += 12;
+        }
+    }
+
+    const char* text = node.textNode.text.c_str();
+    int textLen = node.textNode.text.length();
+    int pos = currentOffset;
+    char lineBuf[256];
+
+    while (pos < textLen && y < maxY) {
+        int line_chars = 0;
+        lineBuf[0] = '\0';
+        int segment_width = 0;
+
+        if (node.textNode.isListItem && pos == currentOffset) {
+            // Ordered (<ol>) items carry their 1-based ordinal in
+            // listNumber; unordered (<ul>) items and lists that
+            // never resolved to a stack depth (listNumber == 0)
+            // keep the plain dash marker.
+            if (node.textNode.listNumber > 0) {
+                snprintf(lineBuf, sizeof(lineBuf), "%d. ", node.textNode.listNumber);
+            } else {
+                strcpy(lineBuf, "- ");
+            }
+            segment_width = 0;
+            for (const char* m = lineBuf; *m; m++) {
+                segment_width += _gfxCharWidths[(unsigned char)*m];
+            }
+        }
+
+        while (pos + line_chars < textLen) {
+            int wordStart = pos + line_chars;
+            while (wordStart < textLen && isspace((unsigned char)text[wordStart]))
+                wordStart++;
+            if (wordStart >= textLen) {
+                line_chars = textLen - pos;
+                break;
+            }
+
+            int wordEnd = wordStart;
+            while (wordEnd < textLen && !isspace((unsigned char)text[wordEnd]))
+                wordEnd++;
+
+            int wordWidth = 0;
+            for (int k = wordStart; k < wordEnd; k++) {
+                unsigned char c = (unsigned char)text[k];
+                wordWidth += _gfxCharWidths[c];
+            }
+
+            int spaceWidth = (line_width + segment_width > 0) ? _gfxCharWidths[' '] : 0;
+            int usableWidth = _width - x_margin;
+
+            if (currentX + line_width + segment_width + spaceWidth + wordWidth > usableWidth &&
+                (line_width + segment_width) > 0) {
+                // Word doesn't fit on this line
+                if (y + nodeLineHeight > maxY) {
+                    if (strlen(lineBuf) > 0) {
+                        int drawX = computeDrawX(segment_width);
+                        _lineCache.push_back({drawX, y, (int)node.textNode.style, false, String(lineBuf)});
+                        if (draw) {
+                            display.setCursor(drawX, y);
+                            display.print(lineBuf);
+                        }
+                    }
+
+                    int nextOffset = pos + line_chars;
+                    full.pageFull = true;
+                    full.charsConsumedInLastNode = nextOffset;
+                    full.nextNodeIndex = currentNode;
+                    full.nextCharOffset = nextOffset;
+                    return true;
+                }
+
+                // D4: before giving up on this line, try a syllable break
+                // that fits what's still left on it (see tryHyphenateAtWrap
+                // in LineBreaker.h — pure, host-tested in
+                // tools/tests/test_line_breaker.cpp).
+                int hyphBudget = usableWidth - (currentX + line_width + segment_width + spaceWidth);
+                int hyphBufLeft = (int)sizeof(lineBuf) - 1 - (int)strlen(lineBuf) - (spaceWidth > 0 ? 1 : 0);
+                WordFit hfit = tryHyphenateAtWrap(text + wordStart, wordEnd - wordStart, wordWidth,
+                                                  hyphBufLeft, hyphBudget, _gfxCharWidths, justHyphenated);
+                if (hfit.hyphen && hfit.take > 0) {
+                    if (spaceWidth > 0) {
+                        strcat(lineBuf, " ");
+                        segment_width += spaceWidth;
+                    }
+                    strncat(lineBuf, text + wordStart, hfit.take);
+                    strcat(lineBuf, "-");
+                    segment_width += hfit.width;
+
+                    int drawX = computeDrawX(segment_width);
+                    _lineCache.push_back({drawX, y, (int)node.textNode.style, false, String(lineBuf)});
+                    if (draw) {
+                        display.setCursor(drawX, y);
+                        display.print(lineBuf);
+                    }
+
+                    line_chars = wordStart + hfit.take - pos;
+                    y += nodeLineHeight;
+                    line_width = 0;
+                    currentX = x_margin;
+                    segment_width = 0;
+                    lineBuf[0] = '\0';
+                    justHyphenated = true;
+                    continue;
+                }
+                justHyphenated = false;
+
+                // Commit current segment before starting new line
+                if (segment_width > 0) {
+                    int drawX = computeDrawX(segment_width);
+                    _lineCache.push_back({drawX, y, (int)node.textNode.style, false, String(lineBuf)});
+                    if (draw) {
+                        display.setCursor(drawX, y);
+                        display.print(lineBuf);
+                    }
+                }
+
+                y += nodeLineHeight;
+                line_width = 0;
+                currentX = x_margin;
+                segment_width = 0;
+                lineBuf[0] = '\0';
+
+                // Retest the word on the new line
+                spaceWidth = 0;
+            }
+
+            // Space left in lineBuf, recomputed before every write: the
+            // appends below are clamped to it. Without the clamp a
+            // single token longer than the buffer (a URL, or text the
+            // HTML parser failed to split) ran past the end of this
+            // stack buffer — the wrap branch above only fires once the
+            // line already holds something, so the first word of a
+            // line was always copied whole.
+            int bufLeft = (int)sizeof(lineBuf) - 1 - (int)strlen(lineBuf);
+
+            if (segment_width > 0 || line_width > 0) {
+                if (bufLeft <= 0) break; // no room even for a separator
+                strcat(lineBuf, " ");
+                segment_width += spaceWidth;
+                bufLeft--;
+            }
+
+            // A word still too wide here cannot fit a line of its own
+            // either. Prefer breaking at a Portuguese syllable
+            // boundary with a visible hyphen (see HyphenationLogic.h)
+            // over the plain by-character split (WordFitLogic.h, host
+            // test tools/tests/test_word_fit.cpp). hyphenationPoints()
+            // allocates, so it's only computed for the word-doesn't-
+            // fit case handled here — the common whole-word-fits case
+            // below never reaches it.
+            int wordLen = wordEnd - wordStart;
+            int pixelBudget = usableWidth - (currentX + line_width + segment_width);
+            WordFit fit;
+            if (wordLen <= bufLeft && wordWidth <= pixelBudget) {
+                fit = {wordLen, wordWidth, false};
+            } else {
+                std::vector<int> hpoints = hyphenationPoints(text + wordStart, wordLen);
+                fit = fitWordIntoLineHyphenated(text + wordStart, wordLen, wordWidth, bufLeft, pixelBudget,
+                                                _gfxCharWidths, hpoints);
+            }
+            if (fit.take <= 0) break; // buffer full: commit this line
+
+            strncat(lineBuf, text + wordStart, fit.take);
+            if (fit.hyphen) strcat(lineBuf, "-");
+            segment_width += fit.width;
+            line_chars = wordStart + fit.take - pos;
+            if (fit.take < wordLen) break; // remainder goes on the next line
+        }
+
+        if (strlen(lineBuf) > 0) {
+            int drawX = computeDrawX(segment_width);
+            _lineCache.push_back({drawX, y, (int)node.textNode.style, false, String(lineBuf)});
+            if (draw) {
+                display.setCursor(drawX, y);
+                display.print(lineBuf);
+            }
+            line_width += segment_width;
+        }
+
+        pos += line_chars;
+        if (pos < textLen) {
+            // We filled the line but the node has more text
+            y += nodeLineHeight;
+            line_width = 0;
+            currentX = x_margin;
+        }
+        yield();
+    }
+
+    // CRITICAL: Check if we exited the text loop because page is full but text remains
+    if (pos < textLen && y >= maxY) {
+        // Page full but this node has more text - return position in this node
+        full.pageFull = true;
+        full.charsConsumedInLastNode = pos;
+        full.nextNodeIndex = currentNode;
+        full.nextCharOffset = pos;
+        return true;
+    }
+
+    if (node.textNode.isBlockStart && currentNode < (int)content.size() - 1 &&
+        content[currentNode + 1].textNode.isBlockStart && !content[currentNode + 1].textNode.softBreak) {
+        y += 8; // Paragraph gap (not for a <br> soft break, see D3)
+    }
+    // Add extra spacing after headers
+    if (node.textNode.style == STYLE_HEADER1) {
+        y += 25; // Extra gap after chapter title
+    } else if (node.textNode.style == STYLE_HEADER2) {
+        y += 15;
+    } else if (node.textNode.style == STYLE_HEADER3) {
+        y += 10;
+    }
+
+    return false;
+}
