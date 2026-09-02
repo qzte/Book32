@@ -86,6 +86,14 @@ private:
     const GFXfont* _lastGFXFont = nullptr;
 
     const GFXfont* getGFXFont(TextStyle style, int& lineHeight);
+
+    // Word-wraps (and, when draw, draws) one CONTENT_TEXT node; see the
+    // definition in TextRenderer.cpp for the full contract. Extracted out
+    // of renderRichPageDynamic() so the page-level node loop and the
+    // line/word-wrap loop aren't nested inside each other (M2).
+    bool renderTextNode(Book32Display& display, const std::vector<ContentNode>& content, int currentNode,
+                        int currentOffset, int& y, int maxY, int& currentX, int& line_width,
+                        bool& justHyphenated, bool draw, RenderResult& full);
 };
 
 #endif
