@@ -110,9 +110,10 @@ private:
     // v1.19.0: mesma forma do resolveNextBookTitle() acima, mas para a capa
     // — um livro por passagem do update(), na biblioteca, com o resultado
     // (bitmap 1bpp já do tamanho do item) escrito para /covers/<nome>.thumb
-    // em EbookFS. Sem índice à parte: a presença/tamanho do próprio ficheiro
-    // é o cache, ver BookEntry::coverAttempted/hasCoverThumb e
-    // coverThumbPathFor() em AppReader.cpp.
+    // em EbookFS. Sem índice à parte: o próprio ficheiro é o cache, com um
+    // cabeçalho com versão à frente do bitmap — ver readCoverCacheInfo(),
+    // BookEntry::coverAttempted/hasCoverThumb e coverThumbPathFor() em
+    // AppReader.cpp.
     void resolveNextBookCover();
     bool _coversDirty = false;
     void drawLibrary();

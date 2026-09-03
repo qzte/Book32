@@ -87,6 +87,7 @@ bool EpubLoader::parseOpf() {
     // resolver depois de o manifest estar todo lido (linha abaixo), por isso
     // fica só guardado aqui.
     String coverMetaId;
+    String coverFallbackHref; // ver o "recurso de último recurso" no ciclo do manifest
     {
         int metaPos = xml.indexOf("name=\"cover\"");
         if (metaPos == -1) metaPos = xml.indexOf("name='cover'");
@@ -126,6 +127,20 @@ bool EpubLoader::parseOpf() {
                 coverHref = href;
             }
             String hrefLower = href; hrefLower.toLowerCase();
+            // Recurso de último recurso: um EPUB cujo OPF não declara capa
+            // nenhuma (nem properties="cover-image", nem <meta name="cover">)
+            // mas traz uma imagem chamada "cover". Sem isto, esses livros
+            // ficavam com o desenho genérico na biblioteca mesmo tendo capa
+            // dentro do ZIP. Só é usado se as duas formas oficiais falharem.
+            if (coverFallbackHref.length() == 0 &&
+                (hrefLower.endsWith(".jpg") || hrefLower.endsWith(".jpeg") || hrefLower.endsWith(".png") ||
+                 mediaType.startsWith("image/"))) {
+                String idLower = id;
+                idLower.toLowerCase();
+                if (hrefLower.indexOf("cover") != -1 || idLower.indexOf("cover") != -1) {
+                    coverFallbackHref = href;
+                }
+            }
             if(hrefLower.endsWith(".ttf") || hrefLower.endsWith(".otf") || mediaType.indexOf("font") != -1) {
                 FontInfo font; font.path = rootDir + href;
                 if(hrefLower.endsWith(".ttf")) font.format = "ttf";
@@ -149,6 +164,7 @@ bool EpubLoader::parseOpf() {
     if (coverHref.length() == 0 && coverMetaId.length() > 0 && manifest.count(coverMetaId)) {
         coverHref = manifest[coverMetaId];
     }
+    if (coverHref.length() == 0) coverHref = coverFallbackHref;
 
     int spineStart = xml.indexOf("<spine"), spineEnd = xml.indexOf("</spine>");
     if(spineStart == -1 || spineEnd == -1) return false;
