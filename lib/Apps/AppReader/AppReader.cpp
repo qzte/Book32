@@ -87,6 +87,109 @@ static const int BOOK32_COVER_HEIGHT = 80;
 static const size_t BOOK32_COVER_THUMB_BYTES =
     (size_t)((BOOK32_COVER_WIDTH + 7) / 8) * (size_t)BOOK32_COVER_HEIGHT;
 
+// Cabeçalho do ficheiro de cache da miniatura, à frente dos bytes do bitmap.
+// Até à v1.20 o cache era o bitmap cru e a única validação era o tamanho do
+// ficheiro, o que tinha dois problemas: mudar o tamanho da caixa ou o
+// algoritmo de conversão deixava miniaturas velhas no ecrã para sempre, e o
+// marcador "este livro não tem capa" (ficheiro vazio) impedia que um livro
+// com capa PNG voltasse a ser tentado agora que PNG é suportado. Com versão
+// no cabeçalho, um cache de outra versão é apagado e regenerado sozinho.
+//
+// Formato (12 bytes, tudo em bytes soltos — sem depender do alinhamento de
+// nenhuma struct): "B32C", versão, boxW, boxH, fitX, fitY, fitW, fitH,
+// reservado. fitW = 0 marca "já tentado, sem capa" e o ficheiro acaba aqui.
+static const uint8_t BOOK32_COVER_CACHE_VERSION = 2;
+static const size_t BOOK32_COVER_HEADER_BYTES = 12;
+static const size_t BOOK32_COVER_FILE_BYTES = BOOK32_COVER_HEADER_BYTES + BOOK32_COVER_THUMB_BYTES;
+
+// Estado de um ficheiro de cache: o suficiente para decidir entre desenhar a
+// capa, desenhar o ícone genérico, ou voltar a tentar extrair a capa.
+struct CoverCacheInfo {
+    bool valid = false;    // cabeçalho legível e da versão/caixa correntes
+    bool hasCover = false; // valid e com bitmap a seguir ao cabeçalho
+    CoverFit fit = {0, 0, 0, 0};
+};
+
+// Lê e valida o cabeçalho e, se `outBitmap` não for nulo e o ficheiro tiver
+// capa, os BOOK32_COVER_THUMB_BYTES do bitmap a seguir — numa só abertura do
+// ficheiro. Um ficheiro de outra versão, de outra caixa, truncado ou de
+// qualquer formato anterior devolve valid=false; quem chama apaga-o e trata o
+// livro como "por tentar".
+static CoverCacheInfo readCoverCacheInfo(const String& thumbPath, uint8_t* outBitmap = nullptr) {
+    CoverCacheInfo info;
+    File f = EbookFS.open(thumbPath, FILE_READ);
+    if (!f) return info;
+
+    size_t fileSize = f.size();
+    uint8_t hdr[BOOK32_COVER_HEADER_BYTES];
+    size_t n = f.read(hdr, sizeof(hdr));
+    if (n != sizeof(hdr)) {
+        f.close();
+        return info;
+    }
+
+    if (hdr[0] != 'B' || hdr[1] != '3' || hdr[2] != '2' || hdr[3] != 'C' ||
+        hdr[4] != BOOK32_COVER_CACHE_VERSION || hdr[5] != BOOK32_COVER_WIDTH ||
+        hdr[6] != BOOK32_COVER_HEIGHT) {
+        f.close();
+        return info;
+    }
+
+    int fitW = hdr[9];
+    int fitH = hdr[10];
+    if (fitW == 0 || fitH == 0) { // marcador "sem capa"
+        info.valid = (fileSize == BOOK32_COVER_HEADER_BYTES);
+        f.close();
+        return info;
+    }
+    // Truncado a meio de uma escrita, ou com um rectângulo que não cabe na
+    // caixa (ficheiro adulterado): trata-se como cache inválido.
+    if (fileSize != BOOK32_COVER_FILE_BYTES || hdr[7] + fitW > BOOK32_COVER_WIDTH ||
+        hdr[8] + fitH > BOOK32_COVER_HEIGHT) {
+        f.close();
+        return info;
+    }
+
+    if (outBitmap && f.read(outBitmap, BOOK32_COVER_THUMB_BYTES) != BOOK32_COVER_THUMB_BYTES) {
+        f.close();
+        return info;
+    }
+    f.close();
+
+    info.valid = true;
+    info.hasCover = true;
+    info.fit = {hdr[7], hdr[8], fitW, fitH};
+    return info;
+}
+
+// Escreve o cache. `fit` com w/h a zero grava só o cabeçalho, que é o
+// marcador "já tentado, sem capa"; `bitmap` é ignorado nesse caso.
+static bool writeCoverCache(const String& thumbPath, const CoverFit& fit, const uint8_t* bitmap) {
+    uint8_t hdr[BOOK32_COVER_HEADER_BYTES] = {'B',
+                                              '3',
+                                              '2',
+                                              'C',
+                                              BOOK32_COVER_CACHE_VERSION,
+                                              (uint8_t)BOOK32_COVER_WIDTH,
+                                              (uint8_t)BOOK32_COVER_HEIGHT,
+                                              (uint8_t)fit.x,
+                                              (uint8_t)fit.y,
+                                              (uint8_t)fit.w,
+                                              (uint8_t)fit.h,
+                                              0};
+    File f = EbookFS.open(thumbPath, FILE_WRITE);
+    if (!f) return false;
+    bool ok = (f.write(hdr, sizeof(hdr)) == sizeof(hdr));
+    if (ok && fit.w > 0 && fit.h > 0 && bitmap) {
+        ok = (f.write(bitmap, BOOK32_COVER_THUMB_BYTES) == BOOK32_COVER_THUMB_BYTES);
+    }
+    f.close();
+    // Uma escrita a meio (cartão cheio) deixaria um ficheiro que passa o
+    // cabeçalho mas tem o bitmap cortado: apagar é melhor do que voltar a lê-lo.
+    if (!ok) EbookFS.remove(thumbPath);
+    return ok;
+}
+
 // Deriva o caminho do bitmap de capa cacheado a partir do caminho do livro
 // (ex.: "/Foo Bar.epub" -> "/covers/Foo Bar.thumb"). Extensão retirada pela
 // posição do último ponto, como a limpeza em WebMgr.cpp já faz ao apagar um
@@ -293,11 +396,15 @@ void AppReader::scanBooks() {
             // hasProgress/totalPages abaixo, não em resolveNextBookCover().
             String thumbPath = coverThumbPathFor(entry.path);
             if (EbookFS.exists(thumbPath)) {
-                entry.coverAttempted = true;
-                File coverFile = EbookFS.open(thumbPath, FILE_READ);
-                if (coverFile) {
-                    entry.hasCoverThumb = (coverFile.size() == BOOK32_COVER_THUMB_BYTES);
-                    coverFile.close();
+                CoverCacheInfo info = readCoverCacheInfo(thumbPath);
+                if (info.valid) {
+                    entry.coverAttempted = true;
+                    entry.hasCoverThumb = info.hasCover;
+                } else {
+                    // Cache de uma versão anterior (ou corrompido): apagar e
+                    // deixar o livro por tentar, para a capa ser reconvertida
+                    // com o pipeline actual em vez de ficar a velha no ecrã.
+                    EbookFS.remove(thumbPath);
                 }
             }
 
@@ -442,9 +549,9 @@ bool AppReader::resolveNextBookTitle() {
 // exclusividade do ZIP (loadChapter/getChapterContentRich partilham o
 // descritor global, ver zipFd em EpubLoader.cpp). Ao contrário dos títulos,
 // não há um store à parte: o próprio ficheiro /covers/<nome>.thumb em
-// EbookFS É o cache — presente e do tamanho certo = capa real; presente e
-// vazio = "já tentado, sem capa"; ausente = por tentar (ver scanBooks(),
-// que já preenche coverAttempted/hasCoverThumb com um simples stat).
+// EbookFS É o cache — cabeçalho válido com bitmap = capa real; cabeçalho
+// válido com fit a zero = "já tentado, sem capa"; ausente (ou de outra
+// versão, que scanBooks() apaga) = por tentar.
 void AppReader::resolveNextBookCover() {
     if (_epubLoader) return;
 
@@ -477,35 +584,32 @@ void AppReader::resolveNextBookCover() {
     EpubLoader loader;
     if (loader.open(fullPath.c_str())) {
         if (loader.hasCoverImage()) {
-            size_t jpegSize = 0;
-            uint8_t* jpegData = loader.getCoverImageData(&jpegSize);
-            if (jpegData) {
-                if (jpegSize > 0) {
+            size_t imageSize = 0;
+            uint8_t* imageData = loader.getCoverImageData(&imageSize);
+            if (imageData) {
+                if (imageSize > 0) {
                     uint8_t bitmap[BOOK32_COVER_THUMB_BYTES];
-                    // Só JPEG é suportado: um EPUB com capa PNG (ou outro
-                    // formato) devolve false aqui e fica sem capa em vez de
-                    // arriscar um segundo descodificador não verificável
-                    // nesta sessão — ver CoverImage.h.
-                    if (decodeJpegCoverToBitmap(jpegData, jpegSize, BOOK32_COVER_WIDTH, BOOK32_COVER_HEIGHT,
-                                                bitmap)) {
-                        File f = EbookFS.open(thumbPath, FILE_WRITE);
-                        if (f) {
-                            f.write(bitmap, sizeof(bitmap));
-                            f.close();
-                            wroteCover = true;
-                        }
+                    CoverFit fit = {0, 0, 0, 0};
+                    // JPEG e PNG, decididos pelos bytes do ficheiro; qualquer
+                    // outro formato devolve false e o livro fica com o desenho
+                    // genérico — ver CoverImage.h.
+                    if (decodeCoverToBitmap(imageData, imageSize, BOOK32_COVER_WIDTH, BOOK32_COVER_HEIGHT,
+                                            bitmap, &fit)) {
+                        wroteCover = writeCoverCache(thumbPath, fit, bitmap);
                     }
                 }
-                free(jpegData);
+                free(imageData);
             }
         }
         loader.close();
     }
 
     if (!wroteCover) {
-        // Marcador "sem capa" (ficheiro vazio): não voltar a tentar este livro.
-        File f = EbookFS.open(thumbPath, FILE_WRITE);
-        if (f) f.close();
+        // Marcador "sem capa": cabeçalho com fit a zero. Ao contrário do
+        // ficheiro vazio da v1.19, traz a versão do pipeline, por isso uma
+        // versão futura que saiba ler mais formatos volta a tentar este livro.
+        CoverFit none = {0, 0, 0, 0};
+        writeCoverCache(thumbPath, none, nullptr);
     }
 
     book.hasCoverThumb = wroteCover;
@@ -539,17 +643,25 @@ void AppReader::drawBookTile(Book32Display& display, int x, int y, int w, int h,
 void AppReader::drawBookCoverThumb(Book32Display& display, const String& bookPath, int x, int y, int w,
                                    int h) {
     display.fillRect(x, y, w, h, GxEPD_WHITE);
-    display.drawRect(x, y, w, h, GxEPD_BLACK);
-    if (w != BOOK32_COVER_WIDTH || h != BOOK32_COVER_HEIGHT) return;
+    if (w != BOOK32_COVER_WIDTH || h != BOOK32_COVER_HEIGHT) {
+        display.drawRect(x, y, w, h, GxEPD_BLACK);
+        return;
+    }
 
-    File f = EbookFS.open(coverThumbPathFor(bookPath), FILE_READ);
-    if (!f) return;
     uint8_t buf[BOOK32_COVER_THUMB_BYTES];
-    size_t n = f.read(buf, sizeof(buf));
-    f.close();
-    if (n != sizeof(buf)) return;
+    CoverCacheInfo info = readCoverCacheInfo(coverThumbPathFor(bookPath), buf);
+    if (!info.hasCover) {
+        // Cache em falta, de outra versão ou truncado (livro apagado entre o
+        // scan e este desenho, por exemplo): caixa vazia em vez de lixo.
+        display.drawRect(x, y, w, h, GxEPD_BLACK);
+        return;
+    }
 
     display.drawBitmap(x, y, buf, BOOK32_COVER_WIDTH, BOOK32_COVER_HEIGHT, GxEPD_BLACK);
+    // Contorno colado à capa e não à caixa: com a proporção preservada, uma
+    // capa 2:3 não enche a caixa 3:4, e uma moldura à volta da caixa deixava
+    // a capa a flutuar dentro de um rectângulo maior.
+    display.drawRect(x + info.fit.x, y + info.fit.y, info.fit.w, info.fit.h, GxEPD_BLACK);
 }
 
 void AppReader::handleInput(InputAction action) {

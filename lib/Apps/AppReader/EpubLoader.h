@@ -152,10 +152,11 @@ public:
 
     // Capa: href dentro do ZIP encontrado no manifest via
     // properties="cover-image" (EPUB3) ou <meta name="cover" content="ID">
-    // (EPUB2, resolvido contra o manifest depois de o analisar). O tipo de
-    // imagem não é guardado aqui — não se confia no media-type do OPF; quem
-    // descodifica (CoverImage.h) tenta abrir como JPEG e falha em silêncio
-    // se não for.
+    // (EPUB2, resolvido contra o manifest depois de o analisar) e, se nenhuma
+    // das duas existir, uma imagem do manifest cujo href ou id contenha
+    // "cover". O tipo de imagem não é guardado aqui — não se confia no
+    // media-type do OPF; quem descodifica (CoverImage.h) decide o formato
+    // pelos bytes do ficheiro (JPEG ou PNG) e falha em silêncio nos outros.
     bool hasCoverImage() {
         return coverHref.length() > 0;
     }
