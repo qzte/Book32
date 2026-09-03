@@ -66,6 +66,31 @@ leitor nem deixa um .thumb a meio escrito a ser lido como capa valida.
 Capa de resolucao muito alta (ex.: scan de varios MB): confirmar que a
 descodificacao nao demora tanto que pareca que o dispositivo bloqueou.
 
+=== v1.21.0 — a verificar no dispositivo (nao coberto pelos testes de host) ===
+(ver docs/plans/2026-09-03-conversao-de-capas-design.md; o pio run correu no
+CI, mas o resultado visual no e-ink continua por ver — os testes de host
+cobrem a aritmetica da conversao, nao o que o ecra mostra)
+Qualidade das miniaturas: abrir a biblioteca e comparar com a v1.20 — o
+degrade de uma capa deve aparecer como retilado regular e nao como manchas,
+e a capa deve ficar com a proporcao certa (nao esticada), centrada na caixa,
+com a moldura colada a capa e nao a volta da caixa. E o primeiro ponto.
+Primeira visita depois de actualizar: as miniaturas da versao anterior sao
+apagadas e reconstruidas sozinhas (uma por passagem, em segundo plano), sem
+travar os botoes; a segunda visita ja abre com tudo em cache.
+Livro com capa PNG (era o caso que ficava com o desenho generico na v1.19):
+passa a mostrar capa. Confirmar tambem um PNG com transparencia — o
+transparente tem de sair branco e nao preto.
+Capa PNG grande (varios MB / perto de 2000x3000): confirmar quanto tempo a
+biblioteca fica parada durante a conversao, e se o tecto de ~6 MP esta no
+sitio certo ou se deve baixar.
+Capa "lavada" ou muito escura: confirmar que o contraste automatico a torna
+legivel em vez de sair um bloco branco ou preto — e que uma capa
+genuinamente lisa (fundo de uma cor so) NAO ganha manchas.
+Livro sem capa nenhuma: continua com o desenho generico e nao reabre o ZIP a
+cada visita (confirmar no monitor serie que nao ha reaberturas repetidas).
+EbookFS quase cheio: uma escrita de miniatura falhada nao deixa um .thumb a
+meio a ser lido como capa valida (o cabecalho tem de a apanhar).
+
 === Pos-limpeza de EpubLoader (getChapterContent, B32Reader, numeracao <ol>) — a verificar no dispositivo (nao coberto pelos testes de host) ===
 (ver docs/plans/2026-08-31-avaliacao-gestao-epub.md, itens 6 e 8; pio run nao
 correu neste ambiente, so revisao manual do diff — mudanca em codigo Arduino,
