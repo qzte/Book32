@@ -11,22 +11,32 @@ atributos style= inline) e o leitor não corre scripts nem reproduz media
 overlays. Retirar esse peso costuma reduzir um livro a menos de um décimo do
 tamanho, sem perder uma linha de texto.
 
-A única excepção real é a capa: o firmware descodifica JPEG e mostra a capa
-verdadeira na biblioteca (EpubLoader::getCoverImageData + CoverImage.cpp), por
-isso --keep-cover vale a pena por omissão para quem quiser essa miniatura —
-o custo é só o tamanho da própria capa, não de todas as ilustrações do livro.
-O descodificador do firmware só sabe ler JPEG: dar-lhe outro formato arrisca
-crash no dispositivo em vez de simplesmente não mostrar capa. Por isso, com
---keep-cover, uma capa que não seja JPEG (PNG/GIF/WebP são comuns em EPUB) é
-convertida para JPEG com Pillow (`pip install pillow`), se estiver instalado;
-sem Pillow, ou se a conversão falhar por algum motivo, a capa é removida como
-antes — nunca é escrito no EPUB um formato que o firmware não saiba abrir.
+A única excepção real é a capa: o firmware mostra a capa verdadeira na
+biblioteca e, desde a v1.21.0, também como página de capa a ocupar o ecrã
+(EpubLoader::getCoverImageData + CoverImage.cpp), por isso --keep-cover vale a
+pena por omissão — o custo é só o tamanho da própria capa, não de todas as
+ilustrações do livro.
+
+**JPEG e PNG ficam como estão**: são os dois formatos que o firmware
+descodifica (CoverImage.cpp decide pelos bytes do ficheiro, não pela
+extensão). Até à v1.21.0 só havia JPEG, e por isso este script convertia — ou,
+sem Pillow instalado, apagava — qualquer capa PNG. Deixou de o fazer: apagar a
+capa era a pior das saídas possíveis, e a conversão já não é precisa.
+
+Só os formatos que o firmware mesmo não abre (GIF, WebP, SVG, TIFF...) é que
+são convertidos para JPEG com Pillow (`pip install pillow`). O mesmo vale para
+um PNG que esteja fora do que o descodificador do dispositivo aguenta
+(entrelaçado, 16 bits por canal, mais de ~6 MP ou mais de 4000 px de largura —
+ver kMaxPngPixels e pngLineFits em CoverImage.cpp). Sem Pillow instalado, ou
+se a conversão falhar, a capa fica no EPUB à mesma, com um aviso: ocupa espaço
+sem aparecer no dispositivo, mas fica lá para quando isso mudar — e nada no
+firmware trava por causa de um formato que não saiba ler, só não mostra capa.
 
 Uso:
     python tools/slim_epub.py livro.epub                 # cria livro.slim.epub
     python tools/slim_epub.py livro.epub -o saida.epub
     python tools/slim_epub.py *.epub --in-place          # substitui o original
-    python tools/slim_epub.py livro.epub --keep-cover     # mantém a capa (converte para JPEG se preciso)
+    python tools/slim_epub.py livro.epub --keep-cover     # mantém a capa (JPEG/PNG ficam como estão)
     python tools/slim_epub.py livro.epub --keep-images --keep-fonts
 """
 
@@ -143,13 +153,43 @@ def find_cover_href(xml, items):
     return None
 
 
+# Limites do descodificador de PNG do firmware (ver kMaxPngPixels e
+# pngLineFits em lib/Apps/AppReader/CoverImage.cpp, e o que a própria PNGdec
+# recusa). Um PNG fora destes limites é guardado na mesma, mas o dispositivo
+# não o mostra — daí valer a pena convertê-lo quando há Pillow.
+PNG_MAX_PIXELS = 6_000_000
+PNG_MAX_WIDTH = 4000
+
+
+def png_needs_conversion(data):
+    """True se estes bytes forem um PNG que o firmware não consegue mostrar.
+
+    Lê só o cabeçalho IHDR, sem Pillow: assinatura (8 bytes), depois
+    comprimento e tipo do chunk (8), largura e altura (4+4), profundidade de
+    bit, tipo de cor, compressão, filtro e entrelaçamento. Um ficheiro
+    truncado ou que não seja PNG devolve False — quem chama trata-o pelo tipo
+    que o manifesto declara, não por adivinhação daqui.
+    """
+    if len(data) < 29 or not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return False
+    if data[12:16] != b"IHDR":
+        return False
+    width = int.from_bytes(data[16:20], "big")
+    height = int.from_bytes(data[20:24], "big")
+    bit_depth = data[24]
+    interlace = data[28]
+    if width <= 0 or height <= 0:
+        return False
+    return (interlace != 0 or bit_depth > 8 or width > PNG_MAX_WIDTH
+            or width * height > PNG_MAX_PIXELS)
+
+
 def convert_cover_to_jpeg(data):
-    """Converte bytes de imagem (tipicamente PNG) para JPEG baseline, para a
-    capa poder ficar no EPUB mesmo não tendo nascido em JPEG — CoverImage.cpp
-    só descodifica esse formato. Nunca levanta excepção: devolve None se o
-    Pillow não estiver instalado, os bytes não forem uma imagem reconhecível,
-    ou a conversão falhar por qualquer razão (o chamador cai então para o
-    comportamento seguro de sempre, remover a capa).
+    """Converte bytes de imagem para JPEG baseline, para a capa poder ficar no
+    EPUB num formato que o dispositivo mostre. Nunca levanta excepção: devolve
+    None se o Pillow não estiver instalado, os bytes não forem uma imagem
+    reconhecível, ou a conversão falhar por qualquer razão — e nesse caso o
+    chamador mantém a capa original como está, em vez de a apagar.
     """
     try:
         from PIL import Image
@@ -195,7 +235,8 @@ def parse_items(xml):
     return items
 
 
-def clean_opf(xml, opf_path, keep_categories, keep_cover, convert_cover=None, existing_paths=frozenset()):
+def clean_opf(xml, opf_path, keep_categories, keep_cover, convert_cover=None, existing_paths=frozenset(),
+              cover_needs_conversion=None, unconvertible_covers=None):
     """Retira do manifesto os itens que vamos remover do ZIP.
 
     Deixar entradas penduradas faria o leitor procurar ficheiros inexistentes,
@@ -204,9 +245,16 @@ def clean_opf(xml, opf_path, keep_categories, keep_cover, convert_cover=None, ex
     não conseguir); existing_paths evita que o novo nome ".jpg" colida com um
     ficheiro que já exista no ZIP. Devolve (xml_novo, caminhos_zip_removidos,
     caminho_zip_da_capa_mantida_ou_None, {caminho_zip_novo: bytes_jpeg}).
+
+    cover_needs_conversion, se dado, recebe o caminho ZIP de uma capa PNG e
+    diz se o firmware não a conseguiria mostrar; unconvertible_covers, se
+    dado, recebe (href, era_png_fora_dos_limites) de cada capa que ficou num
+    formato que o dispositivo não mostra, para o chamador poder avisar.
     """
     items = parse_items(xml)
     cover_href = find_cover_href(xml, items)
+    if unconvertible_covers is None:
+        unconvertible_covers = []
 
     removed_ids = set()
     removed_paths = set()
@@ -216,6 +264,10 @@ def clean_opf(xml, opf_path, keep_categories, keep_cover, convert_cover=None, ex
     def is_jpeg(href, media):
         ext = os.path.splitext(href)[1].lower()
         return ext in (".jpg", ".jpeg") or media.lower() == "image/jpeg"
+
+    def is_png(href, media):
+        ext = os.path.splitext(href)[1].lower()
+        return ext == ".png" or media.lower() == "image/png"
 
     def drop_item(match):
         tag = match.group(0)
@@ -228,25 +280,40 @@ def clean_opf(xml, opf_path, keep_categories, keep_cover, convert_cover=None, ex
         if cat is None or cat in keep_categories:
             return tag
         if cat == "images" and keep_cover and href.group(1) == cover_href:
+            cover_zip_path = resolve(opf_path, href.group(1))
+            # JPEG fica sempre; PNG fica desde que o descodificador do
+            # dispositivo o consiga abrir (ver png_needs_conversion).
             if is_jpeg(href.group(1), media_val):
-                kept_cover_path[0] = resolve(opf_path, href.group(1))
+                kept_cover_path[0] = cover_zip_path
                 return tag
-            # Não é JPEG: CoverImage.cpp só sabe descodificar esse formato,
-            # por isso só fica se convert_cover a conseguir converter — senão
-            # cai para o strip normal abaixo, tal como sempre foi.
+            oversized_png = False
+            if is_png(href.group(1), media_val):
+                oversized_png = cover_needs_conversion is not None and cover_needs_conversion(cover_zip_path)
+                if not oversized_png:
+                    kept_cover_path[0] = cover_zip_path
+                    return tag
+            # Formato que o firmware não abre (GIF/WebP/SVG/...), ou um PNG
+            # fora dos limites dele: converte-se para JPEG se houver Pillow.
             if convert_cover is not None:
-                jpeg_bytes = convert_cover(resolve(opf_path, href.group(1)))
+                jpeg_bytes = convert_cover(cover_zip_path)
                 if jpeg_bytes is not None:
                     dst_href = os.path.splitext(href.group(1))[0] + ".jpg"
                     dst_path = resolve(opf_path, dst_href)
                     if dst_path not in existing_paths and dst_path not in extra_files:
                         extra_files[dst_path] = jpeg_bytes
                         kept_cover_path[0] = dst_path
-                        removed_paths.add(resolve(opf_path, href.group(1)))  # o original é substituído, não mantido
+                        removed_paths.add(cover_zip_path)  # o original é substituído, não mantido
                         new_tag = re.sub(r'href\s*=\s*"[^"]*"', 'href="%s"' % dst_href, tag, count=1)
                         if media:
                             new_tag = re.sub(r'media-type\s*=\s*"[^"]*"', 'media-type="image/jpeg"', new_tag, count=1)
                         return new_tag
+            # Sem Pillow (ou conversão falhada): a capa fica como está. Ocupa
+            # espaço sem aparecer no dispositivo, mas apagá-la — que era o que
+            # este script fazia — é pior: o livro perde a capa para sempre, e
+            # o firmware nunca trava por um formato que não saiba ler.
+            unconvertible_covers.append((href.group(1), oversized_png))
+            kept_cover_path[0] = cover_zip_path
+            return tag
         item_id = re.search(r'\bid\s*=\s*"([^"]*)"', tag)
         if item_id:
             removed_ids.add(item_id.group(1))
@@ -305,7 +372,8 @@ def slim(src, dst, keep_categories=frozenset(), keep_cover=False):
 
     keep_categories é um subconjunto de {"images", "fonts", "css", "js",
     "media"}; keep_cover mantém a capa mesmo com "images" fora desse
-    conjunto. Devolve (bytes_originais, bytes_finais, n_removidos).
+    conjunto. Devolve (bytes_originais, bytes_finais, n_removidos,
+    capas_que_o_dispositivo_nao_mostra).
     """
     with zipfile.ZipFile(src) as zin:
         names = zin.namelist()
@@ -318,7 +386,16 @@ def slim(src, dst, keep_categories=frozenset(), keep_cover=False):
                 return None
             return convert_cover_to_jpeg(data)
 
+        def cover_png_needs_conversion(zip_path):
+            try:
+                data = zin.read(zip_path)
+            except KeyError:
+                return False
+            return png_needs_conversion(data)
+
         convert_cover = try_convert_cover if keep_cover else None
+        cover_needs_conversion = cover_png_needs_conversion if keep_cover else None
+        unconvertible_covers = []
 
         opf_paths = find_opf_paths(zin)
         rewritten = {}
@@ -331,7 +408,8 @@ def slim(src, dst, keep_categories=frozenset(), keep_cover=False):
             except KeyError:
                 continue
             new_xml, removed, cover_path, extras = clean_opf(
-                xml, opf, keep_categories, keep_cover, convert_cover, existing_paths)
+                xml, opf, keep_categories, keep_cover, convert_cover, existing_paths,
+                cover_needs_conversion, unconvertible_covers)
             rewritten[opf] = new_xml.encode("utf-8")
             from_manifest |= removed
             extra_files.update(extras)
@@ -375,7 +453,7 @@ def slim(src, dst, keep_categories=frozenset(), keep_cover=False):
             for path, data in extra_files.items():
                 zout.writestr(path, data, zipfile.ZIP_DEFLATED)
 
-    return os.path.getsize(src), os.path.getsize(dst), len(to_remove)
+    return os.path.getsize(src), os.path.getsize(dst), len(to_remove), unconvertible_covers
 
 
 def human(n):
@@ -401,7 +479,7 @@ def main(argv=None):
     parser.add_argument(
         "--keep-cover",
         action="store_true",
-        help="mantem a capa do livro; converte para JPEG com Pillow se nao ja for (o firmware so descodifica JPEG)",
+        help="mantem a capa do livro; JPEG e PNG ficam como estao, outros formatos sao convertidos para JPEG com Pillow",
     )
     parser.add_argument(
         "--keep-images",
@@ -458,7 +536,8 @@ def main(argv=None):
         tmp_fd, tmp_path = tempfile.mkstemp(suffix=".epub", dir=os.path.dirname(os.path.abspath(dst)))
         os.close(tmp_fd)
         try:
-            before, after, removed = slim(src, tmp_path, keep_categories, args.keep_cover)
+            before, after, removed, unconvertible = slim(src, tmp_path, keep_categories,
+                                                         args.keep_cover)
             shutil.move(tmp_path, dst)
         except Exception as exc:  # noqa: BLE001 - qualquer falha é do ficheiro
             if os.path.exists(tmp_path):
@@ -472,6 +551,12 @@ def main(argv=None):
         pct = (1 - after / before) * 100 if before else 0
         print(f"{os.path.basename(src)}: {human(before)} -> {human(after)} "
               f"(-{pct:.0f}%, {removed} recursos removidos) => {dst}")
+        for href, oversized_png in unconvertible:
+            motivo = ("PNG fora dos limites do descodificador do dispositivo"
+                      if oversized_png else "formato que o dispositivo nao le")
+            print(f"  aviso: capa mantida mas nao vai aparecer no Book32 ({motivo}): {href}\n"
+                  f"         'pip install pillow' e correr outra vez converte-a para JPEG.",
+                  file=sys.stderr)
 
     if total_before and len(args.files) > 1:
         pct = (1 - total_after / total_before) * 100
