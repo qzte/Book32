@@ -328,3 +328,29 @@ hotspot activo.
 Actualizacao de firmware disponivel: o icone no menu principal mostra
 "Actualizar vX.Y.Z" (antes "Update vX.Y.Z"), sem o texto a sair da largura
 do icone.
+
+=== v1.23.0 — a verificar no dispositivo (nao coberto pelos testes de host) ===
+(ver PRs #80 e #81 no GitHub; sem doc de design formal, a compilacao do
+firmware correu na CI mas nada disto foi visto num e-ink real)
+Ilustracoes dentro do texto do capitulo (nao a pagina de capa): abrir um EPUB
+com imagens no meio do corpo do capitulo e confirmar que aparecem no ecra, a
+preto-e-branco com dithering, sem distorcer a proporcao original nem invadir
+as margens do texto.
+Imagem perto do fim de uma pagina: se nao couber no espaco que resta,
+confirmar que passa inteira para a pagina seguinte em vez de aparecer
+cortada a meio.
+Livro com varias imagens no corpo do texto: abrir e virar paginas e
+confirmar que nao ha atraso perceptivel nem bloqueio dos botoes — a
+descodificacao completa so acontece no desenho real da pagina, nunca ao
+contar paginas em segundo plano.
+Marcador ou posicao de leitura guardados ANTES desta actualizacao, num livro
+que ja tinha imagens no corpo do texto: aceitavel que a posicao fique
+ligeiramente desviada ao reabrir (ver nota de compatibilidade no PR #80);
+confirmar so que a leitura continua a avancar normalmente a partir da
+posicao nova, sem travar nem repetir paginas.
+KEY2 (clique curto): confirmar que o ecra faz agora um refresh completo a
+piscar (nao um simples redesenho silencioso) e que "fantasmas" acumulados de
+paginas anteriores desaparecem.
+KEY2 (clique curto) a meio da leitura: confirmar que o botao continua a
+responder de imediato ao premir seguinte — o refresh completo de ~2s corre
+depois do redesenho, sem travar a fila de acoes do input.
