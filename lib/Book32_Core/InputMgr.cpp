@@ -4,6 +4,7 @@
 #include "AppMgr.h"
 #include "ButtonPressLogic.h"
 #include "StandbyGuard.h"
+#include "DisplayMgr.h"
 
 InputMgr::InputMgr() : btn(PIN_BUTTON, true, true), btnBack(PIN_BUTTON_BACK, true, true),
                        btnSleep(PIN_BUTTON_SLEEP, true, true) { // Active Low, Pullup
@@ -87,12 +88,17 @@ void InputMgr::update() {
         // it's consumed here instead of being dispatched. Every screen gets it
         // for free that way, including modals that would drop an unknown
         // action on the floor. forceRedraw() only sets the app's dirty flags;
-        // the repaint itself happens in the next AppMgr::draw(), which keeps
-        // the ~2s e-ink refresh off this code path.
+        // the repaint itself happens in the next AppMgr::draw(). The actual
+        // ghosting-clearing hard refresh is queued via requestFullRefresh()
+        // rather than called here directly — DisplayMgr::update() runs it
+        // after that draw(), in the same loop() iteration, so it acts on the
+        // fresh frame; calling the ~2s-blocking refresh() straight from this
+        // action-dequeue loop would stall input handling for it.
         if (action == INPUT_REFRESH) {
             Serial.println("INPUT: KEY2 Click -> FULL REFRESH");
             App* current = AppMgr::getInstance().getCurrentApp();
             if (current) current->forceRedraw();
+            DisplayMgr::getInstance().requestFullRefresh();
             continue;
         }
         Serial.printf("InputMgr::update() - dispatching action %d to callback\n", action);

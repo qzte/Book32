@@ -95,7 +95,15 @@ void DisplayMgr::clear() {
 }
 
 void DisplayMgr::fullRefresh() {
-    display.refresh(true); // Full update
+    // GxEPD2's refresh(bool partial_update_mode = false): false is the full
+    // update this function is named for, true is partial. This was inverted
+    // — refresh(true) — which made fullRefresh() silently do a partial
+    // update instead, defeating the point of a manual ghosting-clear.
+    display.refresh(false); // Full update
+}
+
+void DisplayMgr::requestFullRefresh() {
+    _pendingFullRefresh = true;
 }
 
 void DisplayMgr::showBootScreen(uint8_t progress, const char* status) {
@@ -152,5 +160,12 @@ void DisplayMgr::showBootScreen(uint8_t progress, const char* status) {
 }
 
 void DisplayMgr::update() {
-    // E-ink usually updates on demand, not every loop
+    // E-ink usually updates on demand, not every loop — the one exception is
+    // a full refresh queued by requestFullRefresh(), run here (after
+    // AppMgr::draw() in loop()) so it's the freshly drawn frame that gets
+    // the ghosting-clearing pass, not whatever was on screen before.
+    if (_pendingFullRefresh) {
+        _pendingFullRefresh = false;
+        fullRefresh();
+    }
 }

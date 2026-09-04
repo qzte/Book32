@@ -19,6 +19,13 @@ public:
 
     void clear();
     void fullRefresh();
+    // Queues a fullRefresh() for the next update() instead of doing it here:
+    // refresh(false) is a ~2s blocking e-ink cycle, and callers of this (KEY2
+    // click, from InputMgr's action-dequeue loop) must not stall waiting on
+    // it. update() runs it after AppMgr::draw() has already repainted the
+    // app's new content, so the hard refresh clears ghosting around what the
+    // user asked to see, not the stale frame from before the click.
+    void requestFullRefresh();
     void showBootScreen(uint8_t progress, const char* status);
 
     // Display orientation. Only the two portrait orientations are supported so
@@ -33,4 +40,5 @@ private:
     Book32Display display;
     bool _bootScreenActive = false;
     int _rotation = 3;  // Default: portrait, button on the left
+    bool _pendingFullRefresh = false;
 };
