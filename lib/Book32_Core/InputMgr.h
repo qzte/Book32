@@ -78,7 +78,6 @@ private:
     void onClick();
     void onDoubleClick();
     void onLongPress();
-    void onBackLongPress();
 
     // Handled inside InputMgr rather than dispatched to the active app, so
     // standby works everywhere including modal screens.
@@ -98,6 +97,5 @@ private:
     
     static void staticClick(void *ptr);
     static void staticDoubleClick(void *ptr);
-    static void staticLongPress(void *ptr);
-    static void staticBackLongPress(void *ptr);
+    static void staticLongPress(void* ptr);
 };
