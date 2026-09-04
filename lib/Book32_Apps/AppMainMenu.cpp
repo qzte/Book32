@@ -256,8 +256,27 @@ void AppMainMenu::handleInput(InputAction action) {
     }
     else if (action == INPUT_SELECT) {
         if (_updateAvailable && selectedIndex == (int)apps.size()) {
-            // Update selected
-             GitHubMgr::getInstance().triggerUpdate(SYSTEM_VERSION);
+            // Update selected. Run the full firmware+filesystem update on its own
+            // task with a large stack: doing this synchronously on the loop task
+            // (TLS + JSON parsing + SHA-256 + a 4KB download buffer) has overflowed
+            // the loop task's stack and reset the device mid-download.
+            xTaskCreatePinnedToCore(
+                [](void* param) {
+                    Serial.println("OTA task started");
+                    // On success this restarts the device internally and never returns.
+                    bool updated = GitHubMgr::getInstance().performFullUpdate(SYSTEM_VERSION);
+                    if (!updated) {
+                        Serial.println("OTA task: update failed or unavailable, returning to menu.");
+                    }
+                    vTaskDelete(NULL);
+                },
+                "OTA_Task",
+                16384, // 16KB stack
+                nullptr,
+                1, // Priority
+                nullptr,
+                1 // Core 1
+            );
         }
         else if (selectedIndex > 0 && selectedIndex < (int)apps.size()) {
             appMgr.switchTo(selectedIndex);
