@@ -91,7 +91,7 @@ cada visita (confirmar no monitor serie que nao ha reaberturas repetidas).
 EbookFS quase cheio: uma escrita de miniatura falhada nao deixa um .thumb a
 meio a ser lido como capa valida (o cabecalho tem de a apanhar).
 
-=== Capa em ecra inteiro na pagina de capa — a verificar no dispositivo ===
+=== v1.22.0 — a verificar no dispositivo (nao coberto pelos testes de host) ===
 (ver docs/plans/2026-09-04-capa-em-ecra-inteiro-design.md; a conversao esta
 coberta pelos testes de host e foi corrida ponta a ponta no PC, mas nada disto
 foi visto num e-ink real)
@@ -118,6 +118,12 @@ anterior.
 Memoria: com um livro grande aberto e a capa a ser convertida, confirmar no
 monitor serie que nao ha falhas de alocacao (o acumulador da conversao passou
 a viver na PSRAM).
+
+slim_epub: passar um EPUB de capa PNG pelo slim_epub.bat NUM PC SEM Pillow
+instalado e confirmar que a capa sobrevive ao processo (antes era apagada) e
+que o livro resultante mostra capa no dispositivo, na biblioteca e na pagina
+de capa. Livros que ja tinham sido processados sem capa tem de ser refeitos a
+partir do original — a capa nao esta la para recuperar.
 
 === Pos-limpeza de EpubLoader (getChapterContent, B32Reader, numeracao <ol>) — a verificar no dispositivo (nao coberto pelos testes de host) ===
 (ver docs/plans/2026-08-31-avaliacao-gestao-epub.md, itens 6 e 8; pio run nao
