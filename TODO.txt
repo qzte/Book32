@@ -354,3 +354,19 @@ paginas anteriores desaparecem.
 KEY2 (clique curto) a meio da leitura: confirmar que o botao continua a
 responder de imediato ao premir seguinte — o refresh completo de ~2s corre
 depois do redesenho, sem travar a fila de acoes do input.
+
+=== v1.24.0 — a verificar no dispositivo (nao coberto pelos testes de host) ===
+(ver PR #84 no GitHub)
+Correcao de bug: o botao "Actualizar" no menu principal e em Definicoes >
+Sistema reiniciava o dispositivo sem instalar a actualizacao (a chamada
+antiga so fazia flash do firmware, ignorava o asset da filesystem, e corria
+de forma sincrona na stack da tarefa do loop — a mesma combinacao que o
+platformio.ini ja documentava como tendo estourado essa stack antes). Passou
+a correr numa tarefa dedicada de 16KB, a chamar performFullUpdate()
+(firmware + filesystem), tal como o fluxo de OTA pela web UI ja fazia.
+Botao "Actualizar" no menu principal, com uma release que tem firmware.bin e
+littlefs.bin: seleccionar o icone e confirmar que ambos sao instalados e o
+dispositivo reinicia normalmente com a nova versao, sem reiniciar a meio do
+download/flash.
+Definicoes > Sistema > "Procurar actualizacao": confirmar o mesmo
+comportamento (nao so o reinicio sem efeito reportado anteriormente).
