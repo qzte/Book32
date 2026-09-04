@@ -87,20 +87,36 @@ static const int BOOK32_COVER_HEIGHT = 80;
 static const size_t BOOK32_COVER_THUMB_BYTES =
     (size_t)((BOOK32_COVER_WIDTH + 7) / 8) * (size_t)BOOK32_COVER_HEIGHT;
 
-// Cabeçalho do ficheiro de cache da miniatura, à frente dos bytes do bitmap.
+// Cabeçalho do ficheiro de cache de uma capa convertida, à frente dos bytes
+// do bitmap. Serve os dois tamanhos: a miniatura da biblioteca
+// (BOOK32_COVER_WIDTH x BOOK32_COVER_HEIGHT, em /covers/<nome>.thumb) e a capa
+// de ecrã inteiro que substitui a página de capa do EPUB (o tamanho do ecrã,
+// em /covers/<nome>.cover).
+//
 // Até à v1.20 o cache era o bitmap cru e a única validação era o tamanho do
 // ficheiro, o que tinha dois problemas: mudar o tamanho da caixa ou o
-// algoritmo de conversão deixava miniaturas velhas no ecrã para sempre, e o
+// algoritmo de conversão deixava capas velhas no ecrã para sempre, e o
 // marcador "este livro não tem capa" (ficheiro vazio) impedia que um livro
 // com capa PNG voltasse a ser tentado agora que PNG é suportado. Com versão
 // no cabeçalho, um cache de outra versão é apagado e regenerado sozinho.
 //
-// Formato (12 bytes, tudo em bytes soltos — sem depender do alinhamento de
-// nenhuma struct): "B32C", versão, boxW, boxH, fitX, fitY, fitW, fitH,
-// reservado. fitW = 0 marca "já tentado, sem capa" e o ficheiro acaba aqui.
-static const uint8_t BOOK32_COVER_CACHE_VERSION = 2;
-static const size_t BOOK32_COVER_HEADER_BYTES = 12;
-static const size_t BOOK32_COVER_FILE_BYTES = BOOK32_COVER_HEADER_BYTES + BOOK32_COVER_THUMB_BYTES;
+// Formato (18 bytes, tudo em bytes soltos — sem depender do alinhamento de
+// nenhuma struct): "B32C", versão, reservado, e depois boxW, boxH, fitX,
+// fitY, fitW, fitH em 16 bits little-endian cada. Os 16 bits são o que
+// distingue esta versão da anterior: uma caixa de 800 px não cabia no byte
+// que a v1.21 usava. fitW = 0 marca "já tentado, sem capa" e o ficheiro acaba
+// no cabeçalho.
+static const uint8_t BOOK32_COVER_CACHE_VERSION = 3;
+static const size_t BOOK32_COVER_HEADER_BYTES = 18;
+
+static inline uint16_t coverHeaderU16(const uint8_t* hdr, int offset) {
+    return (uint16_t)(hdr[offset] | ((uint16_t)hdr[offset + 1] << 8));
+}
+
+static inline size_t coverBitmapBytes(int boxW, int boxH) {
+    if (boxW <= 0 || boxH <= 0) return 0;
+    return (size_t)((boxW + 7) / 8) * (size_t)boxH;
+}
 
 // Estado de um ficheiro de cache: o suficiente para decidir entre desenhar a
 // capa, desenhar o ícone genérico, ou voltar a tentar extrair a capa.
@@ -110,14 +126,21 @@ struct CoverCacheInfo {
     CoverFit fit = {0, 0, 0, 0};
 };
 
-// Lê e valida o cabeçalho e, se `outBitmap` não for nulo e o ficheiro tiver
-// capa, os BOOK32_COVER_THUMB_BYTES do bitmap a seguir — numa só abertura do
-// ficheiro. Um ficheiro de outra versão, de outra caixa, truncado ou de
-// qualquer formato anterior devolve valid=false; quem chama apaga-o e trata o
-// livro como "por tentar".
-static CoverCacheInfo readCoverCacheInfo(const String& thumbPath, uint8_t* outBitmap = nullptr) {
+// Lê e valida o cabeçalho contra a caixa esperada (boxW x boxH) e, se
+// `outBitmap` não for nulo e o ficheiro tiver capa, os bytes do bitmap a
+// seguir — numa só abertura do ficheiro. `outBitmapCapacity` é o tamanho de
+// `outBitmap`, para nunca se ler mais do que o chamador alocou.
+//
+// Um ficheiro de outra versão, de outra caixa, truncado ou de qualquer
+// formato anterior devolve valid=false; quem chama apaga-o e trata o livro
+// como "por tentar".
+static CoverCacheInfo readCoverCacheInfo(const String& cachePath, int boxW, int boxH,
+                                         uint8_t* outBitmap = nullptr, size_t outBitmapCapacity = 0) {
     CoverCacheInfo info;
-    File f = EbookFS.open(thumbPath, FILE_READ);
+    const size_t bitmapBytes = coverBitmapBytes(boxW, boxH);
+    if (bitmapBytes == 0) return info;
+
+    File f = EbookFS.open(cachePath, FILE_READ);
     if (!f) return info;
 
     size_t fileSize = f.size();
@@ -129,14 +152,16 @@ static CoverCacheInfo readCoverCacheInfo(const String& thumbPath, uint8_t* outBi
     }
 
     if (hdr[0] != 'B' || hdr[1] != '3' || hdr[2] != '2' || hdr[3] != 'C' ||
-        hdr[4] != BOOK32_COVER_CACHE_VERSION || hdr[5] != BOOK32_COVER_WIDTH ||
-        hdr[6] != BOOK32_COVER_HEIGHT) {
+        hdr[4] != BOOK32_COVER_CACHE_VERSION || coverHeaderU16(hdr, 6) != (uint16_t)boxW ||
+        coverHeaderU16(hdr, 8) != (uint16_t)boxH) {
         f.close();
         return info;
     }
 
-    int fitW = hdr[9];
-    int fitH = hdr[10];
+    int fitX = coverHeaderU16(hdr, 10);
+    int fitY = coverHeaderU16(hdr, 12);
+    int fitW = coverHeaderU16(hdr, 14);
+    int fitH = coverHeaderU16(hdr, 16);
     if (fitW == 0 || fitH == 0) { // marcador "sem capa"
         info.valid = (fileSize == BOOK32_COVER_HEADER_BYTES);
         f.close();
@@ -144,49 +169,50 @@ static CoverCacheInfo readCoverCacheInfo(const String& thumbPath, uint8_t* outBi
     }
     // Truncado a meio de uma escrita, ou com um rectângulo que não cabe na
     // caixa (ficheiro adulterado): trata-se como cache inválido.
-    if (fileSize != BOOK32_COVER_FILE_BYTES || hdr[7] + fitW > BOOK32_COVER_WIDTH ||
-        hdr[8] + fitH > BOOK32_COVER_HEIGHT) {
+    if (fileSize != BOOK32_COVER_HEADER_BYTES + bitmapBytes || fitX + fitW > boxW || fitY + fitH > boxH) {
         f.close();
         return info;
     }
 
-    if (outBitmap && f.read(outBitmap, BOOK32_COVER_THUMB_BYTES) != BOOK32_COVER_THUMB_BYTES) {
-        f.close();
-        return info;
+    if (outBitmap) {
+        if (outBitmapCapacity < bitmapBytes || f.read(outBitmap, bitmapBytes) != bitmapBytes) {
+            f.close();
+            return info;
+        }
     }
     f.close();
 
     info.valid = true;
     info.hasCover = true;
-    info.fit = {hdr[7], hdr[8], fitW, fitH};
+    info.fit = {fitX, fitY, fitW, fitH};
     return info;
 }
 
 // Escreve o cache. `fit` com w/h a zero grava só o cabeçalho, que é o
 // marcador "já tentado, sem capa"; `bitmap` é ignorado nesse caso.
-static bool writeCoverCache(const String& thumbPath, const CoverFit& fit, const uint8_t* bitmap) {
-    uint8_t hdr[BOOK32_COVER_HEADER_BYTES] = {'B',
-                                              '3',
-                                              '2',
-                                              'C',
-                                              BOOK32_COVER_CACHE_VERSION,
-                                              (uint8_t)BOOK32_COVER_WIDTH,
-                                              (uint8_t)BOOK32_COVER_HEIGHT,
-                                              (uint8_t)fit.x,
-                                              (uint8_t)fit.y,
-                                              (uint8_t)fit.w,
-                                              (uint8_t)fit.h,
-                                              0};
-    File f = EbookFS.open(thumbPath, FILE_WRITE);
+static bool writeCoverCache(const String& cachePath, int boxW, int boxH, const CoverFit& fit,
+                            const uint8_t* bitmap) {
+    const size_t bitmapBytes = coverBitmapBytes(boxW, boxH);
+    if (bitmapBytes == 0) return false;
+
+    uint8_t hdr[BOOK32_COVER_HEADER_BYTES] = {'B', '3', '2', 'C', BOOK32_COVER_CACHE_VERSION, 0};
+    const uint16_t fields[6] = {(uint16_t)boxW,  (uint16_t)boxH,  (uint16_t)fit.x,
+                                (uint16_t)fit.y, (uint16_t)fit.w, (uint16_t)fit.h};
+    for (int i = 0; i < 6; i++) {
+        hdr[6 + i * 2] = (uint8_t)(fields[i] & 0xFF);
+        hdr[7 + i * 2] = (uint8_t)(fields[i] >> 8);
+    }
+
+    File f = EbookFS.open(cachePath, FILE_WRITE);
     if (!f) return false;
     bool ok = (f.write(hdr, sizeof(hdr)) == sizeof(hdr));
     if (ok && fit.w > 0 && fit.h > 0 && bitmap) {
-        ok = (f.write(bitmap, BOOK32_COVER_THUMB_BYTES) == BOOK32_COVER_THUMB_BYTES);
+        ok = (f.write(bitmap, bitmapBytes) == bitmapBytes);
     }
     f.close();
     // Uma escrita a meio (cartão cheio) deixaria um ficheiro que passa o
     // cabeçalho mas tem o bitmap cortado: apagar é melhor do que voltar a lê-lo.
-    if (!ok) EbookFS.remove(thumbPath);
+    if (!ok) EbookFS.remove(cachePath);
     return ok;
 }
 
@@ -195,11 +221,21 @@ static bool writeCoverCache(const String& thumbPath, const CoverFit& fit, const 
 // posição do último ponto, como a limpeza em WebMgr.cpp já faz ao apagar um
 // livro — mesma razão: String::replace(".epub") acertaria na primeira
 // ocorrência em qualquer sítio do nome, não só no fim.
-static String coverThumbPathFor(const String& bookPath) {
+static String coverCacheBaseFor(const String& bookPath) {
     String name = normalizedBookName(bookPath);
     int dot = name.lastIndexOf('.');
-    String base = (dot > 0) ? name.substring(0, dot) : name;
-    return "/covers/" + base + ".thumb";
+    return (dot > 0) ? name.substring(0, dot) : name;
+}
+
+static String coverThumbPathFor(const String& bookPath) {
+    return "/covers/" + coverCacheBaseFor(bookPath) + ".thumb";
+}
+
+// Capa de ecrã inteiro, para a página de capa do livro (ver
+// AppReader::drawFullScreenCover). ".cover" é a extensão que a limpeza de
+// WebMgr.cpp já apaga com o livro desde antes de existir esta funcionalidade.
+static String coverFullPathFor(const String& bookPath) {
+    return "/covers/" + coverCacheBaseFor(bookPath) + ".cover";
 }
 
 static String titleFromFilename(String name) {
@@ -396,7 +432,7 @@ void AppReader::scanBooks() {
             // hasProgress/totalPages abaixo, não em resolveNextBookCover().
             String thumbPath = coverThumbPathFor(entry.path);
             if (EbookFS.exists(thumbPath)) {
-                CoverCacheInfo info = readCoverCacheInfo(thumbPath);
+                CoverCacheInfo info = readCoverCacheInfo(thumbPath, BOOK32_COVER_WIDTH, BOOK32_COVER_HEIGHT);
                 if (info.valid) {
                     entry.coverAttempted = true;
                     entry.hasCoverThumb = info.hasCover;
@@ -595,7 +631,8 @@ void AppReader::resolveNextBookCover() {
                     // genérico — ver CoverImage.h.
                     if (decodeCoverToBitmap(imageData, imageSize, BOOK32_COVER_WIDTH, BOOK32_COVER_HEIGHT,
                                             bitmap, &fit)) {
-                        wroteCover = writeCoverCache(thumbPath, fit, bitmap);
+                        wroteCover =
+                            writeCoverCache(thumbPath, BOOK32_COVER_WIDTH, BOOK32_COVER_HEIGHT, fit, bitmap);
                     }
                 }
                 free(imageData);
@@ -609,7 +646,7 @@ void AppReader::resolveNextBookCover() {
         // ficheiro vazio da v1.19, traz a versão do pipeline, por isso uma
         // versão futura que saiba ler mais formatos volta a tentar este livro.
         CoverFit none = {0, 0, 0, 0};
-        writeCoverCache(thumbPath, none, nullptr);
+        writeCoverCache(thumbPath, BOOK32_COVER_WIDTH, BOOK32_COVER_HEIGHT, none, nullptr);
     }
 
     book.hasCoverThumb = wroteCover;
@@ -649,7 +686,8 @@ void AppReader::drawBookCoverThumb(Book32Display& display, const String& bookPat
     }
 
     uint8_t buf[BOOK32_COVER_THUMB_BYTES];
-    CoverCacheInfo info = readCoverCacheInfo(coverThumbPathFor(bookPath), buf);
+    CoverCacheInfo info = readCoverCacheInfo(coverThumbPathFor(bookPath), BOOK32_COVER_WIDTH,
+                                             BOOK32_COVER_HEIGHT, buf, sizeof(buf));
     if (!info.hasCover) {
         // Cache em falta, de outra versão ou truncado (livro apagado entre o
         // scan e este desenho, por exemplo): caixa vazia em vez de lixo.
@@ -662,6 +700,87 @@ void AppReader::drawBookCoverThumb(Book32Display& display, const String& bookPat
     // capa 2:3 não enche a caixa 3:4, e uma moldura à volta da caixa deixava
     // a capa a flutuar dentro de um rectângulo maior.
     display.drawRect(x + info.fit.x, y + info.fit.y, info.fit.w, info.fit.h, GxEPD_BLACK);
+}
+
+// --- Página de capa do livro -----------------------------------------------
+
+bool AppReader::isOnCoverPage() const {
+    // Só a primeira página do capítulo de capa: se o XHTML da capa trouxer
+    // texto que chegue para mais páginas (raro, mas acontece com créditos na
+    // mesma página), as seguintes continuam a ser desenhadas como texto.
+    return _coverChapterIndex >= 0 && _currentChapter == _coverChapterIndex && _pageHistory.empty();
+}
+
+bool AppReader::ensureFullScreenCover() {
+    if (!_epubLoader || _currentBookPath.length() == 0) return false;
+
+    DisplayMgr& dispMgr = DisplayMgr::getInstance();
+    Book32Display& display = dispMgr.getDisplay();
+    const int boxW = display.width();
+    const int boxH = display.height();
+    String coverPath = coverFullPathFor(_currentBookPath);
+
+    CoverCacheInfo cached = readCoverCacheInfo(coverPath, boxW, boxH);
+    if (cached.valid) return cached.hasCover;
+    if (EbookFS.exists(coverPath)) EbookFS.remove(coverPath); // versão/caixa anterior
+
+    // Uma tentativa por abertura do livro: se a descodificação falhar sem
+    // chegar a escrever o marcador (sem memória, por exemplo), não se repete
+    // a cada página desenhada.
+    if (_fullCoverAttempted) return false;
+    _fullCoverAttempted = true;
+
+    if (!EbookFS.exists("/covers")) EbookFS.mkdir("/covers");
+
+    bool wrote = false;
+    if (_epubLoader->hasCoverImage()) {
+        size_t imageSize = 0;
+        // Mesmo EpubLoader do livro aberto, não um segundo: o descritor do
+        // ZIP é global (ver zipFd em EpubLoader.cpp) e não aguenta dois.
+        uint8_t* imageData = _epubLoader->getCoverImageData(&imageSize);
+        if (imageData) {
+            if (imageSize > 0) {
+                const size_t bitmapBytes = coverBitmapBytes(boxW, boxH);
+                // 48 KB para um ecrã de 800x480: PSRAM, nunca a stack.
+                uint8_t* bitmap = (uint8_t*)ps_malloc(bitmapBytes);
+                if (!bitmap) bitmap = (uint8_t*)malloc(bitmapBytes);
+                if (bitmap) {
+                    CoverFit fit = {0, 0, 0, 0};
+                    if (decodeCoverToBitmap(imageData, imageSize, boxW, boxH, bitmap, &fit)) {
+                        wrote = writeCoverCache(coverPath, boxW, boxH, fit, bitmap);
+                    }
+                    free(bitmap);
+                }
+            }
+            free(imageData);
+        }
+    }
+
+    if (!wrote) {
+        // Marcador "sem capa de ecrã inteiro": nas aberturas seguintes deste
+        // livro nem se chega a abrir o ZIP.
+        CoverFit none = {0, 0, 0, 0};
+        writeCoverCache(coverPath, boxW, boxH, none, nullptr);
+    }
+    return wrote;
+}
+
+uint8_t* AppReader::loadFullScreenCoverBitmap(int screenW, int screenH) {
+    if (_currentBookPath.length() == 0) return nullptr;
+    const size_t bitmapBytes = coverBitmapBytes(screenW, screenH);
+    if (bitmapBytes == 0) return nullptr;
+
+    uint8_t* bitmap = (uint8_t*)ps_malloc(bitmapBytes);
+    if (!bitmap) bitmap = (uint8_t*)malloc(bitmapBytes);
+    if (!bitmap) return nullptr;
+
+    CoverCacheInfo info =
+        readCoverCacheInfo(coverFullPathFor(_currentBookPath), screenW, screenH, bitmap, bitmapBytes);
+    if (!info.hasCover) {
+        free(bitmap);
+        return nullptr;
+    }
+    return bitmap;
 }
 
 void AppReader::handleInput(InputAction action) {
@@ -767,7 +886,15 @@ bool AppReader::openBook(const String& path, bool restoreProgress) {
     // in the total a little at a time instead.
     _globalPageNumber = 1; // Start at page 1
     _currentPageRenderValid = false;
-    
+
+    // Qual o capítulo que é a página de capa (ver EpubLoader::
+    // findCoverChapterIndex). Resolve-se uma vez por abertura: sem <guide>
+    // no OPF chega a ler os primeiros capítulos do ZIP, o que não se pode
+    // fazer a cada página desenhada. A conversão da imagem em si fica para
+    // a primeira vez que a página de capa for mesmo mostrada.
+    _coverChapterIndex = _epubLoader->findCoverChapterIndex();
+    _fullCoverAttempted = false;
+
     int restoreChapter = 0;
     PagePointer restorePointer = {0, 0};
     int restorePage = 1;
@@ -918,6 +1045,8 @@ void AppReader::closeBook(bool markInactive) {
     if (_textRenderer) { delete _textRenderer; _textRenderer = nullptr; }
     _pageHistory.clear();
     _currentPageRenderValid = false;
+    _coverChapterIndex = -1;
+    _fullCoverAttempted = false;
 
     _indexer.reset();
 }
@@ -1064,7 +1193,13 @@ bool AppReader::loadChapter(int chapterIndex) {
     int totalChapters = _epubLoader->getChapterCount();
     for (int idx = chapterIndex; idx < totalChapters; idx++) {
         std::vector<ContentNode> content = _epubLoader->getChapterContentRich(idx);
-        if (content.size() > 0) {
+        // A página de capa de muitos EPUB é só um <img>, sem texto nenhum, e
+        // o salto de capítulos vazios abaixo passava-lhe por cima — era por
+        // isso que uns livros abriam na capa (a que traz a palavra "capa"
+        // como texto) e outros nem isso. Com a capa desenhada como imagem,
+        // esse capítulo tem conteúdo para mostrar mesmo sem texto.
+        bool coverPage = (idx == _coverChapterIndex && _epubLoader->hasCoverImage());
+        if (content.size() > 0 || coverPage) {
             _currentChapter = idx;
             _pageHistory.clear();
             _currentPagePointer = {0, 0};
@@ -1194,7 +1329,12 @@ void AppReader::prevChapter() {
             // has no renderable content (nav/cover/divider pages) just as
             // reliably as the old length-of-stripped-text check did.
             std::vector<ContentNode> chapterContent = _epubLoader->getChapterContentRich(tryChapter);
-            if (chapterContent.size() > 0) {
+            // Mesma excepção do loadChapter(): a página de capa conta como
+            // conteúdo mesmo sem texto, senão recuar do primeiro capítulo
+            // saltava-a — e a capa é justamente o sítio onde se espera
+            // aterrar ao recuar do início do livro.
+            bool coverPage = (tryChapter == _coverChapterIndex && _epubLoader->hasCoverImage());
+            if (chapterContent.size() > 0 || coverPage) {
                 loadChapter(tryChapter);
                 // D5: land on this chapter's LAST page instead of its
                 // first ("For now, we go to the start of the previous
@@ -1424,10 +1564,27 @@ void AppReader::drawReading() {
     
     // Page numbers: use _globalPageNumber which is tracked at runtime
     int currentPageNum = _pageHistory.size();  // For render cache key
-    
+
+    // Página de capa: a imagem em vez do XHTML da capa. O bitmap é lido uma
+    // vez, aqui, e não dentro do ciclo firstPage()/nextPage() — a GxEPD2 pode
+    // percorrer o ecrã em várias passagens, e ler 48 KB do LittleFS em cada
+    // uma seria desperdício. A conversão (ensureFullScreenCover) só acontece
+    // na primeira vez que esta página é mostrada em cada livro.
+    uint8_t* coverBits = nullptr;
+    if (isOnCoverPage() && ensureFullScreenCover()) {
+        coverBits = loadFullScreenCoverBitmap(display.width(), display.height());
+    }
+
     display.firstPage();
     do {
         display.fillScreen(GxEPD_WHITE);
+        if (coverBits) {
+            // Imagem sozinha: sem rodapé nem número de página, como num
+            // leitor comercial. O bitmap já vem do tamanho do ecrã, com a
+            // capa centrada e o resto branco (ver decodeCoverToBitmap).
+            display.drawBitmap(0, 0, coverBits, display.width(), display.height(), GxEPD_BLACK);
+            continue;
+        }
         _currentPageRender = _textRenderer->renderRichPageDynamic(display, _currentRichContent,
                                                                 _currentPagePointer.nodeIndex,
                                                                 _currentPagePointer.charOffset,
@@ -1449,6 +1606,15 @@ void AppReader::drawReading() {
         display.setCursor(display.width()/2 - (int)fw/2, display.height() - 15);
         display.print(footerText);
     } while (display.nextPage());
+
+    if (coverBits) {
+        free(coverBits);
+        // A página de capa não passou pelo renderizador, por isso não há
+        // render para reaproveitar: nextPage() volta a medir o capítulo, tal
+        // como faria numa página cujo cache tivesse sido invalidado. A
+        // paginação do livro fica exactamente como estava.
+        _currentPageRenderValid = false;
+    }
 }
 
 void AppReader::update() {

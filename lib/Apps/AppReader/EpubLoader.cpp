@@ -898,6 +898,39 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(const String& html) 
     return nodes;
 }
 
+// Quantos capítulos do início da spine se leem à procura da imagem de capa
+// (só quando o <guide> não resolve). Três chega para os EPUB reais: a página
+// de capa é praticamente sempre o primeiro item da spine, às vezes o segundo
+// depois de um nav.xhtml.
+static const int BOOK32_COVER_CHAPTER_SEARCH_LIMIT = 3;
+
+int EpubLoader::findCoverChapterIndex() {
+    for (size_t i = 0; i < chapterGuideType.size(); i++) {
+        if (chapterGuideType[i] == "cover") return (int)i;
+    }
+    if (coverHref.length() == 0) return -1;
+
+    // Compara-se só o nome do ficheiro: o href dentro do XHTML da capa é
+    // relativo à pasta desse XHTML ("../Images/capa.jpg"), enquanto coverHref
+    // é relativo à raiz do OPF — os caminhos completos não batem certo, o
+    // nome do ficheiro bate.
+    String imageName = coverHref;
+    int slash = imageName.lastIndexOf('/');
+    if (slash >= 0) imageName = imageName.substring(slash + 1);
+    if (imageName.length() == 0) return -1;
+
+    int limit = (int)spine.size();
+    if (limit > BOOK32_COVER_CHAPTER_SEARCH_LIMIT) limit = BOOK32_COVER_CHAPTER_SEARCH_LIMIT;
+    for (int i = 0; i < limit; i++) {
+        String fullPath = rootDir + spine[i].href;
+        if (fullPath.startsWith("./")) fullPath = fullPath.substring(2);
+        String html = readFileFromZip(fullPath.c_str());
+        if (html.length() == 0) continue;
+        if (html.indexOf(imageName) != -1) return i;
+    }
+    return -1;
+}
+
 std::vector<ContentNode> EpubLoader::getChapterContentRich(int index) {
     if(index < 0 || index >= (int)spine.size()) return std::vector<ContentNode>();
     String href = spine[index].href;

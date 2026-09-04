@@ -146,6 +146,23 @@ public:
     // este método só expõe o valor cru do OPF.
     String getChapterGuideType(int index) const;
 
+    // Índice do capítulo da spine que É a página de capa do livro — aquele
+    // que um leitor comercial mostra como imagem em vez de como texto. -1
+    // quando o livro não tem página de capa identificável.
+    //
+    // Duas formas, por esta ordem:
+    //
+    //   1. `<guide><reference type="cover" href="...">` (EPUB2), que já está
+    //      lido em chapterGuideType e não custa I/O nenhum;
+    //   2. o primeiro capítulo do início da spine cujo HTML refira o ficheiro
+    //      da imagem de capa (getCoverImageData). É o que apanha os EPUB3
+    //      puros, que não têm <guide> nenhum.
+    //
+    // A segunda forma lê alguns capítulos do ZIP, por isso limita-se aos
+    // primeiros da spine: uma página de capa que apareça a meio do livro não
+    // é uma página de capa.
+    int findCoverChapterIndex();
+
     // Font support
     std::vector<FontInfo> getFonts();
     uint8_t* getFontData(String path, size_t* outSize);
