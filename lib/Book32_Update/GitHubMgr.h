@@ -32,7 +32,6 @@ public:
     bool performFilesystemUpdate(const char* url, bool restartAfter = true, int step = 0, int totalSteps = 0,
                                  const char* expectedSha256 = nullptr, const char* expectedEd25519Sig = nullptr);
     bool performFullUpdate(const char* currentVersion);
-    void triggerUpdate(const char* currentVersion);
 
 private:
     GitHubMgr();

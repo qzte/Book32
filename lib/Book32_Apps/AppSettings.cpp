@@ -340,7 +340,25 @@ void AppSettings::handleInput(InputAction action) {
                     if (info.available) {
                         // Persist edits first: the update reboots the device.
                         saveDraftIfDirty();
-                        GitHubMgr::getInstance().triggerUpdate(SYSTEM_VERSION);
+                        // Run the full firmware+filesystem update on its own task with
+                        // a large stack: doing this synchronously on the loop task has
+                        // overflowed the loop task's stack and reset the device mid-update.
+                        xTaskCreatePinnedToCore(
+                            [](void* param) {
+                                Serial.println("OTA task started");
+                                bool updated = GitHubMgr::getInstance().performFullUpdate(SYSTEM_VERSION);
+                                if (!updated) {
+                                    Serial.println("OTA task: update failed or unavailable, returning to menu.");
+                                }
+                                vTaskDelete(NULL);
+                            },
+                            "OTA_Task",
+                            16384,  // 16KB stack
+                            nullptr,
+                            1,      // Priority
+                            nullptr,
+                            1       // Core 1
+                        );
                     } else {
                         setStatus("Ja tem a versao mais recente.");
                     }
