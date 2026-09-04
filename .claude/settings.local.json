@@ -46,7 +46,8 @@
       "Bash(python -m platformio run --target buildfs)",
       "Bash(python -c \"import PIL; print\\('pillow ok'\\)\")",
       "Bash(kill %1)",
-      "Bash(pkill -f \"http.server 8899\")"
+      "Bash(pkill -f \"http.server 8899\")",
+      "Bash(git push *)"
     ]
   }
 }
