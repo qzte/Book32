@@ -2,6 +2,8 @@
 #include "WordFitLogic.h"
 #include "HyphenationLogic.h"
 #include "LineBreaker.h"
+#include "CoverImage.h"
+#include "ImageDither.h"
 
 TextRenderer::TextRenderer(int width, int height, int fontSize) {
     _width = width;
@@ -128,12 +130,12 @@ const GFXfont* TextRenderer::getGFXFont(TextStyle style, int& lineHeight) {
 RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display,
                                                  const std::vector<ContentNode>& content, int startNode,
                                                  int startOffset, int pageNum, int pageNumForDisplay,
-                                                 bool draw) {
+                                                 bool draw, EpubLoader* loader) {
     if (draw) {
         display.setTextColor(GxEPD_BLACK);
     }
 
-    if (draw && _cachedPage == pageNum && !_lineCache.empty() && _hasCachedResult) {
+    if (draw && _cachedPage == pageNum && !_lineCache.empty() && _hasCachedResult && !_cachedHasImage) {
         for (const auto& line : _lineCache) {
             int unused;
             display.setFont(getGFXFont((TextStyle)line.fontSize, unused));
@@ -165,6 +167,9 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display,
     // hyphenating again — two hyphenated line ends in a row reads worse than
     // an occasional wider gap. Cleared again on that next decision either way.
     bool justHyphenated = false;
+    // Set once an image actually lands on this page; feeds _cachedHasImage
+    // below so a later same-page cache-hit redraw doesn't skip it.
+    bool pageHasImage = false;
 
     while (currentNode < (int)content.size() && y < maxY) {
         if (content[currentNode].type == CONTENT_TEXT) {
@@ -177,8 +182,24 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display,
                 result.nextCharOffset = nodeFull.nextCharOffset;
                 _cachedResult = result;
                 _hasCachedResult = true;
+                _cachedHasImage = pageHasImage;
                 return result;
             }
+        } else if (content[currentNode].type == CONTENT_IMAGE) {
+            if (renderImageNode(display, content[currentNode], y, maxY, currentX, line_width, draw, loader)) {
+                // Doesn't fit in what's left of this page: the whole node
+                // (never partially drawn, unlike a text node) moves to the
+                // next page.
+                result.pageFull = true;
+                result.charsConsumedInLastNode = 0;
+                result.nextNodeIndex = currentNode;
+                result.nextCharOffset = 0;
+                _cachedResult = result;
+                _hasCachedResult = true;
+                _cachedHasImage = pageHasImage;
+                return result;
+            }
+            pageHasImage = true;
         }
         currentNode++;
         currentOffset = 0;
@@ -203,6 +224,7 @@ RenderResult TextRenderer::renderRichPageDynamic(Book32Display& display,
     // Page number drawing moved to AppReader for consistency
     _cachedResult = result;
     _hasCachedResult = true;
+    _cachedHasImage = pageHasImage;
     return result;
 }
 
@@ -483,5 +505,81 @@ bool TextRenderer::renderTextNode(Book32Display& display, const std::vector<Cont
         y += 10;
     }
 
+    return false;
+}
+
+// Lays out (and, when draw, draws) one CONTENT_IMAGE node — see the
+// TextRenderer.h header comment for the full contract.
+bool TextRenderer::renderImageNode(Book32Display& display, const ContentNode& node, int& y, int maxY,
+                                   int& currentX, int& line_width, bool draw, EpubLoader* loader) {
+    const int x_margin = 35;
+    const ImageNode& img = node.imageNode;
+
+    // Probe the natural size once (cached on the node itself, see the
+    // `mutable` fields in EpubLoader.h) so repeated passes over the same
+    // chapter — measurement scans, a same-page redraw — don't reopen the ZIP
+    // just to find out how tall the image is.
+    if (!img.probed) {
+        img.probed = true;
+        if (loader && img.zipPath.length() > 0) {
+            size_t size = 0;
+            uint8_t* data = loader->getFontData(img.zipPath, &size);
+            if (data) {
+                if (size > 0) probeImageDimensions(data, size, &img.naturalWidth, &img.naturalHeight);
+                free(data);
+            }
+        }
+    }
+
+    // An image always starts its own line, like a block element: flush
+    // whatever text line was in progress first.
+    if (line_width > 0) {
+        y += _lineHeight;
+        line_width = 0;
+    }
+    currentX = x_margin;
+
+    if (img.naturalWidth <= 0 || img.naturalHeight <= 0) {
+        // Couldn't read the file — missing from the archive, a format
+        // decodeCoverToBitmap doesn't recognize, or corrupt. Same fail-open
+        // contract as the cover: the book keeps reading, just without this
+        // one illustration, instead of stalling or dropping the chapter.
+        return false;
+    }
+
+    const int boxW = _width - 2 * x_margin;
+    const int boxTop = 40;
+    const int boxHFull = maxY - boxTop; // an empty page always has room for it
+    book32::FitRect fit = book32::fitInsideBox(img.naturalWidth, img.naturalHeight, boxW, boxHFull);
+    if (fit.w <= 0 || fit.h <= 0) return false;
+
+    if (y + fit.h > maxY && y > boxTop) {
+        // Doesn't fit in what's left of this page, and the page already has
+        // something on it: move the whole image to the next page instead of
+        // clipping it (unlike a text node, an image is never drawn partway).
+        return true;
+    }
+
+    if (draw) {
+        size_t size = 0;
+        uint8_t* data = loader ? loader->getFontData(img.zipPath, &size) : nullptr;
+        if (data) {
+            if (size > 0) {
+                const size_t bitmapBytes = (size_t)((fit.w + 7) / 8) * (size_t)fit.h;
+                uint8_t* bitmap = (uint8_t*)ps_malloc(bitmapBytes);
+                if (!bitmap) bitmap = (uint8_t*)malloc(bitmapBytes);
+                if (bitmap) {
+                    if (decodeCoverToBitmap(data, size, fit.w, fit.h, bitmap, nullptr)) {
+                        int drawX = x_margin + (boxW - fit.w) / 2;
+                        display.drawBitmap(drawX, y, bitmap, fit.w, fit.h, GxEPD_BLACK);
+                    }
+                    free(bitmap);
+                }
+            }
+            free(data);
+        }
+    }
+
+    y += fit.h + 12; // breathing room before whatever follows
     return false;
 }

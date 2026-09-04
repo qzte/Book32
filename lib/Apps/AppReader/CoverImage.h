@@ -50,4 +50,11 @@ struct CoverFit {
 bool decodeCoverToBitmap(const uint8_t* data, size_t size, int boxW, int boxH, uint8_t* outBuffer,
                          CoverFit* outFit);
 
+// Lê só a largura/altura nativas de `data` (JPEG ou PNG), sem descodificar
+// pixel nenhum — usa-se para reservar o espaço vertical de uma ilustração no
+// meio de um capítulo antes de decidir se vale a pena (e quando) pagar o
+// custo do decodeCoverToBitmap completo. false nos mesmos casos que
+// decodeCoverToBitmap (formato não reconhecido, ficheiro corrompido).
+bool probeImageDimensions(const uint8_t* data, size_t size, int* outWidth, int* outHeight);
+
 #endif
