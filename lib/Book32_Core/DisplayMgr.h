@@ -13,7 +13,7 @@ public:
     static DisplayMgr& getInstance();
     
     void init();
-    void update(); // Handles partial updates if needed
+    void update(); // Runs a full refresh queued by requestFullRefresh(), if any
 
     Book32Display& getDisplay() { return display; }
 
