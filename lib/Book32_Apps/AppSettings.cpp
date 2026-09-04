@@ -348,16 +348,17 @@ void AppSettings::handleInput(InputAction action) {
                                 Serial.println("OTA task started");
                                 bool updated = GitHubMgr::getInstance().performFullUpdate(SYSTEM_VERSION);
                                 if (!updated) {
-                                    Serial.println("OTA task: update failed or unavailable, returning to menu.");
+                                    Serial.println(
+                                        "OTA task: update failed or unavailable, returning to menu.");
                                 }
                                 vTaskDelete(NULL);
                             },
                             "OTA_Task",
-                            16384,  // 16KB stack
+                            16384, // 16KB stack
                             nullptr,
-                            1,      // Priority
+                            1, // Priority
                             nullptr,
-                            1       // Core 1
+                            1 // Core 1
                         );
                     } else {
                         setStatus("Ja tem a versao mais recente.");

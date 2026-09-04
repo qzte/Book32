@@ -33,7 +33,7 @@ public:
                                  const char* expectedSha256 = nullptr, const char* expectedEd25519Sig = nullptr);
     bool performFullUpdate(const char* currentVersion);
 
-private:
+  private:
     GitHubMgr();
 
     // Corpo partilhado pelos dois performXxxUpdate(). As duas variantes eram

@@ -271,11 +271,11 @@ void AppMainMenu::handleInput(InputAction action) {
                     vTaskDelete(NULL);
                 },
                 "OTA_Task",
-                16384,  // 16KB stack
+                16384, // 16KB stack
                 nullptr,
-                1,      // Priority
+                1, // Priority
                 nullptr,
-                1       // Core 1
+                1 // Core 1
             );
         }
         else if (selectedIndex > 0 && selectedIndex < (int)apps.size()) {
