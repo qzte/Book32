@@ -151,6 +151,7 @@ void loop() {
     InputMgr::getInstance().update();
     AppMgr::getInstance().update();
     AppMgr::getInstance().draw();  // Trigger app rendering
+    DisplayMgr::getInstance().update(); // Runs a queued KEY2 full refresh, if any
     WebMgr::getInstance().update();
     BatteryMgr::getInstance().update();  // Check charging state and critical battery
 
