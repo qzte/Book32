@@ -123,6 +123,30 @@ private:
     // chamada só quando BookEntry::hasCoverThumb é true.
     void drawBookCoverThumb(Book32Display& display, const String& bookPath, int x, int y, int w, int h);
 
+    // Página de capa do livro aberto: em vez do XHTML da capa (que é só um
+    // <img>, e o leitor não desenha imagens dentro do texto — sai uma página
+    // quase vazia, muitas vezes só com a palavra "capa"), desenha-se a
+    // imagem de capa a ocupar o ecrã.
+    //
+    // Índice do capítulo que é a página de capa, resolvido uma vez em
+    // openBook() por EpubLoader::findCoverChapterIndex(); -1 quando o livro
+    // não tem página de capa identificável.
+    int _coverChapterIndex = -1;
+    // Já se tentou converter a capa de ecrã inteiro deste livro nesta
+    // abertura: evita repetir uma descodificação falhada a cada desenho. O
+    // resultado positivo persiste à parte, no próprio /covers/<nome>.cover.
+    bool _fullCoverAttempted = false;
+    // true quando a página actual é a página de capa e há capa para mostrar.
+    bool isOnCoverPage() const;
+    // Garante que /covers/<nome>.cover existe para o livro aberto,
+    // convertendo a imagem uma vez (é o passo caro). false = este livro não
+    // vai ter capa de ecrã inteiro.
+    bool ensureFullScreenCover();
+    // Lê o bitmap da capa de ecrã inteiro para um buffer novo (PSRAM), do
+    // tamanho exacto do ecrã. Quem chama liberta-o com free(). nullptr se
+    // não houver capa válida em cache.
+    uint8_t* loadFullScreenCoverBitmap(int screenW, int screenH);
+
     // Settings
     int _refreshEveryNPages;
     int _pageTurnsSinceRefresh;

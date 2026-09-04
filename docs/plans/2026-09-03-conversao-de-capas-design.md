@@ -143,5 +143,7 @@ caminho de ficheiro.
 
 - Tamanho da caixa e layout do item da biblioteca.
 - Capa em grande (ecrã inteiro) ao abrir um livro — os `.cover`/`.cover2`
-  que o `WebMgr.cpp` já limpa continuam por implementar.
+  que o `WebMgr.cpp` já limpa continuam por implementar. (Feito depois, em
+  [2026-09-04-capa-em-ecra-inteiro-design.md](2026-09-04-capa-em-ecra-inteiro-design.md);
+  `.cover2` continua por usar.)
 - Imagens dentro do texto do livro: o leitor continua a ser só texto.

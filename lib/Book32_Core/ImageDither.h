@@ -1,10 +1,15 @@
 #ifndef IMAGE_DITHER_H
 #define IMAGE_DITHER_H
 
-#include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include <vector>
+
+#if defined(ESP32) || defined(ARDUINO_ARCH_ESP32)
+#include <esp_heap_caps.h>
+#define BOOK32_IMAGE_DITHER_HAS_PSRAM 1
+#endif
 
 // Book32 — conversão de imagem (capas de EPUB) para o 1bpp do e-ink.
 //
@@ -67,19 +72,37 @@ inline FitRect fitInsideBox(int srcW, int srcH, int boxW, int boxH) {
 // deitada fora, ao contrário da amostragem por vizinho mais próximo.
 class GrayBoxScaler {
   public:
-    GrayBoxScaler() : _srcW(0), _srcH(0), _dstW(0), _dstH(0) {}
+    GrayBoxScaler() : _sum(nullptr), _count(nullptr), _srcW(0), _srcH(0), _dstW(0), _dstH(0) {}
+    ~GrayBoxScaler() {
+        release();
+    }
+    GrayBoxScaler(const GrayBoxScaler&) = delete;
+    GrayBoxScaler& operator=(const GrayBoxScaler&) = delete;
 
     // Devolve false (e deixa o objecto inutilizável) para dimensões inválidas
     // ou se a alocação falhar — um EPUB do utilizador não pode travar aqui.
+    //
+    // Os dois vectores são alocados à mão em vez de com std::vector porque
+    // uma capa de ecrã inteiro (320x480 células) pede perto de 1 MB: no
+    // dispositivo isso não cabe na RAM interna, e um std::vector que falha
+    // aborta o programa (as excepções estão desligadas no Arduino-ESP32) em
+    // vez de devolver false. Com ps_malloc a memória vem da PSRAM, que é onde
+    // o resto da conversão já trabalha, e uma falha é só um livro sem capa.
     bool begin(int srcW, int srcH, int dstW, int dstH) {
-        _srcW = _srcH = _dstW = _dstH = 0;
+        release();
         if (srcW <= 0 || srcH <= 0 || dstW <= 0 || dstH <= 0) return false;
         size_t cells = (size_t)dstW * (size_t)dstH;
-        _sum.clear();
-        _count.clear();
-        _sum.resize(cells, 0);
-        _count.resize(cells, 0);
-        if (_sum.size() != cells || _count.size() != cells) return false;
+        if (cells > SIZE_MAX / sizeof(uint32_t)) return false;
+
+        _sum = (uint32_t*)allocLarge(cells * sizeof(uint32_t));
+        _count = (uint16_t*)allocLarge(cells * sizeof(uint16_t));
+        if (!_sum || !_count) {
+            release();
+            return false;
+        }
+        memset(_sum, 0, cells * sizeof(uint32_t));
+        memset(_count, 0, cells * sizeof(uint16_t));
+
         _srcW = srcW;
         _srcH = srcH;
         _dstW = dstW;
@@ -193,6 +216,22 @@ class GrayBoxScaler {
     }
 
   private:
+    static void* allocLarge(size_t bytes) {
+#ifdef BOOK32_IMAGE_DITHER_HAS_PSRAM
+        void* p = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM);
+        if (p) return p;
+#endif
+        return malloc(bytes);
+    }
+
+    void release() {
+        if (_sum) free(_sum);
+        if (_count) free(_count);
+        _sum = nullptr;
+        _count = nullptr;
+        _srcW = _srcH = _dstW = _dstH = 0;
+    }
+
     bool rowHasSamples(int y) const {
         const uint16_t* rowCount = &_count[(size_t)y * _dstW];
         for (int x = 0; x < _dstW; x++) {
@@ -201,8 +240,8 @@ class GrayBoxScaler {
         return false;
     }
 
-    std::vector<uint32_t> _sum;
-    std::vector<uint16_t> _count;
+    uint32_t* _sum;
+    uint16_t* _count;
     int _srcW, _srcH, _dstW, _dstH;
 };
 

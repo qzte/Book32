@@ -91,6 +91,34 @@ cada visita (confirmar no monitor serie que nao ha reaberturas repetidas).
 EbookFS quase cheio: uma escrita de miniatura falhada nao deixa um .thumb a
 meio a ser lido como capa valida (o cabecalho tem de a apanhar).
 
+=== Capa em ecra inteiro na pagina de capa — a verificar no dispositivo ===
+(ver docs/plans/2026-09-04-capa-em-ecra-inteiro-design.md; a conversao esta
+coberta pelos testes de host e foi corrida ponta a ponta no PC, mas nada disto
+foi visto num e-ink real)
+Abrir um livro cuja pagina de capa era a tal "pagina a dizer capa": passa a
+mostrar a imagem a ocupar o ecra, centrada, sem rodape nem numero de pagina.
+E o primeiro ponto.
+Abrir um livro cuja pagina de capa e SO uma imagem (sem texto): antes era
+saltada e o livro abria no primeiro capitulo; confirmar que agora aparece.
+Primeira vez que a capa e mostrada: confirmar quanto tempo o leitor fica
+parado a converter a imagem (uma vez por livro, fica em /covers/<nome>.cover)
+e se isso e aceitavel ou se deve passar para segundo plano.
+Avancar da capa (KEY3): vai para a pagina seguinte do livro sem saltar nada e
+sem numeros de pagina trocados. Recuar (KEY1) do inicio do primeiro capitulo:
+volta a aterrar na capa.
+Fechar e reabrir o livro na capa: aparece logo, sem reconverter.
+Livro sem capa nenhuma no EPUB: nada muda — abre no primeiro capitulo como
+sempre, sem pagina em branco pelo meio.
+Livro com uma capa que a conversao recusa (PNG entrelacado, capa gigante):
+confirmar que a pagina de capa nao fica em branco sem rodape — deve cair para
+o desenho de texto normal.
+Biblioteca: as miniaturas da v1.21 sao apagadas e reconvertidas sozinhas
+(cabecalho de cache subiu para a versao 3), como ja aconteceu na subida
+anterior.
+Memoria: com um livro grande aberto e a capa a ser convertida, confirmar no
+monitor serie que nao ha falhas de alocacao (o acumulador da conversao passou
+a viver na PSRAM).
+
 === Pos-limpeza de EpubLoader (getChapterContent, B32Reader, numeracao <ol>) — a verificar no dispositivo (nao coberto pelos testes de host) ===
 (ver docs/plans/2026-08-31-avaliacao-gestao-epub.md, itens 6 e 8; pio run nao
 correu neste ambiente, so revisao manual do diff — mudanca em codigo Arduino,
