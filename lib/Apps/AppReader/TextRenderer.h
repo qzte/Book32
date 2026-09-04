@@ -61,9 +61,15 @@ public:
 
     void calculateDimensions();
 
-    // New Dynamic Rendering
-    RenderResult renderRichPageDynamic(Book32Display& display, const std::vector<ContentNode>& content, 
-                                     int startNode, int startOffset, int pageNum, int pageNumForDisplay, bool draw = true);
+    // New Dynamic Rendering. `loader`, when not null, is the EpubLoader the
+    // content came from — needed to read an in-chapter image's bytes out of
+    // the EPUB zip (see renderImageNode() in TextRenderer.cpp). A caller that
+    // never passes CONTENT_IMAGE nodes (or doesn't have the loader handy) can
+    // leave it null: image nodes then just measure as zero-height and are
+    // skipped, same as an unrecognized node type always has been.
+    RenderResult renderRichPageDynamic(Book32Display& display, const std::vector<ContentNode>& content,
+                                       int startNode, int startOffset, int pageNum, int pageNumForDisplay,
+                                       bool draw = true, EpubLoader* loader = nullptr);
 
     void clearCache();
 
@@ -78,7 +84,13 @@ private:
     int _cachedPage = -1;
     RenderResult _cachedResult = {0, 0, false, 0, 0};
     bool _hasCachedResult = false;
-    
+    // true when the cached page includes a drawn image: _lineCache only ever
+    // records text runs (see renderTextNode's _lineCache.push_back sites), so
+    // the draw-from-cache fast path in renderRichPageDynamic would silently
+    // drop the image on a same-page redraw. Bypasses the fast path for that
+    // page instead — a full recompute is the only way to redraw an image.
+    bool _cachedHasImage = false;
+
     // Fast character width cache.
     // 256 entries: covers ASCII + Latin-1 Supplement (must match the glyph
     // range of the fonts, 0x20-0xFF, or word-wrap widths silently break).
@@ -94,6 +106,15 @@ private:
     bool renderTextNode(Book32Display& display, const std::vector<ContentNode>& content, int currentNode,
                         int currentOffset, int& y, int maxY, int& currentX, int& line_width,
                         bool& justHyphenated, bool draw, RenderResult& full);
+
+    // Lays out (and, when draw, draws) one CONTENT_IMAGE node as a block that
+    // owns its own line, sized to fit the text column without changing the
+    // book's aspect ratio. Returns true when the image doesn't fit in what's
+    // left of the current page and the whole node must move to the next page
+    // (mirrors renderTextNode's "page full" contract, but never partially
+    // consumes an image — it's atomic).
+    bool renderImageNode(Book32Display& display, const ContentNode& node, int& y, int maxY, int& currentX,
+                         int& line_width, bool draw, EpubLoader* loader);
 };
 
 #endif

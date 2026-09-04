@@ -321,6 +321,52 @@ bool looksLikePng(const uint8_t* d, size_t n) {
 
 } // namespace
 
+bool probeImageDimensions(const uint8_t* data, size_t size, int* outWidth, int* outHeight) {
+    if (!data || size == 0 || !outWidth || !outHeight) return false;
+    *outWidth = 0;
+    *outHeight = 0;
+
+    if (looksLikeJpeg(data, size)) {
+        JPEGDEC* jpg = new (std::nothrow) JPEGDEC(); // heap, not stack — see decodeJpegToScaler() above
+        if (!jpg) return false;
+        if (!jpg->openRAM(const_cast<uint8_t*>(data), (int)size, jpegDrawCallback)) {
+            delete jpg;
+            return false;
+        }
+        int w = jpg->getWidth();
+        int h = jpg->getHeight();
+        jpg->close();
+        delete jpg;
+        if (w <= 0 || h <= 0) return false;
+        *outWidth = w;
+        *outHeight = h;
+        return true;
+    }
+
+    if (looksLikePng(data, size)) {
+        void* raw = ps_malloc(sizeof(PNG));
+        if (!raw) raw = malloc(sizeof(PNG));
+        if (!raw) return false;
+        PNG* png = new (raw) PNG();
+        if (png->openRAM(const_cast<uint8_t*>(data), (int)size, pngDrawCallback) != PNG_SUCCESS) {
+            png->~PNG();
+            free(raw);
+            return false;
+        }
+        int w = png->getWidth();
+        int h = png->getHeight();
+        png->close();
+        png->~PNG();
+        free(raw);
+        if (w <= 0 || h <= 0) return false;
+        *outWidth = w;
+        *outHeight = h;
+        return true;
+    }
+
+    return false;
+}
+
 bool decodeCoverToBitmap(const uint8_t* data, size_t size, int boxW, int boxH, uint8_t* outBuffer,
                          CoverFit* outFit) {
     if (!data || size == 0 || !outBuffer || boxW <= 0 || boxH <= 0) return false;

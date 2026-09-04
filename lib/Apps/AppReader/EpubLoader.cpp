@@ -568,7 +568,7 @@ static String spanToString(const char* s, size_t len) {
     return r;
 }
 
-std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(const String& html) {
+std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(const String& html, const String& chapterDir) {
     std::vector<ContentNode> nodes;
     std::vector<TextStyle> styleStack;
     styleStack.push_back(STYLE_NORMAL);
@@ -806,7 +806,23 @@ std::vector<ContentNode> EpubLoader::parseHtmlToRichContent(const String& html) 
             int skipEnd = html.indexOf("</" + tagName + ">", (int)start);
             if (skipEnd != -1) tok.seekTo((size_t)skipEnd + tagName.length() + 3);
         } else if (htmlTagEquals(t, "img") || htmlTagEquals(t, "image")) {
-            // Skip self-closing image tags - nothing to do for them.
+            // <img src="..."> only — inline SVG's <image xlink:href="...">
+            // never reaches here, the whole <svg>...</svg> block above it is
+            // skipped wholesale. The bare "image" check stays for the rare
+            // non-SVG use, and falls through to the same no-op as before if
+            // it has no plain src.
+            size_t srcLen = 0;
+            const char* srcVal = htmlFindAttribute(t.attrs, t.attrsLen, "src", &srcLen);
+            String src = srcVal ? spanToString(srcVal, srcLen) : String();
+            String zipPath = resolveRelativePath(chapterDir, src);
+            if (zipPath.length() > 0) {
+                ContentNode node;
+                node.type = CONTENT_IMAGE;
+                node.imageNode.zipPath = zipPath;
+                node.textNode.isBlockStart = true;
+                nodes.push_back(node);
+                nextIsBlockStart = true;
+            }
         } else if (htmlTagEquals(t, "br")) {
             // D3: appending "\n" here did nothing useful — the renderer's
             // word-wrap treats '\n' as plain whitespace (isspace()), so a
@@ -937,7 +953,36 @@ std::vector<ContentNode> EpubLoader::getChapterContentRich(int index) {
     String fullPath = rootDir + href;
     if(fullPath.startsWith("./")) fullPath = fullPath.substring(2);
     String content = readFileFromZip(fullPath.c_str());
-    return parseHtmlToRichContent(content);
+    int slash = fullPath.lastIndexOf('/');
+    String chapterDir = slash >= 0 ? fullPath.substring(0, slash + 1) : "";
+    return parseHtmlToRichContent(content, chapterDir);
+}
+
+String EpubLoader::resolveRelativePath(const String& baseDir, const String& href) {
+    if (href.length() == 0) return "";
+    if (href.startsWith("http://") || href.startsWith("https://") || href.startsWith("data:")) return "";
+
+    String combined = baseDir + href;
+    std::vector<String> segments;
+    int start = 0;
+    while (start <= (int)combined.length()) {
+        int slash = combined.indexOf('/', start);
+        String seg = (slash == -1) ? combined.substring(start) : combined.substring(start, slash);
+        if (seg == "..") {
+            if (!segments.empty()) segments.pop_back();
+        } else if (seg.length() > 0 && seg != ".") {
+            segments.push_back(seg);
+        }
+        if (slash == -1) break;
+        start = slash + 1;
+    }
+
+    String result;
+    for (size_t i = 0; i < segments.size(); i++) {
+        if (i > 0) result += "/";
+        result += segments[i];
+    }
+    return result;
 }
 
 // Tecto do título devolvido por getChapterTitle: um cabeçalho HTML pode, na

@@ -1236,7 +1236,7 @@ void AppReader::paginateAll(const std::vector<ContentNode>& content, std::vector
         // one (like BookIndexer's own _renderer) is fine: whatever
         // page we land on afterward gets a fresh draw=true render anyway.
         RenderResult r = _textRenderer->renderRichPageDynamic(display, content, pointer.nodeIndex,
-                                                              pointer.charOffset, 0, 0, false);
+                                                              pointer.charOffset, 0, 0, false, _epubLoader);
         if (!r.pageFull) break; // reached the true end of this content
         pointer.nodeIndex = r.nextNodeIndex;
         pointer.charOffset = r.nextCharOffset;
@@ -1251,10 +1251,9 @@ void AppReader::nextPage() {
         DisplayMgr& dispMgr = DisplayMgr::getInstance();
         Book32Display& display = dispMgr.getDisplay();
         int currentPageNum = _pageHistory.size();
-        result = _textRenderer->renderRichPageDynamic(display, _currentRichContent,
-                                                      _currentPagePointer.nodeIndex,
-                                                      _currentPagePointer.charOffset,
-                                                      currentPageNum, 0, false);
+        result = _textRenderer->renderRichPageDynamic(
+            display, _currentRichContent, _currentPagePointer.nodeIndex, _currentPagePointer.charOffset,
+            currentPageNum, 0, false, _epubLoader);
     }
     
     if (result.pageFull) {
@@ -1585,10 +1584,9 @@ void AppReader::drawReading() {
             display.drawBitmap(0, 0, coverBits, display.width(), display.height(), GxEPD_BLACK);
             continue;
         }
-        _currentPageRender = _textRenderer->renderRichPageDynamic(display, _currentRichContent,
-                                                                _currentPagePointer.nodeIndex,
-                                                                _currentPagePointer.charOffset,
-                                                                currentPageNum, _globalPageNumber, true);
+        _currentPageRender = _textRenderer->renderRichPageDynamic(
+            display, _currentRichContent, _currentPagePointer.nodeIndex, _currentPagePointer.charOffset,
+            currentPageNum, _globalPageNumber, true, _epubLoader);
         _currentPageRenderValid = true;
         // Draw page number directly here for consistent display
         display.setFont(NULL);

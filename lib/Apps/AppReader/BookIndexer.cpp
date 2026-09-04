@@ -167,7 +167,7 @@ void BookIndexer::step(unsigned long budgetMs) {
         }
 
         RenderResult r = _renderer->renderRichPageDynamic(display, _chapterContent, _pointer.nodeIndex,
-                                                          _pointer.charOffset, 0, 0, false);
+                                                          _pointer.charOffset, 0, 0, false, _epubLoader);
         if (r.pageFull) {
             _pagesSoFar++;
             _pointer.nodeIndex = r.nextNodeIndex;

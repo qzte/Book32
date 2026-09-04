@@ -74,17 +74,36 @@ struct FontInfo {
     String format; // ttf, otf, woff, woff2
 };
 
-// Content node - can be text or table
-enum ContentType {
-    CONTENT_TEXT,
-    CONTENT_TABLE
+// Content node - can be text, table or image
+enum ContentType { CONTENT_TEXT, CONTENT_TABLE, CONTENT_IMAGE };
+
+// An <img>/<image> embedded in chapter body text (illustrations — not the
+// book cover, which has its own dedicated path via getCoverImageData()).
+// zipPath is already resolved to an absolute path inside the EPUB archive at
+// parse time (see EpubLoader::resolveRelativePath), so the renderer never
+// needs to know which chapter the image came from.
+//
+// naturalWidth/naturalHeight/probed are mutable and start unset: reading
+// them means opening the image bytes from the ZIP, which parseHtmlToRichContent
+// does not do for every image in a chapter just to build the node list (a
+// chapter can be parsed many times — page-count scans, ToC/search indexing —
+// without the reader ever reaching the image). TextRenderer fills them in,
+// through a const ContentNode&, the first time it actually needs the size to
+// lay out a page; every later reference to the same node (redraw, another
+// pagination pass) reuses the cached value instead of reopening the ZIP.
+struct ImageNode {
+    String zipPath;
+    mutable int naturalWidth = 0;
+    mutable int naturalHeight = 0;
+    mutable bool probed = false;
 };
 
 struct ContentNode {
     ContentType type;
     RichTextNode textNode;
     Table table;
-    
+    ImageNode imageNode;
+
     ContentNode() : type(CONTENT_TEXT) {}
 };
 
@@ -233,10 +252,18 @@ public:
 
     // Helper to read file from zip
     String readFileFromZip(const char* path);
-    
-    // Rich content parsing
-    std::vector<ContentNode> parseHtmlToRichContent(const String& html);
+
+    // Rich content parsing. chapterDir is the ZIP directory (with trailing
+    // "/", "" for the archive root) the html came from — <img src="..."> is
+    // relative to it, not to rootDir like the OPF manifest's own hrefs.
+    std::vector<ContentNode> parseHtmlToRichContent(const String& html, const String& chapterDir);
     Table parseTable(const String& tableHtml);
+    // Collapses baseDir + href ("." / ".." segments included) into a path
+    // relative to the ZIP root, e.g. ("OEBPS/Text/", "../Images/fig1.jpg") ->
+    // "OEBPS/Images/fig1.jpg". "" for an href this can't/shouldn't resolve to
+    // a ZIP entry (empty, or an http(s)/data: URL — no remote or inline
+    // images).
+    static String resolveRelativePath(const String& baseDir, const String& href);
     TextStyle getStyleFromTag(String tag);
     TextAlign getAlignFromStyle(String styleAttr);
 
