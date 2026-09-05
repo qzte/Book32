@@ -582,7 +582,14 @@ static ImportOutcome applyImportBundle(const char* path) {
 
 void WebMgr::setupEndpoints() {
     // API: Status
-    server->on("/api/status", HTTP_GET, [this](AsyncWebServerRequest *request) {
+    server->on("/api/status", HTTP_GET, [this](AsyncWebServerRequest* request) {
+        // Toda a UI web faz poll deste endpoint enquanto a página está aberta
+        // (script.js, a cada 5s). Sem isto, o idle-sleep do BatteryMgr só via
+        // premir de botões físicos como "actividade" e podia adormecer o
+        // dispositivo (deep sleep, sem WiFi) a meio de uma sessão web activa —
+        // browsing da biblioteca incluído, não só uploads.
+        BatteryMgr::getInstance().resetIdleTimer();
+
         AsyncResponseStream *response = request->beginResponseStream("application/json");
         DynamicJsonDocument doc(512);
 
@@ -824,8 +831,9 @@ void WebMgr::setupEndpoints() {
     // ESPAsyncWebServer corre o body handler primeiro, por isso o veredito
     // aqui guardado já está decidido quando a resposta é montada. Uploads são
     // servidos em série (o LittleFS é single-writer), logo `static` é seguro.
-    server->on("/api/books/upload", HTTP_POST,
-        [](AsyncWebServerRequest *request) {
+    server->on(
+        "/api/books/upload", HTTP_POST,
+        [](AsyncWebServerRequest* request) {
             if (g_uploadState.owner != request) {
                 if (g_uploadState.owner != nullptr) {
                     // Outro upload detém o estado: recusar sem lhe tocar.
@@ -870,7 +878,15 @@ void WebMgr::setupEndpoints() {
             // ficheiro herdaria o veredito do upload anterior.
             g_uploadState.reset();
         },
-        [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
+        [](AsyncWebServerRequest* request, String filename, size_t index, uint8_t* data, size_t len,
+           bool final) {
+            // Um envio activo é actividade: send.html não faz poll de
+            // /api/status durante uma transferência (só uma vez ao carregar a
+            // página), por isso sem isto um ficheiro grande/rede lenta podia
+            // levar mais tempo que o idle-sleep timeout e o dispositivo
+            // adormecia (deep sleep) a meio do upload, derrubando a ligação.
+            BatteryMgr::getInstance().resetIdleTimer();
+
             if (index == 0) {
                 // Single-flight: se outro pedido detém o estado, sair sem
                 // tocar em nada — nem reset(), que fecharia o File dele.
@@ -939,9 +955,11 @@ void WebMgr::setupEndpoints() {
                 g_uploadState.finalName = safeName;
                 g_uploadState.originalName = filename;
                 int origSlash = g_uploadState.originalName.lastIndexOf('/');
-                if (origSlash >= 0) g_uploadState.originalName = g_uploadState.originalName.substring(origSlash + 1);
+                if (origSlash >= 0)
+                    g_uploadState.originalName = g_uploadState.originalName.substring(origSlash + 1);
                 origSlash = g_uploadState.originalName.lastIndexOf('\\');
-                if (origSlash >= 0) g_uploadState.originalName = g_uploadState.originalName.substring(origSlash + 1);
+                if (origSlash >= 0)
+                    g_uploadState.originalName = g_uploadState.originalName.substring(origSlash + 1);
 
                 g_uploadState.path = "/" + safeName;
                 Serial.printf("Upload Start: %s (original: %s)\n",
@@ -980,8 +998,7 @@ void WebMgr::setupEndpoints() {
                 }
                 saveBookMetadata(g_uploadState.finalName, g_uploadState.originalName);
             }
-        }
-    );
+        });
 
     // API: Delete Book from EbookFS
     server->on("/api/books/delete", HTTP_DELETE, [](AsyncWebServerRequest *request) {
