@@ -67,11 +67,14 @@ ReaderSettings SettingsStore::loadReader() {
     }
 
     if (file) {
-        DynamicJsonDocument doc(256);
+        DynamicJsonDocument doc(384);
         if (!deserializeJson(doc, file)) {
             s.refreshFrequency = clampRefreshFrequency(doc["refreshFrequency"] | 10);
             s.fontSize = clampFontSize(doc["fontSize"] | 9);
             s.fontFamily = clampFontFamily(doc["fontFamily"] | 0);
+            s.showChapter = doc["showChapter"] | false;
+            s.showPageNumber = doc["showPageNumber"] | true;
+            s.showReadingPercentage = doc["showReadingPercentage"] | false;
         }
         file.close();
     }
@@ -119,10 +122,13 @@ SleepSettings SettingsStore::loadSleep() {
 // --- Save -------------------------------------------------------------------
 bool SettingsStore::saveReader(const ReaderSettings& s) {
     Book32Guard guard(_mutex);
-    DynamicJsonDocument doc(256);
+    DynamicJsonDocument doc(384);
     doc["refreshFrequency"] = clampRefreshFrequency(s.refreshFrequency);
     doc["fontSize"] = clampFontSize(s.fontSize);
     doc["fontFamily"] = clampFontFamily(s.fontFamily);
+    doc["showChapter"] = s.showChapter;
+    doc["showPageNumber"] = s.showPageNumber;
+    doc["showReadingPercentage"] = s.showReadingPercentage;
 
     File file = EbookFS.open(READER_CONFIG_PATH, FILE_WRITE);
     if (!file) {
@@ -132,9 +138,11 @@ bool SettingsStore::saveReader(const ReaderSettings& s) {
     serializeJson(doc, file);
     file.close();
 
-    Serial.printf("SettingsStore: saved reader refreshFrequency=%d fontSize=%d fontFamily=%d\n",
-                  doc["refreshFrequency"].as<int>(), doc["fontSize"].as<int>(),
-                  doc["fontFamily"].as<int>());
+    Serial.printf("SettingsStore: saved reader refreshFrequency=%d fontSize=%d fontFamily=%d showChapter=%d "
+                  "showPageNumber=%d showReadingPercentage=%d\n",
+                  doc["refreshFrequency"].as<int>(), doc["fontSize"].as<int>(), doc["fontFamily"].as<int>(),
+                  doc["showChapter"].as<bool>(), doc["showPageNumber"].as<bool>(),
+                  doc["showReadingPercentage"].as<bool>());
     return true;
 }
 

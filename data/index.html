@@ -82,6 +82,15 @@
                         <label for="refresh-rate">Refrescamento total (a cada N páginas)</label>
                         <input type="number" id="refresh-rate" min="1" max="100" value="6" class="input-narrow">
                     </div>
+                    <div class="setting-row stacked">
+                        <label>Rodapé de leitura</label>
+                        <div class="checkbox-group">
+                            <label class="checkbox-inline"><input type="checkbox" id="show-chapter"> Capítulo</label>
+                            <label class="checkbox-inline"><input type="checkbox" id="show-page-number" checked> Página</label>
+                            <label class="checkbox-inline"><input type="checkbox" id="show-reading-percentage"> Percentagem lida</label>
+                        </div>
+                    </div>
+                    <p class="hint">Escolhe o que aparece no rodapé do ecrã enquanto lês.</p>
                     <button class="btn secondary" onclick="saveReaderSettings()">Guardar Definições</button>
                     <div id="reader-settings-status" class="status-msg"></div>
                 </div>

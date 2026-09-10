@@ -14,4 +14,5 @@ constexpr const char* MENU_LABEL = "Menu";
 constexpr const char* BOOKS_COUNT_FMT = "%d livros";
 constexpr const char* PAGE_OF_FMT = "Pag. %d de %d";
 constexpr const char* PAGE_FMT = "Pag. %d";
+constexpr const char* CHAPTER_FMT = "Cap. %d";
 } // namespace ReaderStrings
