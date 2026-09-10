@@ -34,6 +34,12 @@ private:
     String _lastIp = "";
     String _lastWifiFooterText = "";
     bool _hotspotActive = false;
+    // Última vez que o QR do hotspot foi desenhado (ou não) — usado só para
+    // saber quando forçar um redesenho do ecrã inteiro em vez de só do
+    // rodapé (ver update()): o código QR muda de tamanho de quadro,
+    // aparece ou desaparece, e um refresh parcial do rodapé não chega a
+    // essa zona do ecrã.
+    bool _lastHotspotActive = false;
     unsigned long _lastNetworkPoll = 0;
     unsigned long _lastBatteryPoll = 0;
     BatteryStatus _lastBatteryStatus = {0.0f, -1, false};
