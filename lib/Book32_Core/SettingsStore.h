@@ -23,6 +23,9 @@ struct ReaderSettings {
     int refreshFrequency = 10;  // Full e-ink refresh every N page turns
     int fontSize = 9;           // Reading body size in points: 9, 12 or 18
     int fontFamily = 0;         // See ReaderFontFamily: 0..5
+    bool showChapter = false;   // Show the current chapter title in the footer
+    bool showPageNumber = true; // Show "Pag. N de M" in the footer
+    bool showReadingPercentage = false; // Show percentage read in the footer
 };
 
 struct DisplaySettings {

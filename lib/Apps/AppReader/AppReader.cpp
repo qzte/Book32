@@ -21,6 +21,7 @@
 #include "GoToChapterStore.h"
 #include "CoverImage.h"
 #include "WebMgr.h"
+#include "SettingsStore.h"
 #include <WiFi.h>
 #include <LittleFS.h>
 #include <ArduinoJson.h>
@@ -1534,6 +1535,60 @@ void AppReader::drawLibrary() {
     } while (display.nextPage());
 }
 
+// Monta a linha de rodapé a partir das ReaderSettings do utilizador: capítulo,
+// página e/ou percentagem lida, separados por " | " quando mais do que um
+// está activo. Chamado uma única vez por desenho (fora do ciclo
+// firstPage()/nextPage()), nunca dentro dele — ver o comentário na
+// declaração em AppReader.h.
+String AppReader::buildFooterLine(int totalPages) {
+    ReaderSettings settings = SettingsStore::getInstance().loadReader();
+    String line;
+
+    if (settings.showChapter) {
+        String chapterTitle;
+        std::vector<String> titles;
+        String key = getOriginalFilename(normalizedBookName(_currentBookPath));
+        if (ChapterTocStore::getInstance().get(key, titles) && _currentChapter >= 0 &&
+            _currentChapter < (int)titles.size() && titles[_currentChapter].length() > 0) {
+            chapterTitle = titles[_currentChapter];
+            // Uma só linha de rodapé: um título longo tem de caber ao lado da
+            // página/percentagem, por isso corta-se com reticências em vez de
+            // arriscar sair para fora da margem.
+            if (chapterTitle.length() > 18) {
+                chapterTitle = chapterTitle.substring(0, 17) + "…";
+            }
+        } else {
+            char buf[16];
+            snprintf(buf, sizeof(buf), ReaderStrings::CHAPTER_FMT, _currentChapter + 1);
+            chapterTitle = buf;
+        }
+        line += chapterTitle;
+    }
+
+    if (settings.showPageNumber) {
+        char buf[40];
+        if (totalPages > 0) {
+            snprintf(buf, sizeof(buf), ReaderStrings::PAGE_OF_FMT, _globalPageNumber, totalPages);
+        } else {
+            snprintf(buf, sizeof(buf), ReaderStrings::PAGE_FMT, _globalPageNumber);
+        }
+        if (line.length() > 0) line += "  |  ";
+        line += buf;
+    }
+
+    if (settings.showReadingPercentage && totalPages > 0) {
+        int percent = (_globalPageNumber * 100) / totalPages;
+        if (percent > 100) percent = 100;
+        if (percent < 0) percent = 0;
+        char buf[8];
+        snprintf(buf, sizeof(buf), "%d%%", percent);
+        if (line.length() > 0) line += "  |  ";
+        line += buf;
+    }
+
+    return line;
+}
+
 void AppReader::drawReading() {
     // Sem renderizador não há página: acontece se um livro falhar a abrir
     // depois de closeBook() já ter libertado o estado. Cair para a biblioteca
@@ -1570,9 +1625,14 @@ void AppReader::drawReading() {
     // uma seria desperdício. A conversão (ensureFullScreenCover) só acontece
     // na primeira vez que esta página é mostrada em cada livro.
     uint8_t* coverBits = nullptr;
-    if (isOnCoverPage() && ensureFullScreenCover()) {
+    bool onCoverPage = isOnCoverPage();
+    if (onCoverPage && ensureFullScreenCover()) {
         coverBits = loadFullScreenCoverBitmap(display.width(), display.height());
     }
+    // Sem rodapé na página de capa (ver o "continue" abaixo) — não vale a
+    // pena o acesso a ficheiros (SettingsStore + ChapterTocStore) para uma
+    // linha que nunca é desenhada.
+    String footerLine = onCoverPage ? String() : buildFooterLine(_indexer.totalPages());
 
     display.firstPage();
     do {
@@ -1588,21 +1648,16 @@ void AppReader::drawReading() {
             display, _currentRichContent, _currentPagePointer.nodeIndex, _currentPagePointer.charOffset,
             currentPageNum, _globalPageNumber, true, _epubLoader);
         _currentPageRenderValid = true;
-        // Draw page number directly here for consistent display
-        display.setFont(NULL);
-        display.setTextColor(GxEPD_BLACK);
-        char footerText[40];
-        int totalPages = _indexer.totalPages();
-        if (totalPages > 0) {
-            snprintf(footerText, sizeof(footerText), ReaderStrings::PAGE_OF_FMT, _globalPageNumber,
-                     totalPages);
-        } else {
-            snprintf(footerText, sizeof(footerText), ReaderStrings::PAGE_FMT, _globalPageNumber);
+        // Draw the footer directly here for consistent display
+        if (footerLine.length() > 0) {
+            display.setFont(NULL);
+            display.setTextColor(GxEPD_BLACK);
+            int16_t fx1, fy1;
+            uint16_t fw, fh;
+            display.getTextBounds(footerLine.c_str(), 0, 0, &fx1, &fy1, &fw, &fh);
+            display.setCursor(display.width() / 2 - (int)fw / 2, display.height() - 15);
+            display.print(footerLine.c_str());
         }
-        int16_t fx1, fy1; uint16_t fw, fh;
-        display.getTextBounds(footerText, 0, 0, &fx1, &fy1, &fw, &fh);
-        display.setCursor(display.width()/2 - (int)fw/2, display.height() - 15);
-        display.print(footerText);
     } while (display.nextPage());
 
     if (coverBits) {

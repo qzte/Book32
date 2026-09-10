@@ -1084,12 +1084,15 @@ void WebMgr::setupEndpoints() {
     // API: Reader Settings - GET
     server->on("/api/settings/reader", HTTP_GET, [](AsyncWebServerRequest *request) {
         AsyncResponseStream *response = request->beginResponseStream("application/json");
-        DynamicJsonDocument doc(256);
+        DynamicJsonDocument doc(384);
 
         ReaderSettings s = SettingsStore::getInstance().loadReader();
         doc["refreshFrequency"] = s.refreshFrequency;
         doc["fontSize"] = s.fontSize;
         doc["fontFamily"] = s.fontFamily;
+        doc["showChapter"] = s.showChapter;
+        doc["showPageNumber"] = s.showPageNumber;
+        doc["showReadingPercentage"] = s.showReadingPercentage;
 
         serializeJson(doc, *response);
         request->send(response);
@@ -1122,6 +1125,15 @@ void WebMgr::setupEndpoints() {
                 s.fontFamily = SettingsStore::clampFontFamily(json["fontFamily"].as<int>());
                 // Apply live from the main loop if a book is open.
                 WebMgr::getInstance()._pendingReaderFontFamily = s.fontFamily;
+            }
+            if (json.containsKey("showChapter")) {
+                s.showChapter = json["showChapter"].as<bool>();
+            }
+            if (json.containsKey("showPageNumber")) {
+                s.showPageNumber = json["showPageNumber"].as<bool>();
+            }
+            if (json.containsKey("showReadingPercentage")) {
+                s.showReadingPercentage = json["showReadingPercentage"].as<bool>();
             }
 
             if (store.saveReader(s)) {

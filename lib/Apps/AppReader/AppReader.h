@@ -147,6 +147,13 @@ private:
     // não houver capa válida em cache.
     uint8_t* loadFullScreenCoverBitmap(int screenW, int screenH);
 
+    // Monta a linha de rodapé (capítulo / página / percentagem, conforme as
+    // ReaderSettings) antes de entrar no ciclo firstPage()/nextPage() — o
+    // acesso a ficheiros (SettingsStore, ChapterTocStore) só pode acontecer
+    // uma vez por desenho, nunca dentro desse ciclo, que pode repetir várias
+    // passagens sobre o mesmo ecrã.
+    String buildFooterLine(int totalPages);
+
     // Settings
     int _refreshEveryNPages;
     int _pageTurnsSinceRefresh;
