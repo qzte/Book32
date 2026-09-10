@@ -865,10 +865,23 @@ void AppReader::handleInput(InputAction action) {
 
 bool AppReader::openBook(const String& path, bool restoreProgress) {
     String fullPath = "/ebooks" + path;
+    // A abertura é síncrona (bloqueia o loop principal), por isso sem isto o
+    // ecrã ficava com a biblioteca parada, sem resposta visível, enquanto o
+    // ZIP era aberto e o primeiro capítulo analisado.
+    drawLoadingScreen("A abrir livro", "A ler índice...", 15, true);
     closeBook(false);
     _epubLoader = new EpubLoader();
-    if (!_epubLoader->open(fullPath.c_str())) { delete _epubLoader; _epubLoader = nullptr; return false; }
+    if (!_epubLoader->open(fullPath.c_str())) {
+        delete _epubLoader;
+        _epubLoader = nullptr;
+        // Sem isto o ecrã ficava preso no "A ler índice..." — a barra de
+        // progresso já apagou o ecrã todo, por isso a biblioteca tem de ser
+        // redesenhada por inteiro, não só o item seleccionado.
+        forceRedraw();
+        return false;
+    }
     _currentBookPath = path;
+    drawLoadingScreen("A abrir livro", "A carregar conteúdo...", 70, false);
     if (!_textRenderer) {
         DisplayMgr& dispMgr = DisplayMgr::getInstance();
         Book32Display& display = dispMgr.getDisplay();
@@ -902,6 +915,8 @@ bool AppReader::openBook(const String& path, bool restoreProgress) {
     String progressKey = getOriginalFilename(normalizedBookName(path));
     bool restored = restoreProgress && loadBookProgress(progressKey, restoreChapter, restorePointer, restorePage);
 
+    drawLoadingScreen("A abrir livro",
+                      restored ? "A restaurar a página..." : "A preparar a primeira página...", 88, false);
     loadChapter(restored ? restoreChapter : 0);
     // The saved chapter can be gone (book replaced by a different edition), in
     // which case loadChapter fell through to a later one: restoring a pointer
@@ -1587,6 +1602,43 @@ String AppReader::buildFooterLine(int totalPages) {
     }
 
     return line;
+}
+
+// Barra de progresso mostrada enquanto o livro abre (ver openBook()). Chamada
+// directamente no meio dessa função, não a partir de draw() — a abertura é
+// síncrona (bloqueia o loop principal até acabar), por isso é o único sítio
+// onde há oportunidade de mostrar algo no ecrã antes do texto em si.
+void AppReader::drawLoadingScreen(const char* title, const char* status, uint8_t progress, bool fullRefresh) {
+    DisplayMgr& dispMgr = DisplayMgr::getInstance();
+    Book32Display& display = dispMgr.getDisplay();
+    FontMgr& fontMgr = FontMgr::getInstance();
+
+    const int barWidth = display.width() - 100;
+    const int barHeight = 28;
+    const int barX = 50;
+    const int barY = display.height() / 2;
+    int clampedProgress = progress > 100 ? 100 : progress;
+    const int fillWidth = ((barWidth - 4) * clampedProgress) / 100;
+
+    if (fullRefresh) {
+        display.setFullWindow();
+    } else {
+        display.setPartialWindow(0, 0, display.width(), display.height());
+    }
+    display.firstPage();
+    do {
+        display.fillScreen(GxEPD_WHITE);
+        fontMgr.drawTextCentered(display, title, barY - 72, FONT_SIZE_TITLE, GxEPD_BLACK);
+        fontMgr.drawTextCentered(display, status, barY - 32, FONT_SIZE_BODY, GxEPD_BLACK);
+        display.drawRoundRect(barX, barY, barWidth, barHeight, 7, GxEPD_BLACK);
+        display.drawRoundRect(barX + 2, barY + 2, barWidth - 4, barHeight - 4, 5, GxEPD_BLACK);
+        if (fillWidth > 0) {
+            display.fillRoundRect(barX + 2, barY + 2, fillWidth, barHeight - 4, 5, GxEPD_BLACK);
+        }
+        char percentText[8];
+        snprintf(percentText, sizeof(percentText), "%d%%", clampedProgress);
+        fontMgr.drawTextCentered(display, percentText, barY + 72, FONT_SIZE_SUBTITLE, GxEPD_BLACK);
+    } while (display.nextPage());
 }
 
 void AppReader::drawReading() {

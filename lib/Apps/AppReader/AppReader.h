@@ -154,6 +154,14 @@ private:
     // passagens sobre o mesmo ecrã.
     String buildFooterLine(int totalPages);
 
+    // Ecrã de progresso mostrado durante a abertura de um livro (ver
+    // openBook()): o ZIP tem de ser aberto e o primeiro capítulo analisado
+    // antes de haver o que desenhar, e sem isto o botão ficava sem resposta
+    // visível nesse intervalo. `fullRefresh` só deve ser true na primeira
+    // chamada de cada abertura — as seguintes actualizam a mesma barra com
+    // um refresh parcial, sem o flash de um refresh completo.
+    void drawLoadingScreen(const char* title, const char* status, uint8_t progress, bool fullRefresh);
+
     // Settings
     int _refreshEveryNPages;
     int _pageTurnsSinceRefresh;
