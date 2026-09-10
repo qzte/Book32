@@ -370,3 +370,46 @@ dispositivo reinicia normalmente com a nova versao, sem reiniciar a meio do
 download/flash.
 Definicoes > Sistema > "Procurar actualizacao": confirmar o mesmo
 comportamento (nao so o reinicio sem efeito reportado anteriormente).
+
+=== v1.25.0 — a verificar no dispositivo (nao coberto pelos testes de host) ===
+(ver PRs #87, #88, #89 e #90 no GitHub; pio run correu na CI para os
+quatro, mas nada disto foi visto num e-ink real)
+Espaco livre no dashboard web: abrir o separador "Dashboard" e confirmar
+que o valor aparece em MB (ou GB, numa particao maior) em vez do "10240 KB /
+10240 KB" antigo, tanto para o espaco livre como para o total.
+Rodape de leitura em Definicoes > Leitor: activar/desactivar Capitulo, Pagina
+e Percentagem lida um de cada vez, guardar, reabrir um livro e confirmar
+que o rodape mostra exactamente a combinacao escolhida, separada por "|",
+centrada e sem sair para as margens mesmo com titulo de capitulo comprido
+(reticencias ao fim de 17 caracteres).
+Titulo de capitulo por resolver (ainda sem cabecalho detectavel no HTML):
+confirmar que aparece "Cap. N" (1-indexado) no rodape em vez de ficar
+vazio ou a mostrar lixo.
+Pagina de capa: confirmar que continua sem rodape nenhum, mesmo com as
+tres opcoes de rodape activas.
+Abrir um livro (biblioteca, Manter): confirmar a barra de progresso
+com as tres fases — "A ler indice...", "A carregar conteudo..." e
+"A restaurar a pagina..." (livro com posicao guardada) ou "A preparar
+a primeira pagina..." (livro novo) — sem bloquear os botoes fisicos
+durante a operacao.
+EPUB corrompido ou ilegivel: seleccionar o livro e confirmar que a
+biblioteca volta a aparecer inteira (nao so a barra de progresso presa no
+ecra, nem o item seleccionado a piscar sozinho).
+Trocar de edicao: com um livro aberto a meio (guardar posicao num capitulo
+a meio ou perto do fim), substituir o ficheiro .epub pela web UI por uma
+edicao com MENOS capitulos do que o indice guardado, reabrir o livro e
+confirmar que comeca no capitulo 0 (nao mostra o conteudo do livro anterior
+nem fica com o ecra em branco).
+Hotspot offline (sem Wi-Fi conhecida por perto, ou apos o timeout do setup
+inicial): no menu principal, sem nenhuma actualizacao de firmware disponivel,
+confirmar que a quarta celula da grelha mostra um codigo QR com o texto
+"Wi-Fi por QR" por baixo.
+Ler o QR com a camara de um telemovel: confirmar que o telemovel liga-se
+de facto ao hotspot "Book32" sem escrever a palavra-passe a mao.
+Ligar ou desligar o hotspot com o menu principal aberto (ex.: a rede
+Wi-Fi conhecida volta a ficar ao alcance): confirmar que o QR aparece
+ou desaparece com um refresh limpo da grelha, sem fantasmas de e-ink nem
+resto do icone anterior por baixo dos modulos do QR.
+Actualizacao de firmware disponivel ao mesmo tempo que o hotspot esta activo:
+confirmar que o icone de "Actualizar vX.Y.Z" tem prioridade sobre a quarta
+celula (fica sem QR enquanto houver actualizacao por instalar).
