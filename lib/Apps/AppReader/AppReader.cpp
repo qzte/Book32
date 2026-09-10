@@ -917,10 +917,19 @@ bool AppReader::openBook(const String& path, bool restoreProgress) {
 
     drawLoadingScreen("A abrir livro",
                       restored ? "A restaurar a página..." : "A preparar a primeira página...", 88, false);
-    loadChapter(restored ? restoreChapter : 0);
-    // The saved chapter can be gone (book replaced by a different edition), in
-    // which case loadChapter fell through to a later one: restoring a pointer
-    // from another chapter would land anywhere, so start that chapter clean.
+    // The saved chapter can be gone (book replaced by a different edition
+    // with fewer chapters, or a run of trailing empty chapters) — loadChapter()
+    // leaves all state untouched on failure (see its own contract), which for
+    // every OTHER caller correctly means "stay on the page already on
+    // screen". Here it would instead mean "keep showing whatever the
+    // previously open book left in _currentRichContent" (or, for the very
+    // first book opened this session, blank default-constructed state) —
+    // there is no valid page to fall back to yet, so a failed restore has to
+    // retry from chapter 0 explicitly instead of trusting loadChapter()'s
+    // usual "leave it alone" behaviour.
+    if (!loadChapter(restored ? restoreChapter : 0) && restored) {
+        loadChapter(0);
+    }
     if (restored && restoreChapter != _currentChapter) {
         Serial.printf("AppReader: saved chapter %d unavailable, starting at %d\n",
                       restoreChapter, _currentChapter);
