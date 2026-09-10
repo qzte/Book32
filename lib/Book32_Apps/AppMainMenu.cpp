@@ -10,6 +10,7 @@
 #include "../../include/Config.h"
 #include "../../include/NetworkState.h"
 #include <WiFi.h>
+#include <qrcode.h>
 #include "icon_update.h"
 #include "../Book32_Update/GitHubMgr.h"
 
@@ -45,6 +46,63 @@ static MenuDirtyRect unionRect(MenuDirtyRect a, MenuDirtyRect b) {
 static bool isReaderActive() {
     App* current = AppMgr::getInstance().getCurrentApp();
     return current && strcmp(current->getName(), "eReader") == 0;
+}
+
+// A String de um campo do formato "WIFI:" (secção 3 do padrão de payload da
+// ZXing) trata ; , : \ e " como separadores — sem escapar, um SSID ou uma
+// password que os contivesse partia o payload a meio. O SSID e a password
+// derivados por este dispositivo (ver Config.h/DeviceCred.h) nunca os usam,
+// mas escapar sempre é mais barato do que confiar nisso.
+static String escapeWifiQrField(const String& value) {
+    String escaped;
+    escaped.reserve(value.length() + 4);
+    for (size_t i = 0; i < value.length(); ++i) {
+        char c = value.charAt(i);
+        if (c == '\\' || c == ';' || c == ',' || c == ':' || c == '"') escaped += '\\';
+        escaped += c;
+    }
+    return escaped;
+}
+
+// Desenha um código QR "WIFI:" (WPA2) que junta o telemóvel ao hotspot de
+// gestão sem o utilizador ter de escrever a palavra-passe derivada (10
+// caracteres, ilegíveis ao acaso) a partir do ecrã. Devolve false sem
+// desenhar nada se a geração do QR falhar (payload demasiado grande para a
+// versão fixa abaixo) — o chamador decide o que mostrar em alternativa.
+static bool drawWifiSetupQr(Book32Display& display, const String& ssid, const String& password, int tileX,
+                            int tileY, int tileWidth) {
+    // Versão 3 (29x29 módulos) com correcção de erro baixa: chega para um
+    // payload "WIFI:T:WPA;S:<ssid>;P:<password>;;" com o SSID e a password
+    // deste dispositivo (ambos curtos e fixos — ver Config.h/DeviceCred.h).
+    constexpr uint8_t QR_VERSION = 3;
+    constexpr int QUIET_MODULES = 4; // margem branca em módulos, à volta do QR
+    constexpr int QR_BOX_SIZE = 185;
+    uint8_t modules[qrcode_getBufferSize(QR_VERSION)];
+    QRCode qr;
+    String payload =
+        String("WIFI:T:WPA;S:") + escapeWifiQrField(ssid) + ";P:" + escapeWifiQrField(password) + ";;";
+    if (qrcode_initText(&qr, modules, QR_VERSION, ECC_LOW, payload.c_str()) != 0) return false;
+
+    int totalModules = qr.size + (QUIET_MODULES * 2);
+    int scale = max(1, QR_BOX_SIZE / totalModules);
+    int pixelSize = totalModules * scale;
+    int originX = tileX + (tileWidth - pixelSize) / 2;
+    int originY = tileY;
+    // Quadrado branco de fundo: o QR não preenche o tile todo (fica centrado
+    // dentro dele), e sem isto ficavam restos do que estivesse desenhado
+    // antes (ícone de update, por exemplo) à volta dos módulos.
+    display.fillRect(originX, originY, pixelSize, pixelSize, GxEPD_WHITE);
+
+    int moduleX = originX + (QUIET_MODULES * scale);
+    int moduleY = originY + (QUIET_MODULES * scale);
+    for (uint8_t y = 0; y < qr.size; ++y) {
+        for (uint8_t x = 0; x < qr.size; ++x) {
+            if (qrcode_getModule(&qr, x, y)) {
+                display.fillRect(moduleX + (x * scale), moduleY + (y * scale), scale, scale, GxEPD_BLACK);
+            }
+        }
+    }
+    return true;
 }
 
 void AppMainMenu::updateCheckTask(void* parameter) {
@@ -163,9 +221,12 @@ void AppMainMenu::startHotspot() {
     Serial.print("Hotspot ready at ");
     Serial.println(WiFi.softAPIP());
 
+    // Não _footerOnlyRedraw: o hotspot a ligar é o que faz aparecer o QR na
+    // quarta célula da grelha (ver draw()), não só o texto do rodapé — um
+    // refresh parcial só do rodapé nunca chegava a essa zona do ecrã.
     _selectionOnlyRedraw = false;
     _batteryOnlyRedraw = false;
-    _footerOnlyRedraw = !_firstDraw;
+    _footerOnlyRedraw = false;
     _needsRedraw = true;
 }
 
@@ -313,7 +374,12 @@ void AppMainMenu::update() {
             _lastIp = ip;
             _selectionOnlyRedraw = false;
             _batteryOnlyRedraw = false;
-            _footerOnlyRedraw = !_firstDraw;
+            // O hotspot a ligar/desligar muda o QR da quarta célula da grelha,
+            // não só o rodapé — um refresh só do rodapé nunca chegava a essa
+            // zona do ecrã, por isso este caso não pode reduzir-se a
+            // rodapé-só mesmo que o texto do rodapé também tenha mudado.
+            _footerOnlyRedraw = !_firstDraw && (_hotspotActive == _lastHotspotActive);
+            _lastHotspotActive = _hotspotActive;
             _needsRedraw = true;
         }
     }
@@ -471,6 +537,26 @@ void AppMainMenu::draw() {
             int nameWidth = fontMgr.getTextWidth(updateText.c_str(), FONT_SIZE_MENU);
             int nameX = x + (ICON_SIZE - nameWidth) / 2;
             fontMgr.drawText(display, updateText.c_str(), nameX, y + ICON_SIZE + 25, FONT_SIZE_MENU, GxEPD_BLACK);
+        } else if (_hotspotActive) {
+            // A actualização tem prioridade sobre esta célula (ver acima); só
+            // sobra livre quando não há nenhuma disponível. Estático — sem
+            // caixa de selecção nem entrada no ciclo de INPUT_NEXT (ver
+            // handleInput()): não há acção nenhuma a fazer ao "seleccionar"
+            // um código QR, só a mostrar.
+            int i = apps.size();
+            int idx = i - 1;
+            int col = idx % COLS;
+            int row = idx / COLS;
+
+            int tileX = col * colWidth;
+            int tileY = START_Y + row * ROW_HEIGHT;
+
+            if (drawWifiSetupQr(display, AP_SSID, WebMgr::devicePassword(), tileX, tileY, colWidth)) {
+                const char* qrLabel = "Wi-Fi por QR";
+                int nameWidth = fontMgr.getTextWidth(qrLabel, FONT_SIZE_MENU);
+                int nameX = tileX + (colWidth - nameWidth) / 2;
+                fontMgr.drawText(display, qrLabel, nameX, tileY + 210, FONT_SIZE_MENU, GxEPD_BLACK);
+            }
         }
 
         // === Footer ===
