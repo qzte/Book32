@@ -16,9 +16,8 @@
 // mesmas convenções do ChapterNarrativeStore.
 
 #include <Arduino.h>
-#include <map>
 #include <vector>
-#include "Lock.h"
+#include "PerBookListStore.h"
 
 class ChapterGuideTypeStore {
   public:
@@ -43,10 +42,7 @@ class ChapterGuideTypeStore {
   private:
     ChapterGuideTypeStore() {}
 
-    Book32Mutex _mutex;
-    void load();
-    bool save();
-
-    bool _loaded = false;
-    std::map<String, std::vector<String>> _guideTypes;
+    // Corpo partilhado com os outros caches "uma lista por livro" — ver
+    // PerBookListStore.h. Continua a ser o seu próprio ficheiro em disco.
+    PerBookListStore<String>& store();
 };

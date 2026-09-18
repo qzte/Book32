@@ -1,5 +1,6 @@
 #include "SettingsStore.h"
 #include "Book32FS.h"
+#include "JsonFileStore.h"
 #include <ArduinoJson.h>
 
 static const char* READER_CONFIG_PATH = "/reader_config.json";
@@ -130,13 +131,11 @@ bool SettingsStore::saveReader(const ReaderSettings& s) {
     doc["showPageNumber"] = s.showPageNumber;
     doc["showReadingPercentage"] = s.showReadingPercentage;
 
-    File file = EbookFS.open(READER_CONFIG_PATH, FILE_WRITE);
-    if (!file) {
-        Serial.println("SettingsStore: failed to open reader_config.json for write");
-        return false;
-    }
-    serializeJson(doc, file);
-    file.close();
+    // Escrita atómica (.tmp + rename, ver JsonFileStore.h): estas definições
+    // são pequenas, mas FILE_WRITE trunca o ficheiro bom antes de escrever, e
+    // uma falha de energia a meio deixava o utilizador com as definições
+    // repostas de origem.
+    if (!writeJsonAtomic(EbookFS, READER_CONFIG_PATH, doc, "SettingsStore(reader)")) return false;
 
     Serial.printf("SettingsStore: saved reader refreshFrequency=%d fontSize=%d fontFamily=%d showChapter=%d "
                   "showPageNumber=%d showReadingPercentage=%d\n",
@@ -151,13 +150,11 @@ bool SettingsStore::saveDisplay(const DisplaySettings& s) {
     DynamicJsonDocument doc(128);
     doc["rotation"] = clampRotation(s.rotation);
 
-    File file = EbookFS.open(DISPLAY_CONFIG_PATH, FILE_WRITE);
-    if (!file) {
-        Serial.println("SettingsStore: failed to open display_config.json for write");
-        return false;
-    }
-    serializeJson(doc, file);
-    file.close();
+    // Escrita atómica (.tmp + rename, ver JsonFileStore.h): estas definições
+    // são pequenas, mas FILE_WRITE trunca o ficheiro bom antes de escrever, e
+    // uma falha de energia a meio deixava o utilizador com as definições
+    // repostas de origem.
+    if (!writeJsonAtomic(EbookFS, DISPLAY_CONFIG_PATH, doc, "SettingsStore(display)")) return false;
 
     Serial.printf("SettingsStore: saved display rotation=%d\n", doc["rotation"].as<int>());
     return true;
@@ -169,13 +166,11 @@ bool SettingsStore::saveSleep(const SleepSettings& s) {
     doc["sleepTimeout"] = clampSleepTimeout(s.timeout);
     doc["sleepMessage"] = s.message;
 
-    File file = EbookFS.open(SLEEP_CONFIG_PATH, FILE_WRITE);
-    if (!file) {
-        Serial.println("SettingsStore: failed to open sleep_config.json for write");
-        return false;
-    }
-    serializeJson(doc, file);
-    file.close();
+    // Escrita atómica (.tmp + rename, ver JsonFileStore.h): estas definições
+    // são pequenas, mas FILE_WRITE trunca o ficheiro bom antes de escrever, e
+    // uma falha de energia a meio deixava o utilizador com as definições
+    // repostas de origem.
+    if (!writeJsonAtomic(EbookFS, SLEEP_CONFIG_PATH, doc, "SettingsStore(sleep)")) return false;
 
     Serial.printf("SettingsStore: saved sleep timeout=%d message=%s\n",
                   doc["sleepTimeout"].as<int>(), doc["sleepMessage"].as<String>().c_str());

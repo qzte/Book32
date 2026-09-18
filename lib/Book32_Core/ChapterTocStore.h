@@ -20,9 +20,8 @@
 // web que mostra o índice e pede o salto — ver GoToChapterStore.
 
 #include <Arduino.h>
-#include <map>
 #include <vector>
-#include "Lock.h"
+#include "PerBookListStore.h"
 
 class ChapterTocStore {
   public:
@@ -47,12 +46,7 @@ class ChapterTocStore {
   private:
     ChapterTocStore() {}
 
-    // Mesma convenção do BookTitleStore: leitor e servidor web tocam no
-    // mesmo std::map a partir de tarefas diferentes.
-    Book32Mutex _mutex;
-    void load();
-    bool save();
-
-    bool _loaded = false;
-    std::map<String, std::vector<String>> _toc;
+    // Corpo partilhado com os outros caches "uma lista por livro" — ver
+    // PerBookListStore.h. Continua a ser o seu próprio ficheiro em disco.
+    PerBookListStore<String>& store();
 };

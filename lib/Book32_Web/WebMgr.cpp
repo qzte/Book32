@@ -9,6 +9,7 @@
 #include <vector>
 #include <map>
 #include "../Book32_Core/Book32FS.h"
+#include "../Book32_Core/JsonFileStore.h"
 #include "../Book32_Core/FileExt.h"
 #include "../Book32_Core/SafeName.h"
 #include "../Book32_Core/UploadGuard.h"
@@ -352,11 +353,10 @@ static void saveBookOrder(const std::vector<String>& order) {
     DynamicJsonDocument doc(4096);
     JsonArray arr = doc.createNestedArray("order");
     for (const String& s : order) arr.add(s);
-    File f = SystemFS.open(BOOK_ORDER_PATH, FILE_WRITE);
-    if (f) {
-        serializeJson(doc, f);
-        f.close();
-    }
+    // Escrita atómica, como os stores do Core (ver JsonFileStore.h): a ordem
+    // manual da biblioteca é trabalho do utilizador que não se reconstrói
+    // sozinho, ao contrário das caches.
+    writeJsonAtomic(SystemFS, BOOK_ORDER_PATH, doc, "BookOrder");
 }
 
 static void removeFromBookOrder(const String& filename) {

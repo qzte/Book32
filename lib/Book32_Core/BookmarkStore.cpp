@@ -1,8 +1,8 @@
 #include "BookmarkStore.h"
 #include "Book32FS.h"
+#include "JsonFileStore.h"
 
 static const char* BOOKMARKS_PATH = "/bookmarks.json";
-static const char* BOOKMARKS_TMP_PATH = "/bookmarks.tmp";
 
 // Same shape as ProgressStore's capacity helpers: read capacity follows the
 // file, write capacity follows the entry count (label + four ints + seq).
@@ -99,36 +99,13 @@ bool BookmarkStore::save() {
         }
     }
 
-    if (doc.overflowed()) {
-        // Better to refuse the write than overwrite a good file with a
-        // truncated one — same rule ProgressStore follows.
-        Serial.println("BookmarkStore: document overflowed — write refused");
-        return false;
-    }
-
-    File out = EbookFS.open(BOOKMARKS_TMP_PATH, FILE_WRITE);
-    if (!out) {
-        Serial.println("BookmarkStore: cannot open temp file");
-        return false;
-    }
-    size_t written = serializeJson(doc, out);
-    out.flush();
-    out.close();
-    if (written == 0) {
-        EbookFS.remove(BOOKMARKS_TMP_PATH);
-        Serial.println("BookmarkStore: serialisation wrote nothing");
-        return false;
-    }
-
-    if (!EbookFS.rename(BOOKMARKS_TMP_PATH, BOOKMARKS_PATH)) {
-        EbookFS.remove(BOOKMARKS_PATH);
-        if (!EbookFS.rename(BOOKMARKS_TMP_PATH, BOOKMARKS_PATH)) {
-            EbookFS.remove(BOOKMARKS_TMP_PATH);
-            Serial.println("BookmarkStore: rename failed — bookmark not saved");
-            return false;
-        }
-    }
-    return true;
+    // Transbordo, escrita curta e rename falhado são todos recusas que
+    // deixam o ficheiro anterior intacto — a regra que este store estreou e
+    // que passou a ser partilhada por todos. A verificação de escrita curta
+    // (bytes escritos contra o tamanho do documento) é nova: comparar com
+    // zero, como aqui se fazia, deixava passar uma escrita parcial num
+    // filesystem cheio. Ver JsonFileStore.h.
+    return writeJsonAtomic(EbookFS, BOOKMARKS_PATH, doc, "BookmarkStore");
 }
 
 std::vector<Bookmark> BookmarkStore::list(const String& originalName) {

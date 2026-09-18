@@ -1,5 +1,7 @@
 #include "BookMeta.h"
 #include "Book32FS.h"
+#include "JsonFileStore.h"
+#include "JsonStoreLogic.h"
 #include "Lock.h"
 #include <ArduinoJson.h>
 
@@ -18,10 +20,10 @@ static Book32Mutex g_metaMutex;
 // Capacity derived from the file, not a fixed 4096: a large library used to
 // overflow the fixed document, and a save on top of a truncated document threw
 // away everyone else's entries.
+static const size_t META_MAX_CAPACITY = 24576; // 24 KB
+
 static size_t metaCapacityFor(size_t fileSize) {
-    size_t cap = fileSize * 2 + 1024;
-    if (cap > 24576) cap = 24576;
-    return cap;
+    return jsonStoreCapacity(1024, 2, fileSize, META_MAX_CAPACITY);
 }
 
 static bool openMetaForRead(File& file) {
@@ -125,20 +127,16 @@ static bool loadMetaDoc(DynamicJsonDocument& doc) {
 static bool writeMetaDoc(const DynamicJsonDocument& doc) {
     // Mesma lição do ProgressStore: mais vale recusar a escrita do que
     // substituir um ficheiro bom por um truncado, que apagaria as entradas de
-    // todos os outros livros.
-    if (doc.overflowed()) {
-        Serial.println("BookMeta: documento excedeu a capacidade — escrita recusada");
-        return false;
-    }
-
-    File metaFile = SystemFS.open(BOOKS_META_PATH, FILE_WRITE);
-    if (!metaFile) {
-        Serial.println("Failed to save metadata");
-        return false;
-    }
-    serializeJson(doc, metaFile);
-    metaFile.close();
-    return true;
+    // todos os outros livros. É o ficheiro onde isso mais custa: sem o mapa
+    // nome-truncado -> nome-original, o progresso de leitura (chaveado pelo
+    // nome original) deixa de corresponder a qualquer ficheiro no
+    // dispositivo, e a biblioteca volta aos títulos cortados aos 28
+    // caracteres.
+    //
+    // Até aqui só o transbordo era verificado: o FILE_WRITE truncava o
+    // ficheiro bom antes de escrever, e nem uma falha de energia a meio nem
+    // um filesystem cheio eram apanhados. Ver JsonFileStore.h.
+    return writeJsonAtomic(SystemFS, BOOKS_META_PATH, doc, "BookMeta");
 }
 
 void saveBookMetadata(const String& truncatedName, const String& originalName) {

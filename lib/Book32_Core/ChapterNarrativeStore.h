@@ -16,9 +16,8 @@
 // esse ficheiro para o raciocínio completo.
 
 #include <Arduino.h>
-#include <map>
 #include <vector>
-#include "Lock.h"
+#include "PerBookListStore.h"
 
 class ChapterNarrativeStore {
   public:
@@ -43,10 +42,7 @@ class ChapterNarrativeStore {
   private:
     ChapterNarrativeStore() {}
 
-    Book32Mutex _mutex;
-    void load();
-    bool save();
-
-    bool _loaded = false;
-    std::map<String, std::vector<bool>> _narrative;
+    // Corpo partilhado com os outros caches "uma lista por livro" — ver
+    // PerBookListStore.h. Continua a ser o seu próprio ficheiro em disco.
+    PerBookListStore<bool>& store();
 };
