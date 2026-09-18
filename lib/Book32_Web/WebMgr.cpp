@@ -601,6 +601,17 @@ void WebMgr::setupEndpoints() {
     registerStaticRoutes();
 }
 
+// A UI web e gravada comprimida na imagem do filesystem (ver
+// tools/gzip_webui.py), por isso "/index.html" pode existir em disco so como
+// "/index.html.gz". O ESPAsyncWebServer ja serve o .gz sozinho — tanto o
+// serveStatic como o request->send(fs, caminho, tipo) — mas as verificacoes de
+// existencia que decidem *se* ha UI para servir sao nossas e tem de conhecer as
+// duas formas.
+static bool webUiFileExists(fs::FS& fs, const char* path) {
+    if (fs.exists(path)) return true;
+    return fs.exists(String(path) + ".gz");
+}
+
 // Estado do dispositivo e diagnóstico: o que a UI web faz poll enquanto
 // está aberta, mais a troca de aplicação no dispositivo.
 void WebMgr::registerSystemRoutes() {
@@ -710,8 +721,8 @@ void WebMgr::registerBookRoutes() {
     // Página de envio dedicada: caminho curto e memorizável para o atalho no
     // ecrã principal do telemóvel. Desde a v1.9.0 nem a página nem o POST
     // para /api/books/upload pedem credenciais.
-    server->on("/send", HTTP_GET, [](AsyncWebServerRequest *request) {
-        if (SystemFS.exists("/send.html")) {
+    server->on("/send", HTTP_GET, [](AsyncWebServerRequest* request) {
+        if (webUiFileExists(SystemFS, "/send.html")) {
             request->send(SystemFS, "/send.html", "text/html");
         } else {
             request->send(404, "text/plain", "send.html nao encontrado - correr uploadfs");
@@ -1746,15 +1757,28 @@ void WebMgr::registerWifiRoutes() {
 // Ficheiros estáticos da UI web. Fica sempre em último: o handler de "/"
 // apanha tudo o que as rotas acima não apanharam, por isso registá-lo
 // antes delas roubava-lhes os pedidos.
+// "no-cache" nao e "nao guardes": e "guarda, mas confirma antes de reutilizar".
+// O browser passa a revalidar com o ETag que o proprio handler poe (o tamanho
+// do ficheiro), e uma pagina que nao mudou custa um 304 vazio em vez dos ~26 KB
+// da UI inteira. Um max-age a serio seria mais rapido ainda, mas a UI web e
+// substituida por OTA a qualquer momento: depois de actualizar, o browser
+// continuaria a servir a versao velha ate o prazo passar, e isso e pior do que
+// uma ida ao dispositivo numa rede local.
+static const char* WEB_UI_CACHE_CONTROL = "no-cache";
+
 void WebMgr::registerStaticRoutes() {
     // Static Files - serve from SystemFS first (where OTA filesystem updates go)
     // Fall back to EbookFS if not found
-    if (SystemFS.exists("/index.html")) {
+    if (webUiFileExists(SystemFS, "/index.html")) {
         Serial.println("Serving web UI from SystemFS");
-        server->serveStatic("/", SystemFS, "/").setDefaultFile("index.html");
-    } else if (EbookFS.exists("/index.html")) {
+        server->serveStatic("/", SystemFS, "/")
+            .setDefaultFile("index.html")
+            .setCacheControl(WEB_UI_CACHE_CONTROL);
+    } else if (webUiFileExists(EbookFS, "/index.html")) {
         Serial.println("Serving web UI from EbookFS");
-        server->serveStatic("/", EbookFS, "/").setDefaultFile("index.html");
+        server->serveStatic("/", EbookFS, "/")
+            .setDefaultFile("index.html")
+            .setCacheControl(WEB_UI_CACHE_CONTROL);
     } else {
         Serial.println("WARNING: No index.html found on either filesystem!");
     }
