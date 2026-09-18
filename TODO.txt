@@ -349,17 +349,10 @@ celula (fica sem QR enquanto houver actualizacao por instalar).
 === v1.26.0 — a verificar no dispositivo (nao coberto pelos testes de host) ===
 (ver PRs #92, #93, #94 e #95 no GitHub; o pio run correu na CI para os
 quatro e os testes de host cobrem a logica pura nova — capacidade e decisao
-de escrita de JSON, classificacao da verificacao de updates — mas nada disto
-foi visto num e-ink real)
+de escrita de JSON, classificacao da verificacao de updates. A UI web
+comprimida foi confirmada em hardware antes da tag v1.26.0 — a pagina e o
+/send abrem — e saiu desta lista; o resto continua por ver num e-ink real)
 
-UI web depois de um uploadfs: abrir http://<IP>/ e confirmar que a pagina
-carrega normalmente. E o primeiro ponto e o mais importante de todos: a UI
-passou a ser gravada comprimida (~97 KB -> ~26 KB, ver tools/gzip_webui.py) e
-o ESPAsyncWebServer serve os .gz sozinho. Se isso nao funcionar, a interface
-fica inacessivel por inteiro, sem sintoma parcial nenhum.
-/send no mesmo estado: confirmar que a pagina de envio tambem abre (usa um
-caminho diferente do serveStatic, o request->send(fs, ...), com a sua propria
-deteccao de .gz).
 Segunda visita a mesma pagina: no separador de rede do browser, confirmar
 respostas 304 em vez de nova transferencia dos ficheiros. Depois de uma
 actualizacao OTA da UI, confirmar que aparece a versao NOVA e nao a antiga em
