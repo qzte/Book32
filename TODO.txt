@@ -346,7 +346,7 @@ Actualizacao de firmware disponivel ao mesmo tempo que o hotspot esta activo:
 confirmar que o icone de "Actualizar vX.Y.Z" tem prioridade sobre a quarta
 celula (fica sem QR enquanto houver actualizacao por instalar).
 
-=== Avaliacao de codigo (stores, WebMgr, UI web, unique_ptr, updates) — a verificar no dispositivo (nao coberto pelos testes de host) ===
+=== v1.26.0 — a verificar no dispositivo (nao coberto pelos testes de host) ===
 (ver PRs #92, #93, #94 e #95 no GitHub; o pio run correu na CI para os
 quatro e os testes de host cobrem a logica pura nova — capacidade e decisao
 de escrita de JSON, classificacao da verificacao de updates — mas nada disto
