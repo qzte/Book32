@@ -7,6 +7,7 @@
 #include "BookIndexer.h"
 #include "../../Book32_Core/InputMgr.h"
 #include "../../Book32_Core/GoToPercentLogic.h"
+#include <memory>
 #include <vector>
 #include <map>
 
@@ -171,8 +172,11 @@ private:
     void loadSettings();
 
     // Reading
-    EpubLoader* _epubLoader;
-    TextRenderer* _textRenderer;
+    // Donos do livro aberto e do renderer da página. Eram ponteiros crus com
+    // delete em três sítios (destrutor, falha a abrir, closeBook) — ver
+    // BookIndexer, que segue a mesma convenção.
+    std::unique_ptr<EpubLoader> _epubLoader;
+    std::unique_ptr<TextRenderer> _textRenderer;
     String _currentBookPath;
     int _currentChapter;
     int _globalPageNumber; // Runtime tracking of global page (1-indexed)

@@ -2,6 +2,7 @@
 #define BOOK_INDEXER_H
 
 #include <Arduino.h>
+#include <memory>
 #include <vector>
 #include "EpubLoader.h"
 #include "TextRenderer.h"
@@ -35,7 +36,6 @@
 class BookIndexer {
   public:
     BookIndexer();
-    ~BookIndexer();
 
     // Verifica as três caches para `originalName` e prepara o varrimento do
     // que ainda faltar — isActive() fica false se estiver tudo já resolvido.
@@ -74,7 +74,10 @@ class BookIndexer {
     bool _needLengths;
     int _chapter; // próximo capítulo a ler, partilhado pelas três tarefas
     int _pagesSoFar;
-    TextRenderer* _renderer;                  // só existe enquanto _needPageCount
+    // Dono do renderer. Era um ponteiro cru com um delete em quatro sítios
+    // (destrutor, reset, start, finish) que tinham de ser mantidos em sincronia
+    // à mão; o unique_ptr faz isso sozinho e dispensou o destrutor.
+    std::unique_ptr<TextRenderer> _renderer;  // só existe enquanto _needPageCount
     PagePointer _pointer;                     // posição de paginação dentro do capítulo actual
     std::vector<ContentNode> _chapterContent; // conteúdo do capítulo actual
     std::vector<String> _titles;              // só acumulado se _needToc

@@ -8,11 +8,7 @@
 
 BookIndexer::BookIndexer()
     : _active(false), _needPageCount(false), _needToc(false), _needLengths(false), _chapter(0),
-      _pagesSoFar(0), _renderer(nullptr), _pointer({0, 0}), _totalPages(0), _epubLoader(nullptr),
-      _fontSizePt(9), _fontFamily(0) {}
-
-BookIndexer::~BookIndexer() {
-    if (_renderer) delete _renderer;
+      _pagesSoFar(0), _pointer({0, 0}), _totalPages(0), _epubLoader(nullptr), _fontSizePt(9), _fontFamily(0) {
 }
 
 // Sums the character length of a chapter's already-parsed rich content —
@@ -39,10 +35,7 @@ void BookIndexer::reset() {
     _chapterContent.clear();
     _titles.clear();
     _lengths.clear();
-    if (_renderer) {
-        delete _renderer;
-        _renderer = nullptr;
-    }
+    _renderer.reset();
 }
 
 // Kicks off (or skips, if every cache already has what it needs) the
@@ -59,10 +52,7 @@ void BookIndexer::start(EpubLoader* epubLoader, const String& originalName, int 
     _chapterContent.clear();
     _titles.clear();
     _lengths.clear();
-    if (_renderer) {
-        delete _renderer;
-        _renderer = nullptr;
-    }
+    _renderer.reset();
 
     _epubLoader = epubLoader;
     _originalName = originalName;
@@ -131,7 +121,7 @@ void BookIndexer::step(unsigned long budgetMs) {
     Book32Display& display = dispMgr.getDisplay();
 
     if (_needPageCount && !_renderer) {
-        _renderer = new TextRenderer(display.width(), display.height(), _fontSizePt);
+        _renderer.reset(new TextRenderer(display.width(), display.height(), _fontSizePt));
         _renderer->setFontFamily(_fontFamily);
     }
 
@@ -223,8 +213,5 @@ void BookIndexer::finish() {
         ChapterLengthStore::getInstance().set(_originalName, _lengths);
     }
 
-    if (_renderer) {
-        delete _renderer;
-        _renderer = nullptr;
-    }
+    _renderer.reset();
 }
