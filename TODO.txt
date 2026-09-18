@@ -345,3 +345,72 @@ resto do icone anterior por baixo dos modulos do QR.
 Actualizacao de firmware disponivel ao mesmo tempo que o hotspot esta activo:
 confirmar que o icone de "Actualizar vX.Y.Z" tem prioridade sobre a quarta
 celula (fica sem QR enquanto houver actualizacao por instalar).
+
+=== Avaliacao de codigo (stores, WebMgr, UI web, unique_ptr, updates) — a verificar no dispositivo (nao coberto pelos testes de host) ===
+(ver PRs #92, #93, #94 e #95 no GitHub; o pio run correu na CI para os
+quatro e os testes de host cobrem a logica pura nova — capacidade e decisao
+de escrita de JSON, classificacao da verificacao de updates — mas nada disto
+foi visto num e-ink real)
+
+UI web depois de um uploadfs: abrir http://<IP>/ e confirmar que a pagina
+carrega normalmente. E o primeiro ponto e o mais importante de todos: a UI
+passou a ser gravada comprimida (~97 KB -> ~26 KB, ver tools/gzip_webui.py) e
+o ESPAsyncWebServer serve os .gz sozinho. Se isso nao funcionar, a interface
+fica inacessivel por inteiro, sem sintoma parcial nenhum.
+/send no mesmo estado: confirmar que a pagina de envio tambem abre (usa um
+caminho diferente do serveStatic, o request->send(fs, ...), com a sua propria
+deteccao de .gz).
+Segunda visita a mesma pagina: no separador de rede do browser, confirmar
+respostas 304 em vez de nova transferencia dos ficheiros. Depois de uma
+actualizacao OTA da UI, confirmar que aparece a versao NOVA e nao a antiga em
+cache (e por isso que o cabecalho e "no-cache" e nao um max-age).
+Diagnostico de armazenamento (/api/fs ou o separador correspondente): com a
+biblioteca em uso normal, confirmar que nao ficam ficheiros .tmp perdidos na
+raiz de nenhuma das particoes. Todas as gravacoes de JSON passaram a escrever
+para <nome>.tmp e so depois renomear; um .tmp a sobrar significa uma gravacao
+interrompida que nao se limpou.
+
+Livro ja indexado antes desta actualizacao: abrir o indice na web UI e
+confirmar que aparece de imediato, sem reindexar o livro. Prova que os quatro
+caches de capitulos (indice, narrativo, tipo de guide, comprimentos)
+continuam a ler e a gravar o mesmo formato depois de passarem a partilhar o
+mesmo corpo (PerBookListStore).
+Definicoes (letra, rotacao, rodape, tempo de adormecer): mudar, deixar o
+dispositivo entrar em standby e acordar, e confirmar que as definicoes se
+mantiveram. O SettingsStore passou a gravar de forma atomica.
+Enviar um livro com nome comprido (mais de 28 caracteres): confirmar que a
+biblioteca mostra o titulo completo e que o progresso de leitura desse livro
+sobrevive a fechar e reabrir. Isto exercita o books_meta.json, que e o
+ficheiro onde uma gravacao interrompida mais custava: sem ele, o progresso de
+toda a biblioteca fica orfao.
+Marcadores e "ir para %": criar um marcador pela web UI, reabrir o livro no
+dispositivo e confirmar que a posicao e aplicada. O ProgressStore e o
+BookmarkStore ja gravavam de forma atomica, mas passaram a usar o corpo
+partilhado.
+Ordem manual da biblioteca: reordenar pela web UI, reiniciar o dispositivo e
+confirmar que a ordem se manteve (o book_order.json passou a atomico).
+EbookFS quase cheio: com pouco espaco livre, continuar a ler e a mudar
+definicoes e confirmar que nada se perde de vez — uma gravacao recusada tem
+de deixar o ficheiro anterior intacto, nao um ficheiro cortado que deixa de
+ser lido. E o caso que motivou toda esta alteracao.
+
+Rotas da web UI: passar por todos os separadores (dashboard, biblioteca,
+definicoes do leitor, ecra, adormecer, Wi-Fi, exportar/importar estado,
+procurar actualizacao) e confirmar que todos respondem. As rotas foram
+divididas em oito funcoes por dominio e duas mudaram de lugar na ordem de
+registo (/api/app/switch e /api/settings/sleep); a ordem so devia contar para
+o handler de "/", mas e a primeira vez que isto corre no dispositivo.
+
+Abrir e fechar varios livros seguidos, e mudar o tamanho da letra com um
+livro aberto (recria o TextRenderer): confirmar que nao ha reinicios nem
+falhas de alocacao no monitor serie. Os ponteiros donos do leitor passaram a
+unique_ptr — o tempo de vida devia ser exactamente o mesmo, so deixou de ser
+escrito a mao.
+
+Verificacao de actualizacoes com o Wi-Fi desligado: carregar em "Verificar"
+na UI web e em Definicoes > Sistema, e confirmar que as duas dizem que nao ha
+rede em vez de "Estas actualizado". Era a mesma mensagem para as duas coisas
+ate agora, e e a unica parte do OTA que as assinaturas Ed25519 nao protegem
+(ver lib/Book32_Core/UpdateCheckLogic.h).
+Verificacao normal, com rede: confirmar que o caminho feliz nao mudou — diz
+"Estas actualizado" quando esta mesmo, e mostra a versao nova quando ha uma.
