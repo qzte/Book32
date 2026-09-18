@@ -35,12 +35,18 @@ private:
     AsyncWebServer* server; // Pointer instead of object
     bool _initialized = false;
     bool _endpointsConfigured = false;
-    
+
+    // Registo das rotas HTTP, por domínio. setupEndpoints() não faz mais nada
+    // do que chamá-las pela ordem abaixo; registerStaticRoutes() tem de ficar
+    // em último, porque o seu handler de "/" apanha tudo o que sobra. Ver o
+    // comentário em WebMgr.cpp.
     void setupEndpoints();
-    // Handlers need full type in cpp, so keeping signature here implies we need *AsyncWebServerRequest in cpp
-    void handleAPIStatus(AsyncWebServerRequest *request);
-    void handleAPISettingsGet(AsyncWebServerRequest *request);
-    void handleAPISettingsSet(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total);
-    void handleAPICheckUpdate(AsyncWebServerRequest *request);
-    void handleAPIUpdateTrigger(AsyncWebServerRequest *request);
+    void registerSystemRoutes();
+    void registerBookRoutes();
+    void registerUpdateRoutes();
+    void registerSettingsRoutes();
+    void registerReaderRoutes();
+    void registerLibraryStateRoutes();
+    void registerWifiRoutes();
+    void registerStaticRoutes();
 };
