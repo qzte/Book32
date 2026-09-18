@@ -1,5 +1,7 @@
 #include "PageCountStore.h"
 #include "Book32FS.h"
+#include "JsonFileStore.h"
+#include "JsonStoreLogic.h"
 #include <ArduinoJson.h>
 
 // Todos os métodos públicos abrem com um Book32Guard; load(), save() e
@@ -11,18 +13,9 @@ static const char* PAGE_TOTALS_PATH = "/page_totals.json";
 
 // Read capacity follows the file; write capacity follows the entry count.
 // Same approach as ProgressStore, just smaller since an entry here is only a
-// name and an int.
-static size_t readCapacityFor(size_t fileSize) {
-    size_t cap = fileSize * 2 + 256;
-    if (cap > 16384) cap = 16384;
-    return cap;
-}
-
-static size_t writeCapacityFor(size_t entries) {
-    size_t cap = 128 + entries * 48;
-    if (cap > 16384) cap = 16384;
-    return cap;
-}
+// name and an int. The arithmetic itself lives in jsonStoreCapacity, which is
+// host-tested (tools/tests/test_json_store.cpp).
+static const size_t PAGE_TOTALS_MAX_CAPACITY = 16384; // 16 KB
 
 PageCountStore& PageCountStore::getInstance() {
     static PageCountStore instance;
@@ -37,7 +30,7 @@ void PageCountStore::load() {
     File file = EbookFS.open(PAGE_TOTALS_PATH, "r");
     if (!file) return;
 
-    DynamicJsonDocument doc(readCapacityFor(file.size()));
+    DynamicJsonDocument doc(jsonStoreCapacity(256, 2, file.size(), PAGE_TOTALS_MAX_CAPACITY));
     DeserializationError error = deserializeJson(doc, file);
     file.close();
     if (error) return;
@@ -65,12 +58,14 @@ void PageCountStore::load() {
 }
 
 bool PageCountStore::save() {
-    DynamicJsonDocument doc(writeCapacityFor(_totals.size() + _checkpoints.size()));
+    DynamicJsonDocument doc(
+        jsonStoreCapacity(128, 48, _totals.size() + _checkpoints.size(), PAGE_TOTALS_MAX_CAPACITY));
     doc["fontSize"] = _fontSize;
     doc["fontFamily"] = _fontFamily;
 
     JsonObject totals = doc.createNestedObject("totals");
-    for (const auto& kv : _totals) totals[kv.first] = kv.second;
+    for (const auto& kv : _totals)
+        totals[kv.first] = kv.second;
 
     JsonObject checkpoints = doc.createNestedObject("checkpoints");
     for (const auto& kv : _checkpoints) {
@@ -79,13 +74,10 @@ bool PageCountStore::save() {
         entry["pagesSoFar"] = kv.second.pagesSoFar;
     }
 
-    if (doc.overflowed()) return false;
-
-    File file = EbookFS.open(PAGE_TOTALS_PATH, FILE_WRITE);
-    if (!file) return false;
-    serializeJson(doc, file);
-    file.close();
-    return true;
+    // Fail-closed, like every other store: a refused write leaves the
+    // previous totals in place instead of replacing them with a truncated
+    // file that parses as nothing at all. See JsonFileStore.h.
+    return writeJsonAtomic(EbookFS, PAGE_TOTALS_PATH, doc, "PageCountStore");
 }
 
 // (fontSize, fontFamily) mismatching what's on disk means every stored total

@@ -1,5 +1,6 @@
 #include "ProgressStore.h"
 #include "Book32FS.h"
+#include "JsonFileStore.h"
 #include "BookMeta.h"
 #include "TimeMgr.h"
 
@@ -9,7 +10,6 @@
 // voltasse a tomá-lo não haveria bloqueio).
 
 static const char* PROGRESS_PATH = "/reader_progress.json";
-static const char* PROGRESS_TMP_PATH = "/reader_progress.tmp";
 
 // Read capacity follows the file; write capacity follows the entry count.
 static size_t readCapacityFor(size_t fileSize) {
@@ -135,38 +135,13 @@ bool ProgressStore::save() {
         if (kv.second.lastReadAt) entry["lastReadAt"] = kv.second.lastReadAt;
     }
 
-    if (doc.overflowed()) {
-        // Better to refuse the write than to overwrite a good file with a
-        // truncated one — that was exactly the v1 failure mode.
-        Serial.println("ProgressStore: document overflowed — write refused");
-        return false;
-    }
-
-    File out = EbookFS.open(PROGRESS_TMP_PATH, FILE_WRITE);
-    if (!out) {
-        Serial.println("ProgressStore: cannot open temp file");
-        return false;
-    }
-    size_t written = serializeJson(doc, out);
-    out.flush();
-    out.close();
-    if (written == 0) {
-        EbookFS.remove(PROGRESS_TMP_PATH);
-        Serial.println("ProgressStore: serialisation wrote nothing");
-        return false;
-    }
-
-    // littlefs rename replaces the destination atomically; the remove+retry is
-    // only for ports where it refuses an existing target.
-    if (!EbookFS.rename(PROGRESS_TMP_PATH, PROGRESS_PATH)) {
-        EbookFS.remove(PROGRESS_PATH);
-        if (!EbookFS.rename(PROGRESS_TMP_PATH, PROGRESS_PATH)) {
-            EbookFS.remove(PROGRESS_TMP_PATH);
-            Serial.println("ProgressStore: rename failed — progress not saved");
-            return false;
-        }
-    }
-    return true;
+    // Transbordo, escrita curta e rename falhado são todos recusas que
+    // deixam o ficheiro anterior intacto — a regra que este store estreou e
+    // que passou a ser partilhada por todos. A verificação de escrita curta
+    // (bytes escritos contra o tamanho do documento) é nova: comparar com
+    // zero, como aqui se fazia, deixava passar uma escrita parcial num
+    // filesystem cheio. Ver JsonFileStore.h.
+    return writeJsonAtomic(EbookFS, PROGRESS_PATH, doc, "ProgressStore");
 }
 
 bool ProgressStore::get(const String& originalName, BookProgress& out) {

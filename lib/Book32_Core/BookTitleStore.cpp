@@ -1,5 +1,7 @@
 #include "BookTitleStore.h"
 #include "Book32FS.h"
+#include "JsonFileStore.h"
+#include "JsonStoreLogic.h"
 #include <ArduinoJson.h>
 
 // load() e save() ficam sem guarda de propósito: são privados e só se chegam
@@ -10,18 +12,9 @@ static const char* BOOK_TITLES_PATH = "/book_titles.json";
 
 // Capacidade de leitura conforme o ficheiro, de escrita conforme as entradas —
 // como no PageCountStore, só que aqui uma entrada é nome + título, ambos
-// texto, e por isso a estimativa por entrada é maior.
-static size_t titlesReadCapacityFor(size_t fileSize) {
-    size_t cap = fileSize * 2 + 512;
-    if (cap > 24576) cap = 24576;
-    return cap;
-}
-
-static size_t titlesWriteCapacityFor(size_t entries) {
-    size_t cap = 256 + entries * 288;
-    if (cap > 24576) cap = 24576;
-    return cap;
-}
+// texto, e por isso a estimativa por entrada é maior. A aritmética (e a
+// saturação) está em jsonStoreCapacity, com teste de host.
+static const size_t BOOK_TITLES_MAX_CAPACITY = 24576; // 24 KB
 
 BookTitleStore& BookTitleStore::getInstance() {
     static BookTitleStore instance;
@@ -36,7 +29,7 @@ void BookTitleStore::load() {
     File file = SystemFS.open(BOOK_TITLES_PATH, FILE_READ);
     if (!file) return;
 
-    DynamicJsonDocument doc(titlesReadCapacityFor(file.size()));
+    DynamicJsonDocument doc(jsonStoreCapacity(512, 2, file.size(), BOOK_TITLES_MAX_CAPACITY));
     DeserializationError error = deserializeJson(doc, file);
     file.close();
     if (error || !doc.is<JsonObject>()) return;
@@ -49,20 +42,15 @@ void BookTitleStore::load() {
 }
 
 bool BookTitleStore::save() {
-    DynamicJsonDocument doc(titlesWriteCapacityFor(_titles.size()));
+    DynamicJsonDocument doc(jsonStoreCapacity(256, 288, _titles.size(), BOOK_TITLES_MAX_CAPACITY));
     for (const auto& kv : _titles)
         doc[kv.first] = kv.second;
 
-    // Um documento que transbordou grava metade da biblioteca por cima da
-    // outra metade: mais vale ficar com o ficheiro anterior e voltar a ler os
-    // títulos em falta na próxima visita à biblioteca.
-    if (doc.overflowed()) return false;
-
-    File file = SystemFS.open(BOOK_TITLES_PATH, FILE_WRITE);
-    if (!file) return false;
-    serializeJson(doc, file);
-    file.close();
-    return true;
+    // Um documento que transbordou (ou uma escrita que ficou a meio) grava
+    // metade da biblioteca por cima da outra metade: mais vale ficar com o
+    // ficheiro anterior e voltar a ler os títulos em falta na próxima visita
+    // à biblioteca. Ver JsonFileStore.h.
+    return writeJsonAtomic(SystemFS, BOOK_TITLES_PATH, doc, "BookTitleStore");
 }
 
 bool BookTitleStore::get(const String& originalName, String& out) {
@@ -94,21 +82,5 @@ void BookTitleStore::reconcile(const std::vector<String>& presentOriginalNames) 
     Book32Guard guard(_mutex);
     load();
 
-    bool changed = false;
-    for (auto it = _titles.begin(); it != _titles.end();) {
-        bool present = false;
-        for (const auto& name : presentOriginalNames) {
-            if (name == it->first) {
-                present = true;
-                break;
-            }
-        }
-        if (present) {
-            ++it;
-        } else {
-            it = _titles.erase(it);
-            changed = true;
-        }
-    }
-    if (changed) save();
+    if (reconcileStoreKeys(_titles, presentOriginalNames)) save();
 }

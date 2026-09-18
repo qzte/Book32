@@ -25,9 +25,8 @@
 // estado entre dispositivos) — mesmas convenções do ChapterTocStore.
 
 #include <Arduino.h>
-#include <map>
 #include <vector>
-#include "Lock.h"
+#include "PerBookListStore.h"
 
 class ChapterLengthStore {
   public:
@@ -51,10 +50,7 @@ class ChapterLengthStore {
   private:
     ChapterLengthStore() {}
 
-    Book32Mutex _mutex;
-    void load();
-    bool save();
-
-    bool _loaded = false;
-    std::map<String, std::vector<long>> _lengths;
+    // Corpo partilhado com os outros caches "uma lista por livro" — ver
+    // PerBookListStore.h. Continua a ser o seu próprio ficheiro em disco.
+    PerBookListStore<long>& store();
 };
