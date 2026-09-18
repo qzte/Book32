@@ -248,9 +248,22 @@ the lines a pull request changed. Library versions and the Espressif platform
 are pinned to exact versions in `platformio.ini` so a tagged release stays
 reproducible.
 
+The web UI is compressed into the filesystem image rather than shipped as
+plain files: `tools/gzip_webui.py` runs as a PlatformIO pre-script on the
+`buildfs` and `uploadfs` targets and gzips everything in `data/` into a copy
+under the build directory, taking the UI from about 97 KB to about 26 KB.
+`data/` itself is never touched, so the files stay editable and CI keeps
+syntax-checking `data/script.js` as before. The device serves the compressed
+files without any extra code — both `serveStatic` and `request->send(fs, ...)`
+fall back to `<path>.gz` and set `Content-Encoding: gzip` on their own. The
+gzip header is written with a zeroed timestamp so two builds of the same
+source still produce an identical `littlefs.bin`, which matters because
+releases sign its SHA-256.
+
 Other tools:
 
 - `tools/format.sh` — run clang-format locally
+- `tools/gzip_webui.py` — compress `data/` into the filesystem image (automatic)
 - `tools/slim_epub.py` — shrink an EPUB before sending it to the device
 
 Design notes for each feature live in `docs/plans/`, and `TODO.txt` tracks the

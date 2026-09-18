@@ -580,7 +580,41 @@ static ImportOutcome applyImportBundle(const char* path) {
     return outcome;
 }
 
+// As rotas HTTP, por domínio. Estavam todas num setupEndpoints() de 1127
+// linhas — o ponto mais difícil de navegar do projecto. A divisão é só
+// isso, uma divisão: nenhum handler mudou de corpo.
+//
+// A ordem de registo conta, mas só para o handler de "/" (ver
+// registerStaticRoutes), que apanha tudo o que sobra e por isso fica em
+// último. Entre as rotas de API não há sobreposição nenhuma — cada uma
+// tem um URI exacto — por isso agrupá-las é livre. Duas mudaram de lugar
+// por causa disso: /api/app/switch subiu para junto de /api/status, e
+// /api/settings/sleep para junto das outras definições.
 void WebMgr::setupEndpoints() {
+    registerSystemRoutes();
+    registerBookRoutes();
+    registerUpdateRoutes();
+    registerSettingsRoutes();
+    registerReaderRoutes();
+    registerLibraryStateRoutes();
+    registerWifiRoutes();
+    registerStaticRoutes();
+}
+
+// A UI web e gravada comprimida na imagem do filesystem (ver
+// tools/gzip_webui.py), por isso "/index.html" pode existir em disco so como
+// "/index.html.gz". O ESPAsyncWebServer ja serve o .gz sozinho — tanto o
+// serveStatic como o request->send(fs, caminho, tipo) — mas as verificacoes de
+// existencia que decidem *se* ha UI para servir sao nossas e tem de conhecer as
+// duas formas.
+static bool webUiFileExists(fs::FS& fs, const char* path) {
+    if (fs.exists(path)) return true;
+    return fs.exists(String(path) + ".gz");
+}
+
+// Estado do dispositivo e diagnóstico: o que a UI web faz poll enquanto
+// está aberta, mais a troca de aplicação no dispositivo.
+void WebMgr::registerSystemRoutes() {
     // API: Status
     server->on("/api/status", HTTP_GET, [this](AsyncWebServerRequest* request) {
         // Toda a UI web faz poll deste endpoint enquanto a página está aberta
@@ -650,11 +684,45 @@ void WebMgr::setupEndpoints() {
         request->send(response);
     });
 
+    // API: Switch to app by name
+    server->on("/api/app/switch", HTTP_GET, [](AsyncWebServerRequest* request) {
+        if (!request->hasParam("name")) {
+            request->send(400, "application/json", "{\"error\":\"App name required\"}");
+            return;
+        }
+
+        String appName = request->getParam("name")->value();
+        AppMgr& appMgr = AppMgr::getInstance();
+
+        int appIndex = -1;
+        int idx = 0;
+        for (auto* app : appMgr.getApps()) {
+            if (appName.equalsIgnoreCase(app->getName())) {
+                appIndex = idx;
+                break;
+            }
+            idx++;
+        }
+
+        if (appIndex >= 0) {
+            // Só agenda: a troca é executada por update(), no loop principal.
+            WebMgr::getInstance()._pendingAppSwitch = appIndex;
+            request->send(200, "application/json", "{\"status\":\"ok\"}");
+            Serial.printf("App switch scheduled: %s\n", appName.c_str());
+        } else {
+            request->send(404, "application/json", "{\"error\":\"App not found\"}");
+        }
+    });
+}
+
+// A biblioteca: listar, enviar, apagar, reordenar e marcar o estado de
+// leitura. Inclui a página /send, o atalho de envio para o telemóvel.
+void WebMgr::registerBookRoutes() {
     // Página de envio dedicada: caminho curto e memorizável para o atalho no
     // ecrã principal do telemóvel. Desde a v1.9.0 nem a página nem o POST
     // para /api/books/upload pedem credenciais.
-    server->on("/send", HTTP_GET, [](AsyncWebServerRequest *request) {
-        if (SystemFS.exists("/send.html")) {
+    server->on("/send", HTTP_GET, [](AsyncWebServerRequest* request) {
+        if (webUiFileExists(SystemFS, "/send.html")) {
             request->send(SystemFS, "/send.html", "text/html");
         } else {
             request->send(404, "text/plain", "send.html nao encontrado - correr uploadfs");
@@ -1047,7 +1115,11 @@ void WebMgr::setupEndpoints() {
             request->send(404, "text/plain", "Not found");
         }
     });
+}
 
+// Actualizações OTA assinadas (firmware + UI web). O download e a
+// verificação ficam no GitHubMgr; aqui só se consulta e se agenda.
+void WebMgr::registerUpdateRoutes() {
     // API: Check for Updates
     server->on("/api/check_update", HTTP_GET, [](AsyncWebServerRequest *request) {
         AsyncResponseStream *response = request->beginResponseStream("application/json");
@@ -1080,7 +1152,11 @@ void WebMgr::setupEndpoints() {
         Serial.println("OTA update requested via web UI, scheduling...");
         WebMgr::getInstance()._otaPending = true;
     });
+}
 
+// Definições do leitor, do ecrã e do adormecer. Cada uma tem um GET que
+// devolve o estado e um POST em JSON que o grava (ver SettingsStore).
+void WebMgr::registerSettingsRoutes() {
     // API: Reader Settings - GET
     server->on("/api/settings/reader", HTTP_GET, [](AsyncWebServerRequest *request) {
         AsyncResponseStream *response = request->beginResponseStream("application/json");
@@ -1174,6 +1250,58 @@ void WebMgr::setupEndpoints() {
     );
     server->addHandler(displaySettingsHandler);
 
+    // API: Sleep Settings - GET
+    server->on("/api/settings/sleep", HTTP_GET, [](AsyncWebServerRequest* request) {
+        AsyncResponseStream* response = request->beginResponseStream("application/json");
+        DynamicJsonDocument doc(512);
+
+        SleepSettings s = SettingsStore::getInstance().loadSleep();
+        doc["sleepTimeout"] = s.timeout;
+        doc["sleepMessage"] = s.message;
+
+        serializeJson(doc, *response);
+        request->send(response);
+    });
+
+    // API: Sleep Settings - POST
+    AsyncCallbackJsonWebHandler* sleepSettingsHandler = new AsyncCallbackJsonWebHandler(
+        "/api/settings/sleep", [](AsyncWebServerRequest* request, JsonVariant& json) {
+            // Merge, so posting only one key doesn't blank the other.
+            // Transacção pela mesma razão do handler do leitor, fechada antes
+            // de avisar o BatteryMgr: assim nunca se detêm dois bloqueios ao
+            // mesmo tempo e não há ordem de aquisição para respeitar.
+            bool saved;
+            {
+                SettingsStore::Transaction tx;
+                SettingsStore& store = SettingsStore::getInstance();
+                SleepSettings s = store.loadSleep();
+
+                if (json.containsKey("sleepTimeout")) {
+                    s.timeout = json["sleepTimeout"].as<int>();
+                }
+                if (json.containsKey("sleepMessage")) {
+                    s.message = json["sleepMessage"].as<String>();
+                }
+
+                saved = store.saveSleep(s);
+            }
+
+            if (saved) {
+                // Notify BatteryMgr to reload settings
+                BatteryMgr::getInstance().loadSleepSettings();
+                request->send(200, "application/json", "{\"status\":\"ok\"}");
+            } else {
+                request->send(500, "application/json",
+                              "{\"status\":\"error\",\"message\":\"Failed to save\"}");
+            }
+        });
+    server->addHandler(sleepSettingsHandler);
+}
+
+// Posição de leitura, marcadores e saltos. Tudo o que o dispositivo não
+// consegue oferecer com um botão só passa por aqui — ver
+// docs/plans/2026-08-29-bookmarks-and-goto-percent-design.md.
+void WebMgr::registerReaderRoutes() {
     // API: Reader Progress - GET
     server->on("/api/reader/progress", HTTP_GET, [](AsyncWebServerRequest *request) {
         AsyncResponseStream *response = request->beginResponseStream("application/json");
@@ -1408,7 +1536,11 @@ void WebMgr::setupEndpoints() {
         });
     goToChapterHandler->setMethod(HTTP_POST);
     server->addHandler(goToChapterHandler);
+}
 
+// Exportar e importar o estado da biblioteca (progresso, estado de
+// leitura, datas, nomes e ordem manual) entre dispositivos.
+void WebMgr::registerLibraryStateRoutes() {
     // API (v1.8.0): Export library state — reading progress, original-name
     // metadata and the manual order. No .epub files: those go through /send.
     //
@@ -1540,86 +1672,11 @@ void WebMgr::setupEndpoints() {
                 g_importState.received = !g_importState.tooBig;
             }
         });
+}
 
-    // API: Sleep Settings - GET
-    server->on("/api/settings/sleep", HTTP_GET, [](AsyncWebServerRequest *request) {
-        AsyncResponseStream *response = request->beginResponseStream("application/json");
-        DynamicJsonDocument doc(512);
-
-        SleepSettings s = SettingsStore::getInstance().loadSleep();
-        doc["sleepTimeout"] = s.timeout;
-        doc["sleepMessage"] = s.message;
-
-        serializeJson(doc, *response);
-        request->send(response);
-    });
-
-    // API: Sleep Settings - POST
-    AsyncCallbackJsonWebHandler* sleepSettingsHandler = new AsyncCallbackJsonWebHandler("/api/settings/sleep",
-        [](AsyncWebServerRequest *request, JsonVariant &json) {
-            // Merge, so posting only one key doesn't blank the other.
-            // Transacção pela mesma razão do handler do leitor, fechada antes
-            // de avisar o BatteryMgr: assim nunca se detêm dois bloqueios ao
-            // mesmo tempo e não há ordem de aquisição para respeitar.
-            bool saved;
-            {
-                SettingsStore::Transaction tx;
-                SettingsStore& store = SettingsStore::getInstance();
-                SleepSettings s = store.loadSleep();
-
-                if (json.containsKey("sleepTimeout")) {
-                    s.timeout = json["sleepTimeout"].as<int>();
-                }
-                if (json.containsKey("sleepMessage")) {
-                    s.message = json["sleepMessage"].as<String>();
-                }
-
-                saved = store.saveSleep(s);
-            }
-
-            if (saved) {
-                // Notify BatteryMgr to reload settings
-                BatteryMgr::getInstance().loadSleepSettings();
-                request->send(200, "application/json", "{\"status\":\"ok\"}");
-            } else {
-                request->send(500, "application/json", "{\"status\":\"error\",\"message\":\"Failed to save\"}");
-            }
-        }
-    );
-    server->addHandler(sleepSettingsHandler);
-
-    // API: Switch to app by name
-    server->on("/api/app/switch", HTTP_GET, [](AsyncWebServerRequest *request) {
-        if (!request->hasParam("name")) {
-            request->send(400, "application/json", "{\"error\":\"App name required\"}");
-            return;
-        }
-
-        String appName = request->getParam("name")->value();
-        AppMgr& appMgr = AppMgr::getInstance();
-
-        int appIndex = -1;
-        int idx = 0;
-        for (auto* app : appMgr.getApps()) {
-            if (appName.equalsIgnoreCase(app->getName())) {
-                appIndex = idx;
-                break;
-            }
-            idx++;
-        }
-
-        if (appIndex >= 0) {
-            // Só agenda: a troca é executada por update(), no loop principal.
-            WebMgr::getInstance()._pendingAppSwitch = appIndex;
-            request->send(200, "application/json", "{\"status\":\"ok\"}");
-            Serial.printf("App switch scheduled: %s\n", appName.c_str());
-        } else {
-            request->send(404, "application/json", "{\"error\":\"App not found\"}");
-        }
-    });
-
-    // === WIFI / HOTSPOT API ENDPOINTS ===
-
+// WIFI / HOTSPOT: estado da ligação, varrimento de redes e pedido de
+// ligação a partir da UI web.
+void WebMgr::registerWifiRoutes() {
     // API: WiFi status - station connection + hotspot (AP) state
     server->on("/api/wifi/status", HTTP_GET, [](AsyncWebServerRequest *request) {
         AsyncResponseStream *response = request->beginResponseStream("application/json");
@@ -1695,15 +1752,33 @@ void WebMgr::setupEndpoints() {
         }
     );
     server->addHandler(wifiConnectHandler);
+}
 
+// Ficheiros estáticos da UI web. Fica sempre em último: o handler de "/"
+// apanha tudo o que as rotas acima não apanharam, por isso registá-lo
+// antes delas roubava-lhes os pedidos.
+// "no-cache" nao e "nao guardes": e "guarda, mas confirma antes de reutilizar".
+// O browser passa a revalidar com o ETag que o proprio handler poe (o tamanho
+// do ficheiro), e uma pagina que nao mudou custa um 304 vazio em vez dos ~26 KB
+// da UI inteira. Um max-age a serio seria mais rapido ainda, mas a UI web e
+// substituida por OTA a qualquer momento: depois de actualizar, o browser
+// continuaria a servir a versao velha ate o prazo passar, e isso e pior do que
+// uma ida ao dispositivo numa rede local.
+static const char* WEB_UI_CACHE_CONTROL = "no-cache";
+
+void WebMgr::registerStaticRoutes() {
     // Static Files - serve from SystemFS first (where OTA filesystem updates go)
     // Fall back to EbookFS if not found
-    if (SystemFS.exists("/index.html")) {
+    if (webUiFileExists(SystemFS, "/index.html")) {
         Serial.println("Serving web UI from SystemFS");
-        server->serveStatic("/", SystemFS, "/").setDefaultFile("index.html");
-    } else if (EbookFS.exists("/index.html")) {
+        server->serveStatic("/", SystemFS, "/")
+            .setDefaultFile("index.html")
+            .setCacheControl(WEB_UI_CACHE_CONTROL);
+    } else if (webUiFileExists(EbookFS, "/index.html")) {
         Serial.println("Serving web UI from EbookFS");
-        server->serveStatic("/", EbookFS, "/").setDefaultFile("index.html");
+        server->serveStatic("/", EbookFS, "/")
+            .setDefaultFile("index.html")
+            .setCacheControl(WEB_UI_CACHE_CONTROL);
     } else {
         Serial.println("WARNING: No index.html found on either filesystem!");
     }
