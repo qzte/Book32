@@ -167,6 +167,14 @@ so a rejected image never becomes the boot partition. See
 A brand-new board flashed by USB with an older firmware picks up subsequent
 releases over the air automatically; there is no separate bootstrap step.
 
+Since v1.26.0 the device also distinguishes "you are up to date" from "I could
+not ask". No WiFi, a refused connection, GitHub's rate limit, a repository with
+no releases, or a reply that cannot be parsed are all reported as a failed
+check, in the web interface and in the device menu alike — never as "no update
+available". Signatures protect what gets flashed, but they cannot protect a
+reply that never arrives: anyone able to interfere with the connection can
+otherwise keep the device on an old version simply by breaking the check.
+
 ## Useful PlatformIO Commands
 
 Build firmware:
@@ -229,6 +237,9 @@ Device:
 - Polished boot screen with E-Ink progress feedback
 - On-device settings menu mirroring the main web settings
 - Battery indicator and charging status
+- Settings, reading progress and caches are written atomically (since v1.26.0),
+  so a write interrupted by a flat battery or a full filesystem leaves the
+  previous file intact instead of truncating it
 
 ## Development
 
