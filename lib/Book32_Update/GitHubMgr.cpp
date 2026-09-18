@@ -70,10 +70,17 @@ void GitHubMgr::init() {
     // any init?
 }
 
+// Uma tentativa de verificacao. O veredito de cada resultado esta em
+// UpdateCheckLogic.h, separado daqui e com teste de host: o que este metodo
+// faz e recolher os factos (ha rede? que codigo veio? o corpo leu-se? tem
+// tag? e mais recente?) e deixar a classificacao para la.
 UpdateInfo GitHubMgr::checkUpdate(const char* currentVersion) {
-    UpdateInfo info = {false, "", "", "", "", false, false, "", "", "", ""};
+    UpdateInfo info;
+    UpdateCheckInputs inputs;
 
-    if (WiFi.status() != WL_CONNECTED) {
+    inputs.wifiConnected = (WiFi.status() == WL_CONNECTED);
+    if (!inputs.wifiConnected) {
+        info.status = classifyUpdateCheck(inputs);
         Serial.println("WiFi not connected, cannot check for updates");
         return info;
     }
@@ -90,6 +97,8 @@ UpdateInfo GitHubMgr::checkUpdate(const char* currentVersion) {
     Serial.println("Using public GitHub release API");
 
     int httpCode = http.GET();
+    inputs.httpCode = httpCode;
+    info.httpCode = httpCode;
     Serial.printf("HTTP Response: %d\n", httpCode);
 
     if (httpCode == HTTP_CODE_OK) {
@@ -111,13 +120,19 @@ UpdateInfo GitHubMgr::checkUpdate(const char* currentVersion) {
 
         if (err) {
             Serial.printf("JSON parse error: %s\n", err.c_str());
+            info.status = classifyUpdateCheck(inputs); // responseParsed continua false
             http.end();
             return info;
         }
+        inputs.responseParsed = true;
 
         const char* tagName = doc["tag_name"];
         info.version = tagName ? tagName : "";
         info.notes = doc["body"].as<String>();
+        // Sem tag nao ha nada com que comparar. Antes disto, o semverIsNewer()
+        // devolvia false para uma tag vazia e o dispositivo dizia que estava
+        // actualizado sem nunca ter tido uma versao para comparar.
+        inputs.tagPresent = (info.version.length() > 0);
 
         Serial.printf("Latest version: %s, Current: %s\n", info.version.c_str(), currentVersion);
 
@@ -128,7 +143,8 @@ UpdateInfo GitHubMgr::checkUpdate(const char* currentVersion) {
         String currentV = String(currentVersion);
         String latestV = info.version;
 
-        if (semverIsNewer(latestV, currentV)) {
+        inputs.newerThanCurrent = inputs.tagPresent && semverIsNewer(latestV, currentV);
+        if (inputs.newerThanCurrent) {
             info.available = true;
             Serial.println("Update IS available");
 
@@ -187,15 +203,28 @@ UpdateInfo GitHubMgr::checkUpdate(const char* currentVersion) {
                     Serial.println("WARNING: release publishes no Ed25519 signature for the filesystem image");
                 }
             }
-        } else {
-            Serial.println("Already up to date");
         }
-    } else if (httpCode == 404) {
-        Serial.println("No releases found on GitHub");
-    } else if (httpCode == 403) {
-        Serial.println("GitHub API rate limited - try again later");
-    } else {
-        Serial.printf("GitHub API Failed: %d\n", httpCode);
+    }
+
+    info.status = classifyUpdateCheck(inputs);
+    switch (info.status) {
+        case UpdateCheckStatus::UpdateAvailable:
+            break; // ja registado acima
+        case UpdateCheckStatus::UpToDate:
+            Serial.println("Already up to date");
+            break;
+        case UpdateCheckStatus::NoRelease:
+            Serial.println("No releases found on GitHub");
+            break;
+        case UpdateCheckStatus::RateLimited:
+            Serial.println("GitHub API rate limited - try again later");
+            break;
+        case UpdateCheckStatus::BadResponse:
+            Serial.println("GitHub API answered but the response could not be read");
+            break;
+        default:
+            Serial.printf("GitHub API Failed: %d\n", httpCode);
+            break;
     }
     http.end();
     return info;
