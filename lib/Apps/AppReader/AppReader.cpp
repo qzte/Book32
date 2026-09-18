@@ -295,8 +295,6 @@ AppReader::AppReader() {
     _resumeSavedBookOnStart = false;
     _previousBookIndex = 0;
     _libraryScrollOffset = 0;
-    _epubLoader = nullptr;
-    _textRenderer = nullptr;
     _currentChapter = 0;
     _needsRedraw = true;
     _percentSeekActive = false;
@@ -340,9 +338,9 @@ void AppReader::loadSettings() {
 }
 
 AppReader::~AppReader() {
+    // closeBook() já larga os dois unique_ptr; o destrutor não tem mais nada
+    // para fazer.
     closeBook(false);
-    if (_epubLoader) delete _epubLoader;
-    if (_textRenderer) delete _textRenderer;
 }
 
 bool AppReader::hasBootResume() {
@@ -870,10 +868,9 @@ bool AppReader::openBook(const String& path, bool restoreProgress) {
     // ZIP era aberto e o primeiro capítulo analisado.
     drawLoadingScreen("A abrir livro", "A ler índice...", 15, true);
     closeBook(false);
-    _epubLoader = new EpubLoader();
+    _epubLoader.reset(new EpubLoader());
     if (!_epubLoader->open(fullPath.c_str())) {
-        delete _epubLoader;
-        _epubLoader = nullptr;
+        _epubLoader.reset();
         // Sem isto o ecrã ficava preso no "A ler índice..." — a barra de
         // progresso já apagou o ecrã todo, por isso a biblioteca tem de ser
         // redesenhada por inteiro, não só o item seleccionado.
@@ -885,7 +882,7 @@ bool AppReader::openBook(const String& path, bool restoreProgress) {
     if (!_textRenderer) {
         DisplayMgr& dispMgr = DisplayMgr::getInstance();
         Book32Display& display = dispMgr.getDisplay();
-        _textRenderer = new TextRenderer(display.width(), display.height(), _fontSizePt);
+        _textRenderer.reset(new TextRenderer(display.width(), display.height(), _fontSizePt));
     }
     _textRenderer->setFontSize(_fontSizePt);      // Honor the current reading size
     _textRenderer->setFontFamily(_fontFamily);    // Honor the current reading font
@@ -960,7 +957,7 @@ bool AppReader::openBook(const String& path, bool restoreProgress) {
     }
 
     _state = VIEW_READING;
-    _indexer.start(_epubLoader, progressKey, _fontSizePt, _fontFamily);
+    _indexer.start(_epubLoader.get(), progressKey, _fontSizePt, _fontFamily);
 
     // v1.14.0: a "go to %" requested from the web UI while this book wasn't
     // open (see GoToPercentStore) applies now, overriding the position just
@@ -1066,8 +1063,9 @@ void AppReader::closeBook(bool markInactive) {
     // para o flash: a seguir o estado da página desaparece. Cobre também o
     // standby e o regresso ao menu, que passam por stop().
     flushProgress();
-    if (_epubLoader) { _epubLoader->close(); delete _epubLoader; _epubLoader = nullptr; }
-    if (_textRenderer) { delete _textRenderer; _textRenderer = nullptr; }
+    if (_epubLoader) _epubLoader->close();
+    _epubLoader.reset();
+    _textRenderer.reset();
     _pageHistory.clear();
     _currentPageRenderValid = false;
     _coverChapterIndex = -1;
@@ -1260,8 +1258,8 @@ void AppReader::paginateAll(const std::vector<ContentNode>& content, std::vector
         // scan, so reusing the reader's own renderer instead of a separate
         // one (like BookIndexer's own _renderer) is fine: whatever
         // page we land on afterward gets a fresh draw=true render anyway.
-        RenderResult r = _textRenderer->renderRichPageDynamic(display, content, pointer.nodeIndex,
-                                                              pointer.charOffset, 0, 0, false, _epubLoader);
+        RenderResult r = _textRenderer->renderRichPageDynamic(
+            display, content, pointer.nodeIndex, pointer.charOffset, 0, 0, false, _epubLoader.get());
         if (!r.pageFull) break; // reached the true end of this content
         pointer.nodeIndex = r.nextNodeIndex;
         pointer.charOffset = r.nextCharOffset;
@@ -1278,7 +1276,7 @@ void AppReader::nextPage() {
         int currentPageNum = _pageHistory.size();
         result = _textRenderer->renderRichPageDynamic(
             display, _currentRichContent, _currentPagePointer.nodeIndex, _currentPagePointer.charOffset,
-            currentPageNum, 0, false, _epubLoader);
+            currentPageNum, 0, false, _epubLoader.get());
     }
     
     if (result.pageFull) {
@@ -1707,7 +1705,7 @@ void AppReader::drawReading() {
         }
         _currentPageRender = _textRenderer->renderRichPageDynamic(
             display, _currentRichContent, _currentPagePointer.nodeIndex, _currentPagePointer.charOffset,
-            currentPageNum, _globalPageNumber, true, _epubLoader);
+            currentPageNum, _globalPageNumber, true, _epubLoader.get());
         _currentPageRenderValid = true;
         // Draw the footer directly here for consistent display
         if (footerLine.length() > 0) {
@@ -1783,7 +1781,7 @@ void AppReader::applyFontSize(int pt) {
     // size (a no-op if a cached total already exists at this size). The
     // chapter-title index and lengths _indexer.start() also checks are
     // font-independent, so this just confirms their cache hits again.
-    _indexer.start(_epubLoader, getOriginalFilename(normalizedBookName(_currentBookPath)), _fontSizePt,
+    _indexer.start(_epubLoader.get(), getOriginalFilename(normalizedBookName(_currentBookPath)), _fontSizePt,
                    _fontFamily);
 }
 
@@ -1802,7 +1800,7 @@ void AppReader::applyFontFamily(int family) {
     _needsRedraw = true;
 
     // Same reasoning as applyFontSize: the total is specific to this family.
-    _indexer.start(_epubLoader, getOriginalFilename(normalizedBookName(_currentBookPath)), _fontSizePt,
+    _indexer.start(_epubLoader.get(), getOriginalFilename(normalizedBookName(_currentBookPath)), _fontSizePt,
                    _fontFamily);
 }
 
