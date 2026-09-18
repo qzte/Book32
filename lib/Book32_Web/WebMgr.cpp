@@ -1121,12 +1121,19 @@ void WebMgr::registerBookRoutes() {
 // verificação ficam no GitHubMgr; aqui só se consulta e se agenda.
 void WebMgr::registerUpdateRoutes() {
     // API: Check for Updates
-    server->on("/api/check_update", HTTP_GET, [](AsyncWebServerRequest *request) {
-        AsyncResponseStream *response = request->beginResponseStream("application/json");
-        DynamicJsonDocument doc(1024);
+    server->on("/api/check_update", HTTP_GET, [](AsyncWebServerRequest* request) {
+        AsyncResponseStream* response = request->beginResponseStream("application/json");
 
         Serial.println("Checking for updates...");
         UpdateInfo info = GitHubMgr::getInstance().checkUpdate(SYSTEM_VERSION);
+
+        // Capacidade conforme o conteudo, nao um 1024 fixo. O release_notes e o
+        // corpo inteiro da release (com as linhas de SHA256 e ED25519, que ja
+        // sao algumas centenas de bytes), e um documento que transborda sai
+        // como JSON cortado: o browser falha o res.json() e mostra um erro de
+        // ligacao ao dispositivo que nao aconteceu. Os tres campos novos
+        // abaixo aproximavam ainda mais desse limite.
+        DynamicJsonDocument doc(1024 + info.notes.length() + info.version.length());
 
         doc["hasUpdate"] = info.available;
         doc["latest"] = info.version;
@@ -1134,11 +1141,21 @@ void WebMgr::registerUpdateRoutes() {
         doc["hasFirmware"] = info.hasFirmware;
         doc["hasFilesystem"] = info.hasFilesystem;
         doc["release_notes"] = info.notes;
+        // `hasUpdate: false` respondia ao mesmo tempo "nao ha nada novo" e
+        // "nao consegui perguntar", e a UI dizia "Estas actualizado" nos dois
+        // casos. `checked` separa uma coisa da outra; `status` diz porque e que
+        // falhou e `httpCode` da o detalhe. O hasUpdate fica como estava, para
+        // nao partir quem ja o le.
+        doc["checked"] = updateCheckCompleted(info.status);
+        doc["status"] = updateCheckStatusKey(info.status);
+        doc["httpCode"] = info.httpCode;
 
         if (info.available) {
             Serial.printf("Update available: %s\n", info.version.c_str());
-        } else {
+        } else if (updateCheckCompleted(info.status)) {
             Serial.println("No update available");
+        } else {
+            Serial.printf("Update check did not complete: %s\n", updateCheckStatusKey(info.status));
         }
 
         serializeJson(doc, *response);

@@ -1,15 +1,28 @@
 #pragma once
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include "../Book32_Core/UpdateCheckLogic.h"
 
+// Cada campo tem valor por omissao e o checkUpdate() so escreve o que souber:
+// antes isto era inicializado por agregado com uma lista posicional de onze
+// valores, que qualquer campo novo partia em silencio.
 struct UpdateInfo {
-    bool available;
+    bool available = false;
+    // Porque o `available` sozinho nao chegava: um false dizia ao mesmo tempo
+    // "nao ha nada novo" e "nao consegui perguntar" — sem rede, 403, 404,
+    // resposta ilegivel — e quem chamava dizia ao utilizador que estava
+    // actualizado nos dois casos. Ver UpdateCheckLogic.h.
+    UpdateCheckStatus status = UpdateCheckStatus::Offline;
+    // Codigo devolvido pelo HTTPClient, so para diagnostico na UI e no log
+    // (positivo = estado HTTP, <= 0 = erro de transporte). 0 quando o pedido
+    // nem chegou a ser feito.
+    int httpCode = 0;
     String version;
     String firmwareUrl;
     String filesystemUrl;
     String notes;
-    bool hasFirmware;
-    bool hasFilesystem;
+    bool hasFirmware = false;
+    bool hasFilesystem = false;
     // v1.6.0: expected SHA-256 of each asset, parsed from the release body.
     // Empty when the release did not publish one — the download then aborts.
     String firmwareSha256;

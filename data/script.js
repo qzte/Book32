@@ -148,15 +148,51 @@ async function checkUpdate() {
             msg.style.color = "var(--success)";
             updateBtn.classList.remove('hidden');
             btn.innerText = "Verificar Outra Vez";
+        } else if (data.checked === false) {
+            // O dispositivo tentou e não conseguiu falar com o GitHub. Isto
+            // não é "estás actualizado": é não saber. Dizer o contrário
+            // esconderia tanto uma avaria de rede como alguém a bloquear as
+            // actualizações — e é a única coisa que as assinaturas Ed25519
+            // não protegem (ver lib/Book32_Core/UpdateCheckLogic.h).
+            msg.innerText = updateCheckFailureText(data);
+            msg.style.color = "var(--danger)";
+            btn.innerText = "Tentar Outra Vez";
         } else {
+            // checked === true, ou undefined num firmware anterior a este
+            // campo: nesse caso mantém-se o comportamento antigo.
             msg.innerText = "Estás actualizado.";
             msg.style.color = "var(--text-secondary)";
             btn.innerText = "Verificar Outra Vez";
         }
     } catch (e) {
-        msg.innerText = "Erro ao procurar actualizações.";
+        // Falha entre o browser e o dispositivo, não entre o dispositivo e o
+        // GitHub — daí o texto diferente do de cima.
+        msg.innerText = "Não foi possível falar com o dispositivo.";
         msg.style.color = "var(--danger)";
         btn.innerText = "Tentar Outra Vez";
+    }
+}
+
+// Texto para cada motivo de uma verificação que não chegou ao fim. As chaves
+// vêm de updateCheckStatusKey() em lib/Book32_Core/UpdateCheckLogic.h.
+function updateCheckFailureText(data) {
+    switch (data.status) {
+        case "offline":
+            return "O dispositivo não está ligado à rede, por isso não pôde verificar.";
+        case "no_release":
+            return "Não foi encontrada nenhuma versão publicada no GitHub.";
+        case "rate_limited":
+            return "O GitHub limitou os pedidos por agora. Tente daqui a alguns minutos.";
+        case "bad_response":
+            return "O GitHub respondeu, mas a resposta não pôde ser lida.";
+        case "http_error":
+            return data.httpCode > 0
+                ? `Não foi possível falar com o GitHub (HTTP ${data.httpCode}).`
+                : "Não foi possível estabelecer ligação ao GitHub.";
+        default:
+            // Um estado que esta versão da UI não conhece: dizer o que se
+            // sabe, que é que a verificação não deu resposta.
+            return "Não foi possível verificar se há actualizações.";
     }
 }
 

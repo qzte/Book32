@@ -94,6 +94,23 @@ const uint8_t* AppSettings::getIconImage() {
     return icon_settings_160x160;
 }
 
+// Texto curto para o rodape de estado quando a verificacao nao chegou ao fim.
+// Sem acentos, como o resto das mensagens deste menu.
+static const char* updateCheckFailureStatus(const UpdateInfo& info) {
+    switch (info.status) {
+        case UpdateCheckStatus::Offline:
+            return "Sem rede para verificar.";
+        case UpdateCheckStatus::NoRelease:
+            return "Nenhuma versao publicada.";
+        case UpdateCheckStatus::RateLimited:
+            return "GitHub limitou os pedidos. Tente depois.";
+        case UpdateCheckStatus::BadResponse:
+            return "Resposta do GitHub ilegivel.";
+        default:
+            return "Nao foi possivel verificar.";
+    }
+}
+
 void AppSettings::start() {
     SettingsStore& store = SettingsStore::getInstance();
     _reader = store.loadReader();
@@ -360,8 +377,13 @@ void AppSettings::handleInput(InputAction action) {
                             nullptr,
                             1 // Core 1
                         );
-                    } else {
+                    } else if (updateCheckCompleted(info.status)) {
                         setStatus("Ja tem a versao mais recente.");
+                    } else {
+                        // O mesmo que na UI web: nao ter conseguido perguntar
+                        // nao e o mesmo que nao haver nada novo. Ver
+                        // lib/Book32_Core/UpdateCheckLogic.h.
+                        setStatus(updateCheckFailureStatus(info));
                     }
                 }
             } else if (_subSelectedIndex == 1) {
