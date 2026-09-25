@@ -5,13 +5,23 @@
 #include "CoverImage.h"
 #include "ImageDither.h"
 
+// Snaps to the nearest of the six generated body sizes (10/12/14/16/18/20px).
+// Kept local rather than routed through SettingsStore::clampFontSize so
+// TextRenderer stays usable without pulling in the settings/filesystem layer.
+static int normalizeFontSize(int size) {
+    if (size < 11) return 10;
+    if (size < 13) return 12;
+    if (size < 15) return 14;
+    if (size < 17) return 16;
+    if (size < 19) return 18;
+    return 20;
+}
+
 TextRenderer::TextRenderer(int width, int height, int fontSize) {
     _width = width;
     _height = height;
-    // Normalize to a supported body size (9/12/18); default to small.
-    if (fontSize >= 18) _fontSize = 18;
-    else if (fontSize >= 12) _fontSize = 12;
-    else _fontSize = 9;
+    // Normalize to a supported body size (10/12/14/16/18/20); default to smallest.
+    _fontSize = normalizeFontSize(fontSize);
     _cachedPage = -1;
     _lastGFXFont = nullptr;
     memset(_gfxCharWidths, 0, sizeof(_gfxCharWidths));
@@ -19,7 +29,7 @@ TextRenderer::TextRenderer(int width, int height, int fontSize) {
 }
 
 void TextRenderer::setFontSize(int size) {
-    int normalized = (size >= 18) ? 18 : (size >= 12 ? 12 : 9);
+    int normalized = normalizeFontSize(size);
     if (normalized == _fontSize) return;
     _fontSize = normalized;
     // Force width cache + pagination to be recomputed for the new font.
@@ -58,54 +68,87 @@ const GFXfont* TextRenderer::getGFXFont(TextStyle style, int& lineHeight) {
     const GFXfont* bold;
     const GFXfont* h4; const GFXfont* h3; const GFXfont* h2; const GFXfont* h1;
 
-    // Each family provides Regular at 9/12/18pt and Bold at 9/12/18/24pt,
-    // mirroring the FreeSans set below so header steps behave identically
-    // regardless of which family is selected.
-#define B32_FONT_SET(NORMAL9, NORMAL12, NORMAL18, BOLD9, BOLD12, BOLD18, BOLD24) \
+    // Each family provides Regular at 10/12/14/16/18/20pt and Bold at
+    // 10/12/14/16/18/20/24pt, mirroring the FreeSans set below so header
+    // steps behave identically regardless of which family is selected.
+    //
+    // Header ladder: h4 is bold at the body size itself, h3/h2 step up
+    // through the same size ladder (capped at 24), and h1 is always the top
+    // 24pt bold so the hierarchy holds at every body size without headers
+    // ballooning as the body size grows.
+#define B32_FONT_SET(NORMAL10, NORMAL12, NORMAL14, NORMAL16, NORMAL18, NORMAL20, \
+                      BOLD10, BOLD12, BOLD14, BOLD16, BOLD18, BOLD20, BOLD24) \
     switch (_fontSize) { \
-        case 18:  /* Large */ \
-            normal = &NORMAL18; bold = &BOLD18; \
-            h4 = &BOLD18;       h3 = &BOLD18; \
+        case 20: \
+            normal = &NORMAL20; bold = &BOLD20; \
+            h4 = &BOLD20;       h3 = &BOLD24; \
             h2 = &BOLD24;       h1 = &BOLD24; \
             break; \
-        case 12:  /* Medium */ \
-            normal = &NORMAL12; bold = &BOLD12; \
-            h4 = &BOLD12;       h3 = &BOLD18; \
+        case 18: \
+            normal = &NORMAL18; bold = &BOLD18; \
+            h4 = &BOLD18;       h3 = &BOLD20; \
+            h2 = &BOLD24;       h1 = &BOLD24; \
+            break; \
+        case 16: \
+            normal = &NORMAL16; bold = &BOLD16; \
+            h4 = &BOLD16;       h3 = &BOLD18; \
+            h2 = &BOLD20;       h1 = &BOLD24; \
+            break; \
+        case 14: \
+            normal = &NORMAL14; bold = &BOLD14; \
+            h4 = &BOLD14;       h3 = &BOLD16; \
             h2 = &BOLD18;       h1 = &BOLD24; \
             break; \
-        case 9:   /* Small (default) */ \
+        case 12: \
+            normal = &NORMAL12; bold = &BOLD12; \
+            h4 = &BOLD12;       h3 = &BOLD14; \
+            h2 = &BOLD16;       h1 = &BOLD24; \
+            break; \
+        case 10:  /* Smallest (default) */ \
         default: \
-            normal = &NORMAL9;  bold = &BOLD9; \
-            h4 = &BOLD9;        h3 = &BOLD12; \
-            h2 = &BOLD18;       h1 = &BOLD24; \
+            normal = &NORMAL10; bold = &BOLD10; \
+            h4 = &BOLD10;       h3 = &BOLD12; \
+            h2 = &BOLD14;       h1 = &BOLD24; \
             break; \
     }
 
     switch (_fontFamily) {
         case READER_FONT_MERRIWEATHER:
-            B32_FONT_SET(Merriweather_Regular9pt8b, Merriweather_Regular12pt8b, Merriweather_Regular18pt8b,
-                         Merriweather_Bold9pt8b, Merriweather_Bold12pt8b, Merriweather_Bold18pt8b, Merriweather_Bold24pt8b)
+            B32_FONT_SET(Merriweather_Regular10pt8b, Merriweather_Regular12pt8b, Merriweather_Regular14pt8b,
+                         Merriweather_Regular16pt8b, Merriweather_Regular18pt8b, Merriweather_Regular20pt8b,
+                         Merriweather_Bold10pt8b, Merriweather_Bold12pt8b, Merriweather_Bold14pt8b,
+                         Merriweather_Bold16pt8b, Merriweather_Bold18pt8b, Merriweather_Bold20pt8b, Merriweather_Bold24pt8b)
             break;
         case READER_FONT_LITERATA:
-            B32_FONT_SET(Literata_Regular9pt8b, Literata_Regular12pt8b, Literata_Regular18pt8b,
-                         Literata_Bold9pt8b, Literata_Bold12pt8b, Literata_Bold18pt8b, Literata_Bold24pt8b)
+            B32_FONT_SET(Literata_Regular10pt8b, Literata_Regular12pt8b, Literata_Regular14pt8b,
+                         Literata_Regular16pt8b, Literata_Regular18pt8b, Literata_Regular20pt8b,
+                         Literata_Bold10pt8b, Literata_Bold12pt8b, Literata_Bold14pt8b,
+                         Literata_Bold16pt8b, Literata_Bold18pt8b, Literata_Bold20pt8b, Literata_Bold24pt8b)
             break;
         case READER_FONT_SOURCE_SERIF:
-            B32_FONT_SET(SourceSerif4_Regular9pt8b, SourceSerif4_Regular12pt8b, SourceSerif4_Regular18pt8b,
-                         SourceSerif4_Bold9pt8b, SourceSerif4_Bold12pt8b, SourceSerif4_Bold18pt8b, SourceSerif4_Bold24pt8b)
+            B32_FONT_SET(SourceSerif4_Regular10pt8b, SourceSerif4_Regular12pt8b, SourceSerif4_Regular14pt8b,
+                         SourceSerif4_Regular16pt8b, SourceSerif4_Regular18pt8b, SourceSerif4_Regular20pt8b,
+                         SourceSerif4_Bold10pt8b, SourceSerif4_Bold12pt8b, SourceSerif4_Bold14pt8b,
+                         SourceSerif4_Bold16pt8b, SourceSerif4_Bold18pt8b, SourceSerif4_Bold20pt8b, SourceSerif4_Bold24pt8b)
             break;
         case READER_FONT_GELASIO:
-            B32_FONT_SET(Gelasio_Regular9pt8b, Gelasio_Regular12pt8b, Gelasio_Regular18pt8b,
-                         Gelasio_Bold9pt8b, Gelasio_Bold12pt8b, Gelasio_Bold18pt8b, Gelasio_Bold24pt8b)
+            B32_FONT_SET(Gelasio_Regular10pt8b, Gelasio_Regular12pt8b, Gelasio_Regular14pt8b,
+                         Gelasio_Regular16pt8b, Gelasio_Regular18pt8b, Gelasio_Regular20pt8b,
+                         Gelasio_Bold10pt8b, Gelasio_Bold12pt8b, Gelasio_Bold14pt8b,
+                         Gelasio_Bold16pt8b, Gelasio_Bold18pt8b, Gelasio_Bold20pt8b, Gelasio_Bold24pt8b)
             break;
         case READER_FONT_OPEN_SANS:
-            B32_FONT_SET(OpenSans_Regular9pt8b, OpenSans_Regular12pt8b, OpenSans_Regular18pt8b,
-                         OpenSans_Bold9pt8b, OpenSans_Bold12pt8b, OpenSans_Bold18pt8b, OpenSans_Bold24pt8b)
+            B32_FONT_SET(OpenSans_Regular10pt8b, OpenSans_Regular12pt8b, OpenSans_Regular14pt8b,
+                         OpenSans_Regular16pt8b, OpenSans_Regular18pt8b, OpenSans_Regular20pt8b,
+                         OpenSans_Bold10pt8b, OpenSans_Bold12pt8b, OpenSans_Bold14pt8b,
+                         OpenSans_Bold16pt8b, OpenSans_Bold18pt8b, OpenSans_Bold20pt8b, OpenSans_Bold24pt8b)
             break;
         case READER_FONT_SANS:
         default:
-            B32_FONT_SET(FreeSans9pt8b, FreeSans12pt8b, FreeSans18pt8b,
-                         FreeSansBold9pt8b, FreeSansBold12pt8b, FreeSansBold18pt8b, FreeSansBold24pt8b)
+            B32_FONT_SET(FreeSans10pt8b, FreeSans12pt8b, FreeSans14pt8b,
+                         FreeSans16pt8b, FreeSans18pt8b, FreeSans20pt8b,
+                         FreeSansBold10pt8b, FreeSansBold12pt8b, FreeSansBold14pt8b,
+                         FreeSansBold16pt8b, FreeSansBold18pt8b, FreeSansBold20pt8b, FreeSansBold24pt8b)
             break;
     }
 #undef B32_FONT_SET

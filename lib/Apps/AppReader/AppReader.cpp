@@ -303,7 +303,7 @@ AppReader::AppReader() {
     _currentPageRenderValid = false;
     _pageTurnsSinceRefresh = 0;
     _refreshEveryNPages = 10; // Default to full refresh every 10 pages
-    _fontSizePt = 9;          // Default body size (small)
+    _fontSizePt = 10;         // Default body size (smallest)
     _fontFamily = READER_FONT_SANS; // Default family (system sans-serif)
     _readingFirstDraw = true;
     loadSettings();
@@ -323,8 +323,7 @@ void AppReader::loadSettings() {
         if (!deserializeJson(doc, file)) {
             if (doc.containsKey("refreshFrequency")) _refreshEveryNPages = doc["refreshFrequency"];
             if (doc.containsKey("fontSize")) {
-                int pt = doc["fontSize"];
-                _fontSizePt = (pt >= 18) ? 18 : (pt >= 12 ? 12 : 9);
+                _fontSizePt = SettingsStore::clampFontSize(doc["fontSize"]);
             }
             if (doc.containsKey("fontFamily")) {
                 int fam = doc["fontFamily"];
@@ -1764,7 +1763,7 @@ void AppReader::update() {
 }
 
 void AppReader::applyFontSize(int pt) {
-    int normalized = (pt >= 18) ? 18 : (pt >= 12 ? 12 : 9);
+    int normalized = SettingsStore::clampFontSize(pt);
     _fontSizePt = normalized;
     if (_textRenderer) _textRenderer->setFontSize(normalized);
 

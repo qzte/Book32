@@ -75,7 +75,7 @@ public:
     void handleInput(InputAction action);
     void forceRedraw() override;
 
-    // Apply a new reading font size (9/12/18pt) live. Safe to call from the
+    // Apply a new reading font size (10/12/14/16/18/20px) live. Safe to call from the
     // main loop; re-paginates the current page from the saved position.
     void applyFontSize(int pt) override;
 
@@ -166,7 +166,7 @@ private:
     // Settings
     int _refreshEveryNPages;
     int _pageTurnsSinceRefresh;
-    int _fontSizePt;          // Reading body font size in points (9/12/18)
+    int _fontSizePt;          // Reading body font size in px (10/12/14/16/18/20)
     int _fontFamily;          // Reading font family (see ReaderFontFamily)
     bool _readingFirstDraw;   // Forces a full refresh on the next reading draw
     void loadSettings();

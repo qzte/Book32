@@ -23,12 +23,15 @@ SettingsStore::Transaction::~Transaction() {
 }
 
 // --- Clamping ---------------------------------------------------------------
-// The reading fonts are only generated at three sizes, so anything else would
+// The reading fonts are only generated at six sizes, so anything else would
 // fall back to a missing glyph set. Snap to the nearest supported size.
-int SettingsStore::clampFontSize(int pt) {
-    if (pt >= 18) return 18;
-    if (pt >= 12) return 12;
-    return 9;
+int SettingsStore::clampFontSize(int px) {
+    if (px < 11) return 10;
+    if (px < 13) return 12;
+    if (px < 15) return 14;
+    if (px < 17) return 16;
+    if (px < 19) return 18;
+    return 20;
 }
 
 int SettingsStore::clampFontFamily(int family) {
