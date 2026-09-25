@@ -48,8 +48,8 @@ struct RenderedLine {
 class TextRenderer {
 public:
     TextRenderer(int width, int height, int fontSize = 26);
-    
-    // Body text size in points. Supported: 9 (small), 12 (medium), 18 (large).
+
+    // Body text size in px. Supported: 10, 12, 14, 16, 18, 20.
     // Invalidates caches so word-wrap and pagination recompute at the new size.
     void setFontSize(int size);
     int getFontSize() const { return _fontSize; }

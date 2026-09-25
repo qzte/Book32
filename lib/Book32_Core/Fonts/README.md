@@ -1,10 +1,11 @@
 # Reader font families
 
 These are pre-rendered Adafruit-GFX bitmap fonts (`GFXfont`), generated with
-the `fontconvert` tool from Adafruit-GFX-Library, at 9/12/18pt (Regular) and
-9/12/18/24pt (Bold). `FreeSans.h`/`.cpp` additionally carries Regular 24pt,
-replacing the ASCII-only Adafruit `<Fonts/FreeSans*pt7b.h>` headers across the
-whole firmware.
+the `fontconvert` tool from Adafruit-GFX-Library, at 10/12/14/16/18/20pt
+(Regular) and 10/12/14/16/18/20/24pt (Bold). `FreeSans.h`/`.cpp` additionally
+carries Regular 9pt and Bold 9pt (used by the on-device system UI via
+`FontMgr`, not by the reader), replacing the ASCII-only Adafruit
+`<Fonts/FreeSans*pt7b.h>` headers across the whole firmware.
 
 ## Charset and naming
 
@@ -39,13 +40,29 @@ non-redistributable typefaces:
 | `FreeSans.h/.cpp`   | GNU FreeFont FreeSans     | Adafruit FreeSans (ASCII-only) | GPLv3 with font exception |
 | `OpenSans.h/.cpp`   | Open Sans                 | (extra sans-serif option, not a substitute) | SIL Open Font License 1.1 |
 
-Source TTFs: [google/fonts](https://github.com/google/fonts) (`ofl/` directory).
-Variable font instances were pinned to static Regular (wght=400) and Bold
-(wght=700) weights with `fonttools varLib.instancer` before conversion. Open
-Sans was the exception: its `static/` subfolder already ships pre-instanced
-Regular/Bold TTFs, so it went straight into `fontconvert` with no instancer
-step, and its generated yAdvance (24/32/48/64 for 9/12/18/24pt) came out
-cleanly proportional with this project's FreeType/DPI settings, so it needed
-no manual patch.
+Source TTFs: [google/fonts](https://github.com/google/fonts) (`ofl/` directory,
+the variable `[wght]`/`[opsz,wght]`/etc. file in each family folder — none of
+these five families ship a pre-instanced `static/` subfolder). Variable font
+instances were pinned to the "Regular" and "Bold" named instances
+(wght=400/700, plus each family's fixed `opsz`/`wdth` where it has one — see
+each font's `fvar` table) with `fonttools varLib.instancer` before conversion.
+Their generated yAdvance came out identical to this project's previously
+established per-size line heights (verified at the sizes that predate this
+9-value -> 6-value size-set change: 12/18/24pt for all five, plus what was
+9pt for OpenSans/Merriweather/Literata/SourceSerif4/Gelasio before the reader
+dropped that size), so none of the six families needed a manual yAdvance
+patch this time around — the note above is about *future* regenerations from
+a different TTF mirror or FreeType build, which can (and, for FreeSans, did)
+drift.
+
+`FreeSans.h`/`.cpp` is the one exception: its 10/14/16/20pt sizes were
+generated from a different FreeSans mirror
+([opensourcedesign/fonts](https://github.com/opensourcedesign/fonts), since
+the original Debian `fonts-freefont-ttf` package isn't reachable from every
+build environment) than the 9/12/18/24pt sizes already in the file, and that
+mirror's own yAdvance output diverged from the established anchors outside
+of 12pt (which matched by coincidence). Its four new sizes are patched to
+values linearly interpolated between the established 9/12/18/24pt anchors
+instead — see the header comment in `FreeSans.h`.
 
 Full OFL 1.1 license text: https://openfontlicense.org
