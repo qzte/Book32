@@ -407,29 +407,3 @@ ate agora, e e a unica parte do OTA que as assinaturas Ed25519 nao protegem
 (ver lib/Book32_Core/UpdateCheckLogic.h).
 Verificacao normal, com rede: confirmar que o caminho feliz nao mudou — diz
 "Estas actualizado" quando esta mesmo, e mostra a versao nova quando ha uma.
-
-=== v1.27.0 — a verificar no dispositivo (nao coberto pelos testes de host) ===
-(ver PR #101 no GitHub; o pio run correu na CI e o resultado (build da
-firmware) ficou verde, mas as fontes bitmap novas nunca foram vistas num
-e-ink real — os testes de host nao cobrem GFXfont/TextRenderer)
-Definicoes do leitor > Tamanho da letra: em vez de Pequeno/Medio/Grande,
-mostra agora 10/12/14/16/18/20px, tanto na web UI como no menu do
-dispositivo (onde passa a aparecer como "N px" em vez de "N pt"). E o
-primeiro ponto.
-Com um livro aberto, percorrer os seis tamanhos (web UI e/ou o menu no
-dispositivo) para cada uma das seis familias de letra (FreeSans,
-Merriweather, Literata, Source Serif 4, Gelasio, Open Sans): confirmar que o
-texto continua legivel a todos os tamanhos, sem letras cortadas ou
-sobrepostas, e que a paginacao se refaz sem reiniciar. Todas as fontes foram
-regeneradas com o fontconvert a partir das mesmas fontes TTF de origem.
-Cabecalhos (titulos de capitulo) nos tamanhos extremos (10px e 20px):
-confirmar que a hierarquia H1 > H2 > H3 > H4 continua visualmente distinta e
-que nenhum cabecalho fica maior que o topo (24pt) nem mais pequeno que o
-corpo do texto.
-Dispositivo que ja tinha um tamanho de letra gravado antes desta
-actualizacao (9, 12 ou 18pt): confirmar que abre com 10/12/18px
-respectivamente (o 9 antigo migra para 10 via SettingsStore::clampFontSize)
-em vez de cair para um tamanho por omissao inesperado.
-Menu do dispositivo (Definicoes > Tamanho da letra): confirmar que ciclar
-por N passa pelos seis valores na ordem 10 -> 12 -> 14 -> 16 -> 18 -> 20 -> 10
-sem ficar preso nem saltar nenhum.
