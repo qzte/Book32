@@ -303,7 +303,7 @@ AppReader::AppReader() {
     _currentPageRenderValid = false;
     _pageTurnsSinceRefresh = 0;
     _refreshEveryNPages = 10; // Default to full refresh every 10 pages
-    _fontSizePt = 10;         // Default body size (smallest)
+    _fontSizePt = 9;          // Default body size (smallest)
     _fontFamily = READER_FONT_SANS; // Default family (system sans-serif)
     _readingFirstDraw = true;
     loadSettings();

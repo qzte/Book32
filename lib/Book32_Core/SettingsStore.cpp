@@ -23,15 +23,18 @@ SettingsStore::Transaction::~Transaction() {
 }
 
 // --- Clamping ---------------------------------------------------------------
-// The reading fonts are only generated at six sizes, so anything else would
-// fall back to a missing glyph set. Snap to the nearest supported size.
+// The reading fonts are only generated at seven sizes, so anything else would
+// fall back to a missing glyph set. Snap to the nearest supported size. The
+// gap from 14 to 16 is 2px, unlike the other (1px) steps, but the boundary
+// still sits at the midpoint (15) same as every other pair.
 int SettingsStore::clampFontSize(int px) {
+    if (px < 10) return 9;
     if (px < 11) return 10;
+    if (px < 12) return 11;
     if (px < 13) return 12;
+    if (px < 14) return 13;
     if (px < 15) return 14;
-    if (px < 17) return 16;
-    if (px < 19) return 18;
-    return 20;
+    return 16;
 }
 
 int SettingsStore::clampFontFamily(int family) {

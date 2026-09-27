@@ -46,7 +46,7 @@ static const char* FONT_FAMILY_NAMES[6] = {"FreeSans",       "Merriweather", "Li
 
 // Cycle sets. Every value here must survive its SettingsStore clamp, otherwise
 // cycling would silently snap back and the row would appear stuck.
-static const int FONT_SIZES[] = {10, 12, 14, 16, 18, 20};
+static const int FONT_SIZES[] = {9, 10, 11, 12, 13, 14, 16};
 static const int REFRESH_FREQS[] = {5, 10, 20, 50};
 static const int SLEEP_TIMEOUTS[] = {0, 5, 15, 30, 60};
 
@@ -229,7 +229,7 @@ String AppSettings::valueForRow(int index) const {
 void AppSettings::cycleValue(int index) {
     switch (index) {
         case ROW_FONT_SIZE:
-            _reader.fontSize = cycleInt(FONT_SIZES, 6, _reader.fontSize);
+            _reader.fontSize = cycleInt(FONT_SIZES, 7, _reader.fontSize);
             break;
         case ROW_ROTATION:
             _display.rotation = (_display.rotation == 3) ? 1 : 3;

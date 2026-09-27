@@ -15,18 +15,20 @@
 
 #include <Adafruit_GFX.h>
 
+extern const GFXfont Literata_Regular9pt8b;
 extern const GFXfont Literata_Regular10pt8b;
+extern const GFXfont Literata_Regular11pt8b;
 extern const GFXfont Literata_Regular12pt8b;
+extern const GFXfont Literata_Regular13pt8b;
 extern const GFXfont Literata_Regular14pt8b;
 extern const GFXfont Literata_Regular16pt8b;
-extern const GFXfont Literata_Regular18pt8b;
-extern const GFXfont Literata_Regular20pt8b;
+extern const GFXfont Literata_Bold9pt8b;
 extern const GFXfont Literata_Bold10pt8b;
+extern const GFXfont Literata_Bold11pt8b;
 extern const GFXfont Literata_Bold12pt8b;
+extern const GFXfont Literata_Bold13pt8b;
 extern const GFXfont Literata_Bold14pt8b;
 extern const GFXfont Literata_Bold16pt8b;
-extern const GFXfont Literata_Bold18pt8b;
-extern const GFXfont Literata_Bold20pt8b;
 extern const GFXfont Literata_Bold24pt8b;
 
 #endif // FONT_LITERATA_H

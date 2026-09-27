@@ -21,7 +21,7 @@
 
 struct ReaderSettings {
     int refreshFrequency = 10;  // Full e-ink refresh every N page turns
-    int fontSize = 10;          // Reading body size in px: 10, 12, 14, 16, 18 or 20
+    int fontSize = 9;           // Reading body size in px: 9, 10, 11, 12, 13, 14 or 16
     int fontFamily = 0;         // See ReaderFontFamily: 0..5
     bool showChapter = false;   // Show the current chapter title in the footer
     bool showPageNumber = true; // Show "Pag. N de M" in the footer
@@ -54,7 +54,7 @@ public:
 
     // Clamping helpers, exposed so the UI can snap a value to the next legal
     // one while cycling rather than duplicating the allowed sets.
-    static int clampFontSize(int px);       // -> 10, 12, 14, 16, 18 or 20
+    static int clampFontSize(int px);       // -> 9, 10, 11, 12, 13, 14 or 16
     static int clampFontFamily(int family); // -> 0..5
     static int clampRotation(int rotation); // -> 1 or 3
     static int clampRefreshFrequency(int n);

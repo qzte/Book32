@@ -15,18 +15,20 @@
 
 #include <Adafruit_GFX.h>
 
+extern const GFXfont Gelasio_Regular9pt8b;
 extern const GFXfont Gelasio_Regular10pt8b;
+extern const GFXfont Gelasio_Regular11pt8b;
 extern const GFXfont Gelasio_Regular12pt8b;
+extern const GFXfont Gelasio_Regular13pt8b;
 extern const GFXfont Gelasio_Regular14pt8b;
 extern const GFXfont Gelasio_Regular16pt8b;
-extern const GFXfont Gelasio_Regular18pt8b;
-extern const GFXfont Gelasio_Regular20pt8b;
+extern const GFXfont Gelasio_Bold9pt8b;
 extern const GFXfont Gelasio_Bold10pt8b;
+extern const GFXfont Gelasio_Bold11pt8b;
 extern const GFXfont Gelasio_Bold12pt8b;
+extern const GFXfont Gelasio_Bold13pt8b;
 extern const GFXfont Gelasio_Bold14pt8b;
 extern const GFXfont Gelasio_Bold16pt8b;
-extern const GFXfont Gelasio_Bold18pt8b;
-extern const GFXfont Gelasio_Bold20pt8b;
 extern const GFXfont Gelasio_Bold24pt8b;
 
 #endif // FONT_GELASIO_H

@@ -15,18 +15,20 @@
 
 #include <Adafruit_GFX.h>
 
+extern const GFXfont SourceSerif4_Regular9pt8b;
 extern const GFXfont SourceSerif4_Regular10pt8b;
+extern const GFXfont SourceSerif4_Regular11pt8b;
 extern const GFXfont SourceSerif4_Regular12pt8b;
+extern const GFXfont SourceSerif4_Regular13pt8b;
 extern const GFXfont SourceSerif4_Regular14pt8b;
 extern const GFXfont SourceSerif4_Regular16pt8b;
-extern const GFXfont SourceSerif4_Regular18pt8b;
-extern const GFXfont SourceSerif4_Regular20pt8b;
+extern const GFXfont SourceSerif4_Bold9pt8b;
 extern const GFXfont SourceSerif4_Bold10pt8b;
+extern const GFXfont SourceSerif4_Bold11pt8b;
 extern const GFXfont SourceSerif4_Bold12pt8b;
+extern const GFXfont SourceSerif4_Bold13pt8b;
 extern const GFXfont SourceSerif4_Bold14pt8b;
 extern const GFXfont SourceSerif4_Bold16pt8b;
-extern const GFXfont SourceSerif4_Bold18pt8b;
-extern const GFXfont SourceSerif4_Bold20pt8b;
 extern const GFXfont SourceSerif4_Bold24pt8b;
 
 #endif // FONT_SOURCE_SERIF4_H

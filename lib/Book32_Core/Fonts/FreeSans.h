@@ -16,22 +16,28 @@
 
 extern const GFXfont FreeSans9pt8b;
 extern const GFXfont FreeSans10pt8b;
+extern const GFXfont FreeSans11pt8b;
 extern const GFXfont FreeSans12pt8b;
+extern const GFXfont FreeSans13pt8b;
 extern const GFXfont FreeSans14pt8b;
 extern const GFXfont FreeSans16pt8b;
 extern const GFXfont FreeSans18pt8b;
-extern const GFXfont FreeSans20pt8b;
 extern const GFXfont FreeSans24pt8b;
 extern const GFXfont FreeSansBold9pt8b;
 extern const GFXfont FreeSansBold10pt8b;
+extern const GFXfont FreeSansBold11pt8b;
 extern const GFXfont FreeSansBold12pt8b;
+extern const GFXfont FreeSansBold13pt8b;
 extern const GFXfont FreeSansBold14pt8b;
 extern const GFXfont FreeSansBold16pt8b;
 extern const GFXfont FreeSansBold18pt8b;
-extern const GFXfont FreeSansBold20pt8b;
 extern const GFXfont FreeSansBold24pt8b;
 
-// 10/14/16/20pt sizes were added later (reader font-size options) and
+// 18pt/Bold18pt exist only for FontMgr (the on-device system UI, see
+// FontMgr.cpp); the reader (TextRenderer) no longer references them since
+// the body size options stopped going up to 18px.
+//
+// 10/11/13/14/16pt sizes were added later (reader font-size options) and
 // generated from a different FreeSans mirror (opensourcedesign/fonts) than
 // the original Debian fonts-freefont-ttf build, so their yAdvance is
 // linearly interpolated between the established 9/12/18/24 anchors above

@@ -15,18 +15,20 @@
 
 #include <Adafruit_GFX.h>
 
+extern const GFXfont OpenSans_Regular9pt8b;
 extern const GFXfont OpenSans_Regular10pt8b;
+extern const GFXfont OpenSans_Regular11pt8b;
 extern const GFXfont OpenSans_Regular12pt8b;
+extern const GFXfont OpenSans_Regular13pt8b;
 extern const GFXfont OpenSans_Regular14pt8b;
 extern const GFXfont OpenSans_Regular16pt8b;
-extern const GFXfont OpenSans_Regular18pt8b;
-extern const GFXfont OpenSans_Regular20pt8b;
+extern const GFXfont OpenSans_Bold9pt8b;
 extern const GFXfont OpenSans_Bold10pt8b;
+extern const GFXfont OpenSans_Bold11pt8b;
 extern const GFXfont OpenSans_Bold12pt8b;
+extern const GFXfont OpenSans_Bold13pt8b;
 extern const GFXfont OpenSans_Bold14pt8b;
 extern const GFXfont OpenSans_Bold16pt8b;
-extern const GFXfont OpenSans_Bold18pt8b;
-extern const GFXfont OpenSans_Bold20pt8b;
 extern const GFXfont OpenSans_Bold24pt8b;
 
 #endif // FONT_OPEN_SANS_H
