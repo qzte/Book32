@@ -407,30 +407,3 @@ ate agora, e e a unica parte do OTA que as assinaturas Ed25519 nao protegem
 (ver lib/Book32_Core/UpdateCheckLogic.h).
 Verificacao normal, com rede: confirmar que o caminho feliz nao mudou — diz
 "Estas actualizado" quando esta mesmo, e mostra a versao nova quando ha uma.
-
-=== v1.28.0 — a verificar no dispositivo (nao coberto pelos testes de host) ===
-(ver PR #104 e docs/plans/2026-09-25-reader-font-size-px-options-design.md;
-o pio run correu na CI e o resultado (build da firmware) ficou verde, mas
-as fontes bitmap novas nunca foram vistas num e-ink real — os testes de
-host nao cobrem GFXfont/TextRenderer)
-Definicoes do leitor > Tamanho da letra: em vez de 10/12/14/16/18/20px,
-mostra agora 9/10/11/12/13/14/16px, tanto na web UI como no menu do
-dispositivo. E o primeiro ponto.
-Com um livro aberto, percorrer os sete tamanhos (web UI e/ou o menu no
-dispositivo) para cada uma das seis familias de letra (FreeSans,
-Merriweather, Literata, Source Serif 4, Gelasio, Open Sans): confirmar que o
-texto continua legivel a todos os tamanhos, sem letras cortadas ou
-sobrepostas, e que a paginacao se refaz sem reiniciar. As cinco familias
-Google Fonts foram completamente regeneradas (a FreeSans so ganhou os
-tamanhos novos 11px e 13px, mantendo os restantes intactos).
-Cabecalhos (titulos de capitulo) nos tamanhos extremos (9px e 16px):
-confirmar que a hierarquia H1 > H2 > H3 > H4 continua visualmente distinta e
-que nenhum cabecalho fica maior que o topo (24pt) nem mais pequeno que o
-corpo do texto.
-Dispositivo que ja tinha um tamanho de letra gravado antes desta
-actualizacao (10, 12, 14, 16, 18 ou 20px): confirmar que abre com o tamanho
-suportado mais proximo (18 e 20 antigos migram para 16, o novo maximo) em
-vez de cair para um tamanho por omissao inesperado.
-Menu do dispositivo (Definicoes > Tamanho da letra): confirmar que ciclar
-por N passa pelos sete valores na ordem 9 -> 10 -> 11 -> 12 -> 13 -> 14 -> 16
--> 9 sem ficar preso nem saltar nenhum.
