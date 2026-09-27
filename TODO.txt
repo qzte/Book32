@@ -408,11 +408,11 @@ ate agora, e e a unica parte do OTA que as assinaturas Ed25519 nao protegem
 Verificacao normal, com rede: confirmar que o caminho feliz nao mudou — diz
 "Estas actualizado" quando esta mesmo, e mostra a versao nova quando ha uma.
 
-=== Tamanho da letra: sete tamanhos (9-16px) — a verificar no dispositivo (nao coberto pelos testes de host) ===
-(ver docs/plans/2026-09-25-reader-font-size-px-options-design.md; o pio run
-correu na CI e o resultado (build da firmware) ficou verde, mas as fontes
-bitmap novas nunca foram vistas num e-ink real — os testes de host nao
-cobrem GFXfont/TextRenderer)
+=== v1.28.0 — a verificar no dispositivo (nao coberto pelos testes de host) ===
+(ver PR #104 e docs/plans/2026-09-25-reader-font-size-px-options-design.md;
+o pio run correu na CI e o resultado (build da firmware) ficou verde, mas
+as fontes bitmap novas nunca foram vistas num e-ink real — os testes de
+host nao cobrem GFXfont/TextRenderer)
 Definicoes do leitor > Tamanho da letra: em vez de 10/12/14/16/18/20px,
 mostra agora 9/10/11/12/13/14/16px, tanto na web UI como no menu do
 dispositivo. E o primeiro ponto.
