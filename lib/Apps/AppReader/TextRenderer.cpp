@@ -5,22 +5,26 @@
 #include "CoverImage.h"
 #include "ImageDither.h"
 
-// Snaps to the nearest of the six generated body sizes (10/12/14/16/18/20px).
-// Kept local rather than routed through SettingsStore::clampFontSize so
-// TextRenderer stays usable without pulling in the settings/filesystem layer.
+// Snaps to the nearest of the seven generated body sizes (9/10/11/12/13/14/16px).
+// The gap from 14 to 16 is 2px, unlike the other (1px) steps, so this isn't a
+// uniform-stride lookup; the boundary between 14 and 16 sits at their
+// midpoint (15) same as every other pair. Kept local rather than routed
+// through SettingsStore::clampFontSize so TextRenderer stays usable without
+// pulling in the settings/filesystem layer.
 static int normalizeFontSize(int size) {
+    if (size < 10) return 9;
     if (size < 11) return 10;
+    if (size < 12) return 11;
     if (size < 13) return 12;
+    if (size < 14) return 13;
     if (size < 15) return 14;
-    if (size < 17) return 16;
-    if (size < 19) return 18;
-    return 20;
+    return 16;
 }
 
 TextRenderer::TextRenderer(int width, int height, int fontSize) {
     _width = width;
     _height = height;
-    // Normalize to a supported body size (10/12/14/16/18/20); default to smallest.
+    // Normalize to a supported body size (9/10/11/12/13/14/16); default to smallest.
     _fontSize = normalizeFontSize(fontSize);
     _cachedPage = -1;
     _lastGFXFont = nullptr;
@@ -68,39 +72,23 @@ const GFXfont* TextRenderer::getGFXFont(TextStyle style, int& lineHeight) {
     const GFXfont* bold;
     const GFXfont* h4; const GFXfont* h3; const GFXfont* h2; const GFXfont* h1;
 
-    // Each family provides Regular at 10/12/14/16/18/20pt and Bold at
-    // 10/12/14/16/18/20/24pt, mirroring the FreeSans set below so header
+    // Each family provides Regular at 9/10/11/12/13/14/16pt and Bold at
+    // 9/10/11/12/13/14/16/24pt, mirroring the FreeSans set below so header
     // steps behave identically regardless of which family is selected.
     //
     // Header ladder: h4 is bold at the body size itself, h3/h2 step up
     // through the same size ladder (capped at 24), and h1 is always the top
     // 24pt bold so the hierarchy holds at every body size without headers
     // ballooning as the body size grows.
-#define B32_FONT_SET(NORMAL10, NORMAL12, NORMAL14, NORMAL16, NORMAL18, NORMAL20, BOLD10, BOLD12, BOLD14,     \
-                     BOLD16, BOLD18, BOLD20, BOLD24)                                                         \
+#define B32_FONT_SET(NORMAL9, NORMAL10, NORMAL11, NORMAL12, NORMAL13, NORMAL14, NORMAL16, BOLD9, BOLD10,     \
+                     BOLD11, BOLD12, BOLD13, BOLD14, BOLD16, BOLD24)                                         \
     switch (_fontSize) {                                                                                     \
-        case 20:                                                                                             \
-            normal = &NORMAL20;                                                                              \
-            bold = &BOLD20;                                                                                  \
-            h4 = &BOLD20;                                                                                    \
-            h3 = &BOLD24;                                                                                    \
-            h2 = &BOLD24;                                                                                    \
-            h1 = &BOLD24;                                                                                    \
-            break;                                                                                           \
-        case 18:                                                                                             \
-            normal = &NORMAL18;                                                                              \
-            bold = &BOLD18;                                                                                  \
-            h4 = &BOLD18;                                                                                    \
-            h3 = &BOLD20;                                                                                    \
-            h2 = &BOLD24;                                                                                    \
-            h1 = &BOLD24;                                                                                    \
-            break;                                                                                           \
         case 16:                                                                                             \
             normal = &NORMAL16;                                                                              \
             bold = &BOLD16;                                                                                  \
             h4 = &BOLD16;                                                                                    \
-            h3 = &BOLD18;                                                                                    \
-            h2 = &BOLD20;                                                                                    \
+            h3 = &BOLD24;                                                                                    \
+            h2 = &BOLD24;                                                                                    \
             h1 = &BOLD24;                                                                                    \
             break;                                                                                           \
         case 14:                                                                                             \
@@ -108,66 +96,94 @@ const GFXfont* TextRenderer::getGFXFont(TextStyle style, int& lineHeight) {
             bold = &BOLD14;                                                                                  \
             h4 = &BOLD14;                                                                                    \
             h3 = &BOLD16;                                                                                    \
-            h2 = &BOLD18;                                                                                    \
+            h2 = &BOLD24;                                                                                    \
+            h1 = &BOLD24;                                                                                    \
+            break;                                                                                           \
+        case 13:                                                                                             \
+            normal = &NORMAL13;                                                                              \
+            bold = &BOLD13;                                                                                  \
+            h4 = &BOLD13;                                                                                    \
+            h3 = &BOLD14;                                                                                    \
+            h2 = &BOLD16;                                                                                    \
             h1 = &BOLD24;                                                                                    \
             break;                                                                                           \
         case 12:                                                                                             \
             normal = &NORMAL12;                                                                              \
             bold = &BOLD12;                                                                                  \
             h4 = &BOLD12;                                                                                    \
-            h3 = &BOLD14;                                                                                    \
-            h2 = &BOLD16;                                                                                    \
+            h3 = &BOLD13;                                                                                    \
+            h2 = &BOLD14;                                                                                    \
             h1 = &BOLD24;                                                                                    \
             break;                                                                                           \
-        case 10: /* Smallest (default) */                                                                    \
-        default:                                                                                             \
+        case 11:                                                                                             \
+            normal = &NORMAL11;                                                                              \
+            bold = &BOLD11;                                                                                  \
+            h4 = &BOLD11;                                                                                    \
+            h3 = &BOLD12;                                                                                    \
+            h2 = &BOLD13;                                                                                    \
+            h1 = &BOLD24;                                                                                    \
+            break;                                                                                           \
+        case 10:                                                                                             \
             normal = &NORMAL10;                                                                              \
             bold = &BOLD10;                                                                                  \
             h4 = &BOLD10;                                                                                    \
-            h3 = &BOLD12;                                                                                    \
-            h2 = &BOLD14;                                                                                    \
+            h3 = &BOLD11;                                                                                    \
+            h2 = &BOLD12;                                                                                    \
+            h1 = &BOLD24;                                                                                    \
+            break;                                                                                           \
+        case 9: /* Smallest (default) */                                                                     \
+        default:                                                                                             \
+            normal = &NORMAL9;                                                                               \
+            bold = &BOLD9;                                                                                   \
+            h4 = &BOLD9;                                                                                     \
+            h3 = &BOLD10;                                                                                    \
+            h2 = &BOLD11;                                                                                    \
             h1 = &BOLD24;                                                                                    \
             break;                                                                                           \
     }
 
     switch (_fontFamily) {
         case READER_FONT_MERRIWEATHER:
-            B32_FONT_SET(Merriweather_Regular10pt8b, Merriweather_Regular12pt8b, Merriweather_Regular14pt8b,
-                         Merriweather_Regular16pt8b, Merriweather_Regular18pt8b, Merriweather_Regular20pt8b,
-                         Merriweather_Bold10pt8b, Merriweather_Bold12pt8b, Merriweather_Bold14pt8b,
-                         Merriweather_Bold16pt8b, Merriweather_Bold18pt8b, Merriweather_Bold20pt8b,
-                         Merriweather_Bold24pt8b)
+            B32_FONT_SET(Merriweather_Regular9pt8b, Merriweather_Regular10pt8b, Merriweather_Regular11pt8b,
+                         Merriweather_Regular12pt8b, Merriweather_Regular13pt8b, Merriweather_Regular14pt8b,
+                         Merriweather_Regular16pt8b, Merriweather_Bold9pt8b, Merriweather_Bold10pt8b,
+                         Merriweather_Bold11pt8b, Merriweather_Bold12pt8b, Merriweather_Bold13pt8b,
+                         Merriweather_Bold14pt8b, Merriweather_Bold16pt8b, Merriweather_Bold24pt8b)
             break;
         case READER_FONT_LITERATA:
-            B32_FONT_SET(Literata_Regular10pt8b, Literata_Regular12pt8b, Literata_Regular14pt8b,
-                         Literata_Regular16pt8b, Literata_Regular18pt8b, Literata_Regular20pt8b,
-                         Literata_Bold10pt8b, Literata_Bold12pt8b, Literata_Bold14pt8b, Literata_Bold16pt8b,
-                         Literata_Bold18pt8b, Literata_Bold20pt8b, Literata_Bold24pt8b)
+            B32_FONT_SET(Literata_Regular9pt8b, Literata_Regular10pt8b, Literata_Regular11pt8b,
+                         Literata_Regular12pt8b, Literata_Regular13pt8b, Literata_Regular14pt8b,
+                         Literata_Regular16pt8b, Literata_Bold9pt8b, Literata_Bold10pt8b, Literata_Bold11pt8b,
+                         Literata_Bold12pt8b, Literata_Bold13pt8b, Literata_Bold14pt8b, Literata_Bold16pt8b,
+                         Literata_Bold24pt8b)
             break;
         case READER_FONT_SOURCE_SERIF:
-            B32_FONT_SET(SourceSerif4_Regular10pt8b, SourceSerif4_Regular12pt8b, SourceSerif4_Regular14pt8b,
-                         SourceSerif4_Regular16pt8b, SourceSerif4_Regular18pt8b, SourceSerif4_Regular20pt8b,
-                         SourceSerif4_Bold10pt8b, SourceSerif4_Bold12pt8b, SourceSerif4_Bold14pt8b,
-                         SourceSerif4_Bold16pt8b, SourceSerif4_Bold18pt8b, SourceSerif4_Bold20pt8b,
-                         SourceSerif4_Bold24pt8b)
+            B32_FONT_SET(SourceSerif4_Regular9pt8b, SourceSerif4_Regular10pt8b, SourceSerif4_Regular11pt8b,
+                         SourceSerif4_Regular12pt8b, SourceSerif4_Regular13pt8b, SourceSerif4_Regular14pt8b,
+                         SourceSerif4_Regular16pt8b, SourceSerif4_Bold9pt8b, SourceSerif4_Bold10pt8b,
+                         SourceSerif4_Bold11pt8b, SourceSerif4_Bold12pt8b, SourceSerif4_Bold13pt8b,
+                         SourceSerif4_Bold14pt8b, SourceSerif4_Bold16pt8b, SourceSerif4_Bold24pt8b)
             break;
         case READER_FONT_GELASIO:
-            B32_FONT_SET(Gelasio_Regular10pt8b, Gelasio_Regular12pt8b, Gelasio_Regular14pt8b,
-                         Gelasio_Regular16pt8b, Gelasio_Regular18pt8b, Gelasio_Regular20pt8b,
-                         Gelasio_Bold10pt8b, Gelasio_Bold12pt8b, Gelasio_Bold14pt8b, Gelasio_Bold16pt8b,
-                         Gelasio_Bold18pt8b, Gelasio_Bold20pt8b, Gelasio_Bold24pt8b)
+            B32_FONT_SET(Gelasio_Regular9pt8b, Gelasio_Regular10pt8b, Gelasio_Regular11pt8b,
+                         Gelasio_Regular12pt8b, Gelasio_Regular13pt8b, Gelasio_Regular14pt8b,
+                         Gelasio_Regular16pt8b, Gelasio_Bold9pt8b, Gelasio_Bold10pt8b, Gelasio_Bold11pt8b,
+                         Gelasio_Bold12pt8b, Gelasio_Bold13pt8b, Gelasio_Bold14pt8b, Gelasio_Bold16pt8b,
+                         Gelasio_Bold24pt8b)
             break;
         case READER_FONT_OPEN_SANS:
-            B32_FONT_SET(OpenSans_Regular10pt8b, OpenSans_Regular12pt8b, OpenSans_Regular14pt8b,
-                         OpenSans_Regular16pt8b, OpenSans_Regular18pt8b, OpenSans_Regular20pt8b,
-                         OpenSans_Bold10pt8b, OpenSans_Bold12pt8b, OpenSans_Bold14pt8b, OpenSans_Bold16pt8b,
-                         OpenSans_Bold18pt8b, OpenSans_Bold20pt8b, OpenSans_Bold24pt8b)
+            B32_FONT_SET(OpenSans_Regular9pt8b, OpenSans_Regular10pt8b, OpenSans_Regular11pt8b,
+                         OpenSans_Regular12pt8b, OpenSans_Regular13pt8b, OpenSans_Regular14pt8b,
+                         OpenSans_Regular16pt8b, OpenSans_Bold9pt8b, OpenSans_Bold10pt8b, OpenSans_Bold11pt8b,
+                         OpenSans_Bold12pt8b, OpenSans_Bold13pt8b, OpenSans_Bold14pt8b, OpenSans_Bold16pt8b,
+                         OpenSans_Bold24pt8b)
             break;
         case READER_FONT_SANS:
         default:
-            B32_FONT_SET(FreeSans10pt8b, FreeSans12pt8b, FreeSans14pt8b, FreeSans16pt8b, FreeSans18pt8b,
-                         FreeSans20pt8b, FreeSansBold10pt8b, FreeSansBold12pt8b, FreeSansBold14pt8b,
-                         FreeSansBold16pt8b, FreeSansBold18pt8b, FreeSansBold20pt8b, FreeSansBold24pt8b)
+            B32_FONT_SET(FreeSans9pt8b, FreeSans10pt8b, FreeSans11pt8b, FreeSans12pt8b, FreeSans13pt8b,
+                         FreeSans14pt8b, FreeSans16pt8b, FreeSansBold9pt8b, FreeSansBold10pt8b,
+                         FreeSansBold11pt8b, FreeSansBold12pt8b, FreeSansBold13pt8b, FreeSansBold14pt8b,
+                         FreeSansBold16pt8b, FreeSansBold24pt8b)
             break;
     }
 #undef B32_FONT_SET

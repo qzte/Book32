@@ -15,18 +15,20 @@
 
 #include <Adafruit_GFX.h>
 
+extern const GFXfont Merriweather_Regular9pt8b;
 extern const GFXfont Merriweather_Regular10pt8b;
+extern const GFXfont Merriweather_Regular11pt8b;
 extern const GFXfont Merriweather_Regular12pt8b;
+extern const GFXfont Merriweather_Regular13pt8b;
 extern const GFXfont Merriweather_Regular14pt8b;
 extern const GFXfont Merriweather_Regular16pt8b;
-extern const GFXfont Merriweather_Regular18pt8b;
-extern const GFXfont Merriweather_Regular20pt8b;
+extern const GFXfont Merriweather_Bold9pt8b;
 extern const GFXfont Merriweather_Bold10pt8b;
+extern const GFXfont Merriweather_Bold11pt8b;
 extern const GFXfont Merriweather_Bold12pt8b;
+extern const GFXfont Merriweather_Bold13pt8b;
 extern const GFXfont Merriweather_Bold14pt8b;
 extern const GFXfont Merriweather_Bold16pt8b;
-extern const GFXfont Merriweather_Bold18pt8b;
-extern const GFXfont Merriweather_Bold20pt8b;
 extern const GFXfont Merriweather_Bold24pt8b;
 
 #endif // FONT_MERRIWEATHER_H
