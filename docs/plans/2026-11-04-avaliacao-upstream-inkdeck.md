@@ -52,8 +52,7 @@ O upstream copiou o driver do GxEPD2 1.6.7 e mudou duas coisas:
   de 3,9 s.
 
 Medido em hardware pelo upstream: virar página passa de ~1,8 s para ~1,15 s, e
-de ~4,1 s para ~1,8 s numa página com refresh completo. O relógio SPI sobe
-para 10 MHz no construtor (relevante também para o arranque, ver item 4).
+de ~4,1 s para ~1,8 s numa página com refresh completo.
 
 Esforço: baixo — é um ficheiro `.h`/`.cpp` (~500 linhas) e trocar o `typedef`
 em `DisplayMgr.h`. Risco: médio, por ser forma de onda do painel; o upstream
@@ -62,6 +61,10 @@ completo) passa a ser mais barata, e o fantasma tem de ser verificado no
 dispositivo durante uma leitura longa (TODO.txt) antes de fazer release.
 Atenção: nós fixámos GxEPD2 1.6.9 e o driver deriva da 1.6.7 — confirmar que
 a interface `GxEPD2_EPD` não mudou entre as duas.
+
+✅ Implementado a 2026-11-04 sobre o driver da 1.6.9 (não sobre a cópia 1.6.7
+do upstream) — ver `2026-11-04-driver-rapido-gd7965-design.md`. Falta
+confirmar no dispositivo (TODO.txt).
 
 ### 2. Arranque mais rápido e mancha na margem do menu (upstream 1.3.3, `737a98a`)
 
@@ -98,14 +101,13 @@ versão a 1 bit (com o pontilhado que já fazemos) é de esforço baixo — bast
 `BatteryMgr` desenhar essa cache antes de `esp_deep_sleep_start()`. O cinzento
 por impulsos é mais arriscado (forma de onda) e fica para uma segunda fase.
 
-### 4. Ilustrações dentro dos capítulos
+### 4. ~~Ilustrações dentro dos capítulos~~ — já existe
 
-O README do upstream anuncia "EPUB books, with illustrations": o
-`TextRenderer` do upstream tem `ImageNode` e desenha imagens no meio do texto,
-com tamanho a partir de `width`/`height`/percentagem do EPUB. Aqui o leitor só
-desenha `CONTENT_TEXT` (`EpubLoader.cpp:763`). Como já temos descodificação
-JPEG/PNG com pontilhado para as capas, o que falta é paginação e desenho.
-Esforço: médio a alto (paginação, `PageCountStore`, cache de páginas).
+Correção (2026-11-04): a primeira versão desta avaliação dizia que o leitor
+só desenhava `CONTENT_TEXT`, com base num comentário em
+`EpubLoader.cpp:763`. Esse comentário fala só de tabelas. O leitor já desenha
+imagens no meio do texto (`TextRenderer::renderImageNode`,
+`lib/Apps/AppReader/TextRenderer.cpp:591`). Nenhuma ação.
 
 ### 5. Teclado/comando Bluetooth LE como virador de páginas (upstream 1.4.0 e `7e597c6`)
 
@@ -165,10 +167,10 @@ luz frontal, edição Raspberry Pi, placa Waveshare RLCD (ramo
 
 | # | Item | Origem | Impacto | Esforço | Recomendação |
 |---|---|---|---|---|---|
-| 1 | Driver `GxEPD2_750_T7_Fast` (página 1,8→1,15 s, completo 4,1→1,8 s) | 1.3.4 | Alto | Baixo | **Fazer primeiro**, validar fantasma no dispositivo |
+| 1 | Driver `GxEPD2_750_T7_Fast` (página 1,8→1,15 s, completo 4,1→1,8 s) | 1.3.4 | Alto | Baixo | ✅ Implementado, falta validar fantasma no dispositivo |
 | 2 | Arranque em tarefa, SPI 10 MHz, `powerOff` após refresh, bateria estável | 1.3.3 | Médio | Baixo–médio | Fazer, por partes |
 | 3 | Capa no ecrã de sono (1 bit primeiro, cinzento depois) | 1.3.8/1.4.0 | Médio | Baixo (1 bit) | Fazer |
-| 4 | Ilustrações dentro dos capítulos | 1.4.x | Médio | Médio–alto | Avaliar depois |
+| 4 | Ilustrações dentro dos capítulos | 1.4.x | — | — | Já existe no fork (correção) |
 | 5 | Comando BLE para virar páginas | 1.4.0/`7e597c6` | Médio | Médio | Se houver interesse |
 | 6 | Porta 80 / cartão WiFi na web | `ac98dd8`/`95ff276` | Baixo | Baixo | Verificar se o bug ocorre |
 | 7 | Estante, escolha de apps, Klipper, Todo, Open Sans | vários | Baixo | — | Opcional |

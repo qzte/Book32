@@ -1,3 +1,18 @@
+=== Driver rapido do ecra (GxEPD2_750_T7_Fast) — a verificar no dispositivo (nao coberto pelos testes de host) ===
+(ver docs/plans/2026-11-04-driver-rapido-gd7965-design.md; o pio run compila,
+mas as formas de onda so se veem no e-ink real)
+Virar pagina: medir no monitor serie / a olho — deve descer de ~1,8 s para
+~1,15 s. E o primeiro ponto.
+KEY2 (refresh completo) e abrir um livro: deve descer de ~4 s para ~1,6-1,8 s,
+sem deixar a imagem anterior por baixo.
+Fantasma numa leitura longa (30-50 paginas seguidas sem KEY2): comparar com a
+versao anterior. Se ficar visivelmente pior, decidir entre um refresh completo
+automatico a cada N paginas ou voltar a LUT parcial de 30/5/30/5.
+Texto fino (fonte 9-10 px) e capas na biblioteca: confirmar que o preto
+continua preto e nao cinzento depois de varias paginas.
+Painel frio (abaixo de ~10 C): o refresh completo usa a forma de onda de alta
+temperatura — confirmar que continua limpo.
+
 === v1.21.0 — a verificar no dispositivo (nao coberto pelos testes de host) ===
 (ver docs/plans/2026-09-03-conversao-de-capas-design.md; o pio run correu no
 CI, mas o resultado visual no e-ink continua por ver — os testes de host
