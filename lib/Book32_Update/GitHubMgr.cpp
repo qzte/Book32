@@ -455,6 +455,9 @@ bool GitHubMgr::performFilesystemUpdate(const char* url, bool restartAfter, int 
 }
 
 bool GitHubMgr::performFullUpdate(const char* currentVersion) {
+    // Runs on its own task and draws the progress screen from there; keep
+    // loop()'s DisplayMgr::update() from powering the panel down mid-frame.
+    DisplayMgr::PowerHold panelPowerHold;
     Serial.println("Starting full update check...");
     UpdateInfo info = checkUpdate(currentVersion);
 

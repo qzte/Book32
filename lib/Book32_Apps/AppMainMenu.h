@@ -28,6 +28,8 @@ private:
     bool _selectionOnlyRedraw = false;
     bool _batteryOnlyRedraw = false;
     bool _footerOnlyRedraw = false;
+    static const int MENU_FULL_REFRESH_INTERVAL = 20; // Partial updates between cleanup full refreshes
+    int _partialRefreshes = 0;
     int _previousSelectedIndex = 1;
     bool _lastWifiConnected = false;
     bool _wifiStarting = false;

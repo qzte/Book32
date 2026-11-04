@@ -30,6 +30,9 @@ static void networkStartupTask(void* parameter) {
     // range. On timeout autoConnect returns false and the main menu brings up
     // the Book32 management hotspot instead.
     gWifiManager->setConfigPortalTimeout(120);
+    // Without this, an out-of-range saved network waits on the ESP's default
+    // 60s connect timeout before the setup portal opens.
+    gWifiManager->setConnectTimeout(15);
     bool connected = gWifiManager->autoConnect("Book32-Setup");
 
     if (!connected) {
@@ -137,10 +140,12 @@ void setup() {
 
     if (readerApp->hasBootResume()) {
         displayMgr.showBootScreen(100, "Opening reader");
+        displayMgr.finishBootScreen();
         readerApp->resumeSavedBookOnStart();
         appMgr.switchTo(1);
     } else {
         displayMgr.showBootScreen(100, "Opening menu");
+        displayMgr.finishBootScreen();
         appMgr.switchTo(0);
     }
 
@@ -151,7 +156,7 @@ void loop() {
     InputMgr::getInstance().update();
     AppMgr::getInstance().update();
     AppMgr::getInstance().draw();  // Trigger app rendering
-    DisplayMgr::getInstance().update(); // Runs a queued KEY2 full refresh, if any
+    DisplayMgr::getInstance().update(); // Queued KEY2 full refresh; panel power-down when idle
     WebMgr::getInstance().update();
     BatteryMgr::getInstance().update();  // Check charging state and critical battery
 
