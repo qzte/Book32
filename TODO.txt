@@ -1,3 +1,30 @@
+=== Arranque e energia do painel (ponto 2 da avaliacao InkDeck) — a verificar no dispositivo (nao coberto pelos testes de host) ===
+(ver docs/plans/2026-11-04-arranque-e-energia-do-painel-design.md; o pio run
+corre no CI, mas nada disto se ve sem o dispositivo)
+Arranque: medir do reset ao menu (ou ao livro retomado) com o monitor serie —
+deve ficar visivelmente mais curto; o ecra de arranque pode saltar estados
+intermedios (ex.: "Mounting storage"), e isso e esperado. E o primeiro ponto.
+Ultimo ecra de arranque: o menu/livro so aparece depois de "Opening ..." ter
+terminado de desenhar, sem lixo misturado das duas imagens.
+Rotacao: com o ecra rodado (rotation=1), reiniciar — o primeiro quadro do
+arranque ja deve sair na orientacao certa, sem um refresh completo extra a
+meio do arranque. Trocar a rotacao nas definicoes e reiniciar outra vez.
+SPI a 10 MHz: nenhum ruido, linhas trocadas ou pixeis errados em paginas de
+texto, capas e menu (o fio do kit DIY e o ponto fraco).
+Margem do menu: deixar o menu aberto 30-60 min e ver se a margem ja nao
+escurece (era o booster do painel sempre ligado).
+Painel a desligar: virar varias paginas seguidas depressa (dentro de 10 s)
+nao deve ficar mais lento; uma pagina virada depois de >10 s parado pode
+demorar ~150 ms a mais (reacender o booster) — aceitavel.
+Bateria: ligar o carregador com o menu aberto — o raio deve aparecer em ~1,5-2
+min (so pela tendencia de 90 s, ja nao pela deteccao instantanea), e nao deve
+piscar liga/desliga. Desligar o carregador: o raio sai em ~3 min.
+Menu: 20 navegacoes seguidas devem provocar um refresh completo de limpeza.
+WiFi: com a rede guardada fora de alcance, o portal Book32-Setup deve abrir em
+~15 s em vez de ~60 s.
+Actualizacao OTA a partir do menu ou da web: o ecra de progresso continua
+limpo (o painel nao e desligado a meio pelo loop principal).
+
 === Driver rapido do ecra (GxEPD2_750_T7_Fast) — a verificar no dispositivo (nao coberto pelos testes de host) ===
 (ver docs/plans/2026-11-04-driver-rapido-gd7965-design.md; o pio run compila,
 mas as formas de onda so se veem no e-ink real)

@@ -1,7 +1,9 @@
 #include "DisplayMgr.h"
 #include "../../include/Config.h"
 #include "Book32FS.h"
+#include "BatteryMgr.h"
 #include <ArduinoJson.h>
+#include <Preferences.h>
 // Local FreeSans with Latin-1 Supplement (0x20-0xFF).
 #include "Fonts/FreeSans.h"
 
@@ -38,6 +40,37 @@ static void drawBootProgress(Book32Display& display, uint8_t progress, const cha
     drawCenteredText(display, status, &FreeSans12pt8b, barY + 116, GxEPD_BLACK);
 }
 
+// After a button press the panel's high-voltage booster stays armed for this
+// long, so quick page turns skip the ~150ms power-up; then update() turns it
+// off. GxEPD2 only powers the panel down after a full refresh — partial
+// updates left the booster on indefinitely, which slowly darkens the panel
+// edge (seen by rolohaun/Book32 on the same kit, InkDeck 1.3.3).
+static const unsigned long PANEL_POWER_HOLD_MS = 10000;
+
+// The orientation is mirrored into NVS so the very first boot frame is drawn
+// the right way up; /display_config.json (on ebook storage) stays the source
+// of truth and is re-applied by loadDisplaySettings() once storage mounts.
+static const char* ROTATION_PREFS_NAMESPACE = "display";
+static const char* ROTATION_PREFS_KEY = "rotation";
+
+static int loadCachedRotation() {
+    Preferences prefs;
+    int rotation = 3;
+    if (prefs.begin(ROTATION_PREFS_NAMESPACE, true)) {
+        rotation = prefs.getInt(ROTATION_PREFS_KEY, 3);
+        prefs.end();
+    }
+    return (rotation == 1 || rotation == 3) ? rotation : 3;
+}
+
+static void saveCachedRotation(int rotation) {
+    Preferences prefs;
+    if (prefs.begin(ROTATION_PREFS_NAMESPACE, false)) {
+        prefs.putInt(ROTATION_PREFS_KEY, rotation);
+        prefs.end();
+    }
+}
+
 // Constructor with Pin mapping
 // GxEPD2_420(int16_t cs, int16_t dc, int16_t rst, int16_t busy)
 DisplayMgr::DisplayMgr() : display(GxEPD2_750_T7_Fast(EPD_CS, EPD_DC, EPD_RST, EPD_BUSY)) {}
@@ -49,8 +82,13 @@ DisplayMgr& DisplayMgr::getInstance() {
 
 void DisplayMgr::init() {
     // For ESP32-S3 we must initialize SPI with custom pins before display.init
-    SPI.begin(EPD_SCK, EPD_MISO, EPD_MOSI, EPD_CS); 
-    
+    SPI.begin(EPD_SCK, EPD_MISO, EPD_MOSI, EPD_CS);
+    // GxEPD2 defaults to 4MHz and sends each 48KB frame byte by byte. The
+    // GD7965 accepts writes well above 10MHz; stay conservative for the DIY
+    // kit's wiring.
+    display.epd2.selectSPI(SPI, SPISettings(10000000, MSBFIRST, SPI_MODE0));
+
+    _rotation = loadCachedRotation();
     display.init(115200, true, 10, false);
 
     display.setRotation(_rotation); // Portrait mode (480x800); _rotation = 1 or 3
@@ -64,7 +102,10 @@ void DisplayMgr::setRotation(int rotation) {
     // Constrain to the two portrait orientations so layouts never break.
     if (rotation != 1 && rotation != 3) rotation = 3;
     bool changed = (rotation != _rotation);
+    // Never rotate the canvas underneath a boot frame that is being drawn.
+    if (changed) waitForBootScreenIdle();
     _rotation = rotation;
+    if (changed) saveCachedRotation(rotation);
     display.setRotation(_rotation);
     // Only invalidate the boot screen when the orientation actually changes, so
     // a no-op load at boot doesn't trigger a full refresh mid-sequence. Live
@@ -109,6 +150,62 @@ void DisplayMgr::showBootScreen(uint8_t progress, const char* status) {
     if (progress > 100) progress = 100;
     if (!status) status = "";
 
+    if (!_bootFinished) {
+        if (!_bootLock) _bootLock = xSemaphoreCreateMutex();
+        if (_bootLock) {
+            xSemaphoreTake(_bootLock, portMAX_DELAY);
+            _bootProgress = progress;
+            strlcpy(_bootStatus, status, sizeof(_bootStatus));
+            _bootPending = true;
+            bool startWorker = !_bootTaskRunning;
+            if (startWorker) _bootTaskRunning = true;
+            xSemaphoreGive(_bootLock);
+
+            if (!startWorker) return; // The running worker picks it up
+            if (xTaskCreatePinnedToCore(bootScreenTask, "BootScreen", 6144, this, 1, nullptr, 1) == pdPASS) {
+                return;
+            }
+            // No worker: fall through and draw this status synchronously.
+            xSemaphoreTake(_bootLock, portMAX_DELAY);
+            _bootTaskRunning = false;
+            _bootPending = false;
+            xSemaphoreGive(_bootLock);
+        }
+    }
+    renderBootScreen(progress, status);
+}
+
+void DisplayMgr::bootScreenTask(void* parameter) {
+    DisplayMgr* self = static_cast<DisplayMgr*>(parameter);
+    for (;;) {
+        xSemaphoreTake(self->_bootLock, portMAX_DELAY);
+        if (!self->_bootPending) {
+            self->_bootTaskRunning = false;
+            xSemaphoreGive(self->_bootLock);
+            break;
+        }
+        uint8_t progress = self->_bootProgress;
+        char status[sizeof(self->_bootStatus)];
+        strlcpy(status, self->_bootStatus, sizeof(status));
+        self->_bootPending = false;
+        xSemaphoreGive(self->_bootLock);
+
+        self->renderBootScreen(progress, status);
+    }
+    vTaskDelete(nullptr);
+}
+
+void DisplayMgr::waitForBootScreenIdle() {
+    while (_bootTaskRunning)
+        delay(5);
+}
+
+void DisplayMgr::finishBootScreen() {
+    waitForBootScreenIdle();
+    _bootFinished = true;
+}
+
+void DisplayMgr::renderBootScreen(uint8_t progress, const char* status) {
     int16_t screenW = display.width();
     int16_t screenH = display.height();
 
@@ -167,4 +264,19 @@ void DisplayMgr::update() {
         _pendingFullRefresh = false;
         fullRefresh();
     }
+
+    // powerOff() is a no-op when the panel is already off; the next partial
+    // update re-arms the booster itself.
+    if (_powerHolds == 0 &&
+        millis() - BatteryMgr::getInstance().getLastActivityTime() >= PANEL_POWER_HOLD_MS) {
+        display.powerOff();
+    }
+}
+
+DisplayMgr::PowerHold::PowerHold() {
+    DisplayMgr::getInstance()._powerHolds++;
+}
+
+DisplayMgr::PowerHold::~PowerHold() {
+    DisplayMgr::getInstance()._powerHolds--;
 }

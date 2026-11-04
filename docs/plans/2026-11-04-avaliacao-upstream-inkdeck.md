@@ -87,6 +87,11 @@ confirmar no dispositivo (TODO.txt).
 
 Esforço: baixo a médio, separável em pedaços.
 
+✅ Implementado a 2026-11-04 — ver `2026-11-04-arranque-e-energia-do-painel-design.md`.
+Ficou de fora só a contagem de espaço do EbookFS no arranque (o upstream
+passou-a para um modo de log verboso); falta confirmar tudo no dispositivo
+(TODO.txt).
+
 ### 3. Capa do livro no ecrã de sono, em tons de cinzento (upstream 1.3.8 `6b024d7`, 1.4.0 `b2ea3b2`)
 
 Ao adormecer, o ecrã mostra a capa do último livro lido em ecrã inteiro com
@@ -168,7 +173,7 @@ luz frontal, edição Raspberry Pi, placa Waveshare RLCD (ramo
 | # | Item | Origem | Impacto | Esforço | Recomendação |
 |---|---|---|---|---|---|
 | 1 | Driver `GxEPD2_750_T7_Fast` (página 1,8→1,15 s, completo 4,1→1,8 s) | 1.3.4 | Alto | Baixo | ✅ Implementado, falta validar fantasma no dispositivo |
-| 2 | Arranque em tarefa, SPI 10 MHz, `powerOff` após refresh, bateria estável | 1.3.3 | Médio | Baixo–médio | Fazer, por partes |
+| 2 | Arranque em tarefa, SPI 10 MHz, `powerOff` após refresh, bateria estável | 1.3.3 | Médio | Baixo–médio | ✅ Implementado, falta validar no dispositivo |
 | 3 | Capa no ecrã de sono (1 bit primeiro, cinzento depois) | 1.3.8/1.4.0 | Médio | Baixo (1 bit) | Fazer |
 | 4 | Ilustrações dentro dos capítulos | 1.4.x | — | — | Já existe no fork (correção) |
 | 5 | Comando BLE para virar páginas | 1.4.0/`7e597c6` | Médio | Médio | Se houver interesse |
