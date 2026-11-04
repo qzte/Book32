@@ -5,3 +5,6 @@ lib/Book32_Core/Fonts/*
 lib/Apps/AppReader/icon_reader.h
 lib/Book32_Apps/icon_settings.h
 lib/Book32_Apps/icon_update.h
+# Vendored from GxEPD2 (GPL-3.0) with a small, commented waveform change:
+# keeping upstream's formatting keeps it diffable against GxEPD2.
+lib/Book32_Core/GxEPD2_750_T7_Fast.*

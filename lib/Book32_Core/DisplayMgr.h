@@ -3,10 +3,13 @@
 #include <GxEPD2_BW.h>
 #include <GxEPD2_3C.h>
 #include "Config.h"
+#include "GxEPD2_750_T7_Fast.h"
 
 // Define the display class here to be used across the app
-// Using 800x480 BW (Waveshare 7.5 V2)
-typedef GxEPD2_BW<GxEPD2_750_T7, GxEPD2_750_T7::HEIGHT> Book32Display;
+// Using 800x480 BW (Waveshare 7.5 V2). GxEPD2_750_T7_Fast is GxEPD2's
+// GxEPD2_750_T7 with shorter waveforms (page turn ~1.15s instead of ~1.8s,
+// full refresh ~1.6s instead of ~3.9s); see GxEPD2_750_T7_Fast.h.
+typedef GxEPD2_BW<GxEPD2_750_T7_Fast, GxEPD2_750_T7_Fast::HEIGHT> Book32Display;
 
 class DisplayMgr {
 public:

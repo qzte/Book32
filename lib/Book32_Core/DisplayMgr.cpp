@@ -40,8 +40,7 @@ static void drawBootProgress(Book32Display& display, uint8_t progress, const cha
 
 // Constructor with Pin mapping
 // GxEPD2_420(int16_t cs, int16_t dc, int16_t rst, int16_t busy)
-DisplayMgr::DisplayMgr() : display(GxEPD2_750_T7(EPD_CS, EPD_DC, EPD_RST, EPD_BUSY)) {
-}
+DisplayMgr::DisplayMgr() : display(GxEPD2_750_T7_Fast(EPD_CS, EPD_DC, EPD_RST, EPD_BUSY)) {}
 
 DisplayMgr& DisplayMgr::getInstance() {
     static DisplayMgr instance;
